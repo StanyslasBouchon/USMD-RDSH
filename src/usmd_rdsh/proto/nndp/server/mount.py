@@ -12,6 +12,7 @@ from typing import Optional
 from usmd_rdsh.proto.base.bitvec import BitVec, Msb
 from usmd_rdsh.proto.base.decoder import BitDecoder, Frame, FrameDecoder
 from usmd_rdsh.proto.nndp.server.packets.here_i_am import HereIAmDecoder
+from usmd_rdsh.security.ed25519 import Ed25519KeyPair
 from usmd_rdsh.utils.errors import Error, ErrorKind
 from usmd_rdsh.utils.result import Result
 
@@ -183,8 +184,15 @@ class MountService:
             ...     print("Packet decoded successfully")
         """
         try:
+            pub_key = packet_bytes[:32]
+            signed_packet = packet_bytes[32:]
+
+            verify_result = Ed25519KeyPair.verify(pub_key, signed_packet)
+            if verify_result.is_err():
+                return Result.Err(verify_result.unwrap_err())
+
             # Convert bytes to BitVec with MSB ordering (same as client)
-            bitvec = BitVec.from_bytes(packet_bytes, Msb)
+            bitvec = BitVec.from_bytes(verify_result.unwrap(), Msb)
 
             # Create bit decoder
             bit_decoder = BitDecoder[Msb](bitvec)

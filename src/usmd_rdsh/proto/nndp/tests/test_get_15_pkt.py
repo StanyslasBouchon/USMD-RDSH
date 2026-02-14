@@ -39,7 +39,7 @@ def test_nndp_packet_send_receive(nndp_ports):  # pylint: disable=redefined-oute
         nndp_ports: Dictionary of port numbers for client and server
     """
     # Data to send
-    node_name = "test-node"
+    node_id = "test-node"
     state = NodeState.ACTIVE
     expected_packets = 15
     interval = 0.1  # Short interval for test
@@ -62,7 +62,7 @@ def test_nndp_packet_send_receive(nndp_ports):  # pylint: disable=redefined-oute
             """Provide Here I Am data for the client."""
             return HereIAmData(
                 version=VERSION,
-                node_name=node_name,
+                node_id=node_id,
                 next_hia_pkt_time=int((time.time() + interval) * 1000),
                 state=state,
             )
@@ -107,9 +107,9 @@ def test_nndp_packet_send_receive(nndp_ports):  # pylint: disable=redefined-oute
 
         # Verify all packets have correct data
         for i, received_here_i_am in enumerate(received_data[:expected_packets]):
-            assert received_here_i_am.node_name == node_name, (
-                f"Packet {i+1}: Node name mismatch: expected {node_name}, "
-                f"got {received_here_i_am.node_name}"
+            assert received_here_i_am.node_id == node_id, (
+                f"Packet {i+1}: Node name mismatch: expected {node_id}, "
+                f"got {received_here_i_am.node_id}"
             )
             assert received_here_i_am.state == state, (
                 f"Packet {i+1}: State mismatch: expected {state}, "

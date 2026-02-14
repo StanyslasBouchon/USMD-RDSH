@@ -7,7 +7,7 @@ from usmd_rdsh.utils.node_state import NodeState
 class NodeNeighbor:
     """Node neighbor class."""
 
-    name: str
+    id: str
     hosted_services: list[str]
     node_references: list[str]
     usage: dict[str, float | int]

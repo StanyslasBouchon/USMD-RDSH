@@ -5,6 +5,7 @@ from dataclasses import dataclass
 class NodeIdentity:
     """Node identity class."""
 
-    pubkey: str
+    ed25519_pub32: bytes
+    id: str
     ip: str
-    ttl: int
+    ttl: int = 300

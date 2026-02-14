@@ -141,15 +141,15 @@ class HereIAmDecoder(EventDecoder[Msb]):
             )
 
         version = self.decoder.read_data(8)
-        node_name_length = self.decoder.read_data(16)
-        if node_name_length.is_err():
-            return Result.Err(node_name_length.unwrap_err())
+        node_id_length = self.decoder.read_data(16)
+        if node_id_length.is_err():
+            return Result.Err(node_id_length.unwrap_err())
 
-        node_name_bytes = self.decoder.read_bytes(
-            node_name_length.unwrap().to_int().unwrap()
+        node_id_bytes = self.decoder.read_bytes(
+            node_id_length.unwrap().to_int().unwrap()
         )
-        if node_name_bytes.is_err():
-            return Result.Err(node_name_bytes.unwrap_err())
+        if node_id_bytes.is_err():
+            return Result.Err(node_id_bytes.unwrap_err())
 
         next_hia_pkt_time = self.decoder.read_data(64)
         if next_hia_pkt_time.is_err():
@@ -160,11 +160,11 @@ class HereIAmDecoder(EventDecoder[Msb]):
             return Result.Err(state.unwrap_err())
 
         # Convert BitVec to bytes then to string
-        node_name_str = node_name_bytes.unwrap().to_bytes().decode("utf-8")
+        node_id_str = node_id_bytes.unwrap().to_bytes().decode("utf-8")
 
         data = HereIAmData(
             version=version.unwrap().to_int().unwrap(),
-            node_name=node_name_str,
+            node_id=node_id_str,
             next_hia_pkt_time=next_hia_pkt_time.unwrap().to_int().unwrap(),
             state=NodeState(state.unwrap().to_int().unwrap()),
         )

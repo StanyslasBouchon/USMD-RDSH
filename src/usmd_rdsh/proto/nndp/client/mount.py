@@ -15,6 +15,7 @@ from usmd_rdsh.proto.base.bitvec import Msb
 from usmd_rdsh.proto.base.encoder import FrameEncoder
 from usmd_rdsh.proto.nndp.base.env import VERSION, HereIAmData
 from usmd_rdsh.proto.nndp.client.packets.here_i_am import HereIAmPacket
+from usmd_rdsh.security.ed25519 import Ed25519KeyPair, unb64u
 from usmd_rdsh.utils.errors import Error, ErrorKind
 from usmd_rdsh.utils.result import Result
 
@@ -48,6 +49,7 @@ class MountService:
         payload_provider: PayloadProvider,
         send_port: int,
         receive_port: int,
+        ed25519_keypair: Ed25519KeyPair,
         interval: float = 15.0,
     ) -> None:
         """Initialize the mount service.
@@ -56,23 +58,26 @@ class MountService:
             payload_provider: The provider for the payload for the Here I Am packet
             send_port: The UDP port for sending broadcast packets
             receive_port: The UDP port for receiving packets (socket will bind to this)
+            ed25519_keypair: The Ed25519 key pair for the node
             interval: Interval between packet sends in seconds (default: 15.0)
 
         Examples:
             >>> service = MountService(
             ...     lambda: HereIAmData(
             ...         version=VERSION,
-            ...         node_name="my-node",
+            ...         node_id="my-node",
             ...         next_hia_pkt_time=int((time.time() + 15.0) * 1000),
             ...         state=NodeState.ACTIVE,
             ...     ),
             ...     8080,
             ...     8081,
+            ...     Ed25519KeyPair.generate(),
             ... )
         """
         self.payload_provider = payload_provider
         self.send_port = send_port
         self.receive_port = receive_port
+        self.ed25519_keypair = ed25519_keypair
         self.interval = interval
         self.socket: Optional[socket.socket] = None
         self.thread: Optional[threading.Thread] = None
@@ -212,13 +217,18 @@ class MountService:
         bitvec = frame_result.unwrap()
         packet_bytes = bitvec.to_bytes()
 
+        # Sign the packet
+        signed_packet = bytes(self.ed25519_keypair.sk.sign(packet_bytes))
+        pub_key_bytes = unb64u(self.ed25519_keypair.pub32_b64u)
+        full_packet = pub_key_bytes + signed_packet
+
         # Send via UDP broadcast
         try:
             broadcast_address = "255.255.255.255"
-            self.socket.sendto(packet_bytes, (broadcast_address, self.send_port))
+            self.socket.sendto(full_packet, (broadcast_address, self.send_port))
             logging.debug(
                 "[NNDP] Sent Here I Am packet (%d bytes) via broadcast to port %d",
-                len(packet_bytes),
+                len(full_packet),
                 self.send_port,
             )
             return Result.Ok(None)

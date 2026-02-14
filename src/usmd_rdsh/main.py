@@ -1,14 +1,16 @@
 import sys
 import time
 import logging
+from typing import Optional
 import dotenv
-from usmd_rdsh.self.core import Core
 
 dotenv.load_dotenv()
+logging.basicConfig(level=logging.DEBUG)
 
-CORE = Core()
+from usmd_rdsh.self.core import Core  # pylint: disable=wrong-import-position
 
-logging.basicConfig(level=logging.INFO)
+
+CORE: Optional[Core] = None
 
 
 def main() -> None:
@@ -20,6 +22,8 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    CORE = Core()
+
     try:
         main()
     except KeyboardInterrupt:

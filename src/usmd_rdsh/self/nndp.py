@@ -16,13 +16,13 @@ Examples:
     >>>
     >>> # Define callback for received Here I Am packets
     >>> def on_here_i_am(data: HereIAmData) -> None:
-    ...     print(f"Received from: {data.node_name}, state: {data.state}")
+    ...     print(f"Received from: {data.node_id}, state: {data.state}")
     >>>
     >>> # Define payload provider for client
     >>> def payload_provider() -> HereIAmData:
     ...     return HereIAmData(
     ...         version=VERSION,
-    ...         node_name="my-node",
+    ...         node_id="my-node",
     ...         next_hia_pkt_time=int((time.time() + 15.0) * 1000),
     ...         state=NodeState.ACTIVE,
     ...     )
@@ -45,6 +45,7 @@ from usmd_rdsh.proto.nndp.client.mount import MountService as ClientMountService
 from usmd_rdsh.proto.nndp.client.mount import PayloadProvider
 from usmd_rdsh.proto.nndp.server.events.here_i_am import HereIAmReceivedEvent
 from usmd_rdsh.proto.nndp.server.mount import MountService as ServerMountService
+from usmd_rdsh.security.ed25519 import Ed25519KeyPair
 
 
 class NNDPController:
@@ -67,12 +68,12 @@ class NNDPController:
         >>> os.environ["NNDP_SERVER_PORT"] = "8081"
         >>>
         >>> def on_here_i_am(data: HereIAmData) -> None:
-        ...     print(f"Node discovered: {data.node_name}")
+        ...     print(f"Node discovered: {data.node_id}")
         >>>
         >>> def payload_provider() -> HereIAmData:
         ...     return HereIAmData(
         ...         version=VERSION,
-        ...         node_name="my-node",
+        ...         node_id="my-node",
         ...         next_hia_pkt_time=int((time.time() + 15.0) * 1000),
         ...         state=NodeState.ACTIVE,
         ...     )
@@ -87,6 +88,7 @@ class NNDPController:
         self,
         cb_hia: Callable[[HereIAmData], None],
         client_pp: PayloadProvider,
+        ed25519_keypair: Ed25519KeyPair,
     ) -> None:
         """Initialize the NNDP controller.
 
@@ -97,23 +99,26 @@ class NNDPController:
             client_pp: Payload provider function that returns HereIAmData for
                 the client to broadcast. This function is called each time a packet
                 needs to be sent.
+            ed25519_keypair: Ed25519 key pair for the node.
 
         Examples:
             >>> def on_here_i_am(data: HereIAmData) -> None:
-            ...     print(f"Received: {data.node_name}")
+            ...     print(f"Received: {data.node_id}")
             >>>
             >>> def payload_provider() -> HereIAmData:
             ...     return HereIAmData(
             ...         version=VERSION,
-            ...         node_name="my-node",
+            ...         node_id="my-node",
             ...         next_hia_pkt_time=int((time.time() + 15.0) * 1000),
             ...         state=NodeState.ACTIVE,
             ...     )
             >>>
-            >>> controller = NNDPController(cb_hia=on_here_i_am, client_pp=payload_provider)
+            >>> ed25519_keypair = Ed25519KeyPair.generate()
+            >>> controller = NNDPController(cb_hia=on_here_i_am, client_pp=payload_provider, ed25519_keypair=ed25519_keypair)
         """
         self._cb_hia = cb_hia
         self._client_pp = client_pp
+        self._ed25519_keypair = ed25519_keypair
 
         self.nndp_ports = {
             "client": int(os.getenv("NNDP_CLIENT_PORT")),
@@ -139,6 +144,7 @@ class NNDPController:
             payload_provider=self._client_pp,
             send_port=self.nndp_ports["client"],
             receive_port=self.nndp_ports["server"],
+            ed25519_keypair=self._ed25519_keypair,
         )
 
     def _create_server(self) -> None:
