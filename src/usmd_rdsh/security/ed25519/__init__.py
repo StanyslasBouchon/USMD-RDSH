@@ -15,7 +15,7 @@ other text-based formats.
 
 Example usage:
 
-    >>> from usmd_rdsh.security.ed25519.generate import Ed25519KeyPair
+    >>> from usmd_rdsh.security.ed25519 import Ed25519KeyPair
     >>>
     >>> # Generate a new key pair
     >>> key_pair = Ed25519KeyPair.generate()
@@ -31,8 +31,19 @@ Example usage:
 
 import base64
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+import os
 from typing import Optional
 
+from cryptography import x509
+from cryptography.hazmat.primitives.asymmetric import ed25519
+from cryptography.hazmat.primitives.serialization import (
+    Encoding,
+    NoEncryption,
+    PrivateFormat,
+    load_pem_private_key,
+)
+from cryptography.x509.oid import NameOID
 from nacl.encoding import RawEncoder
 from nacl.signing import SigningKey, VerifyKey
 from nacl.exceptions import BadSignatureError
@@ -217,41 +228,40 @@ class Ed25519KeyPair:
             priv64_b64u: Optional Base64URL-encoded 64-byte private key
 
         Returns:
-            SigningKey: A PyNaCl SigningKey instance that can be used for
-                       signing operations
+            Ed25519KeyPair: A key pair reconstructed from the given seed or
+                            private key, with all components Base64URL-encoded.
 
         Raises:
             ValueError: If both parameters are None, or if the decoded value
                        does not have the expected length (32 bytes for seed,
-                       64 bytes for private key)
+                       64 bytes for private key).
 
         Example:
-            >>> from usmd_rdsh.security.ed25519.generate import Ed25519KeyPair
+            >>> from usmd_rdsh.security.ed25519 import Ed25519KeyPair
             >>> from nacl.signing import SigningKey
             >>>
             >>> # Generate a key pair
             >>> key_pair = Ed25519KeyPair.generate()
             >>>
-            >>> # Reconstruct SigningKey from seed
-            >>> sk_from_seed = Ed25519KeyPair.from_b64u(
+            >>> # Reconstruct key pair from seed only
+            >>> kp_from_seed = Ed25519KeyPair.from_b64u(
             ...     seed32_b64u=key_pair.seed32_b64u,
             ...     priv64_b64u=None
             ... )
-            >>> assert isinstance(sk_from_seed, SigningKey)
+            >>> assert kp_from_seed.pub32_b64u == key_pair.pub32_b64u
             >>>
-            >>> # Reconstruct SigningKey from private key
-            >>> sk_from_priv = Ed25519KeyPair.from_b64u(
+            >>> # Reconstruct key pair from private key only
+            >>> kp_from_priv = Ed25519KeyPair.from_b64u(
             ...     seed32_b64u=None,
             ...     priv64_b64u=key_pair.priv64_b64u
             ... )
-            >>> assert isinstance(sk_from_priv, SigningKey)
+            >>> assert kp_from_priv.pub32_b64u == key_pair.pub32_b64u
             >>>
-            >>> # Both methods produce equivalent signing keys
-            >>> # (they sign the same data identically)
+            >>> # Both produce equivalent key pairs (same signatures)
             >>> test_message = b"Hello, World!"
-            >>> sig1 = sk_from_seed.sign(test_message)
-            >>> sig2 = sk_from_priv.sign(test_message)
-            >>> assert sig1.signature == sig2.signature
+            >>> sig1 = kp_from_seed.sign(test_message)
+            >>> sig2 = kp_from_priv.sign(test_message)
+            >>> assert sig1 == sig2
             >>>
             >>> # Error: both parameters are None
             >>> try:
@@ -271,6 +281,9 @@ class Ed25519KeyPair:
                 raise ValueError("seed32_b64u is not a valid 32-byte seed")
 
             sk = SigningKey(seed32, encoder=RawEncoder)
+            priv64 = sk.encode(encoder=RawEncoder) + sk.verify_key.encode(
+                encoder=RawEncoder
+            )
 
         if priv64_b64u is not None:
             priv64 = unb64u(priv64_b64u)
@@ -294,16 +307,215 @@ class Ed25519KeyPair:
     def verify(pub32: bytes, signed_packet: bytes) -> Result[bytes, Error]:
         """Verify a signed packet using a public key.
 
+        The signed_packet must be in the format produced by sign(): original
+        data followed by the 64-byte Ed25519 signature. On success, returns
+        the original message (without the signature).
+
         Args:
-            pub32: The 32-byte public key
-            signed_packet: The signed packet to verify
+            pub32: The 32-byte raw public key (verification key).
+            signed_packet: The signed blob (message + 64-byte signature).
 
         Returns:
-            Result[bytes, Error]: Ok(bytes) if the packet was verified successfully,
-                                   Err(Error) if verification failed
+            Result[bytes, Error]: Ok(message_bytes) if verification succeeded,
+                                   Err(Error) if signature is invalid.
+
+        Example:
+            >>> kp = Ed25519KeyPair.generate()
+            >>> msg = b"authenticated message"
+            >>> signed = kp.sign(msg)
+            >>> pub = unb64u(kp.pub32_b64u)
+            >>> res = Ed25519KeyPair.verify(pub, signed)
+            >>> assert res.is_ok() and res.unwrap() == msg
+            >>> bad_res = Ed25519KeyPair.verify(pub, b"tampered")
+            >>> assert bad_res.is_err()
         """
         vk = VerifyKey(pub32, encoder=RawEncoder)
         try:
             return Result.Ok(vk.verify(signed_packet))
         except BadSignatureError as e:
             return Result.Err(Error.new(ErrorKind.PROTOCOL_ERROR, str(e)))
+
+    def sign(self, data: bytes) -> bytes:
+        """Sign data using the Ed25519 private key.
+
+        This method creates a cryptographic signature for the given data using
+        the Ed25519 private key. The signature can later be verified using the
+        corresponding public key to ensure the data's authenticity and integrity.
+
+        The signature is deterministic: signing the same data with the same key
+        will always produce the same signature. The signature is 64 bytes long
+        and is appended to the original data in the returned bytes.
+
+        Args:
+            data: The data to sign (bytes)
+
+        Returns:
+            bytes: The signed data, which consists of the original data followed
+                  by the 64-byte Ed25519 signature. The format is: data + signature
+
+        Example:
+            >>> from usmd_rdsh.security.ed25519 import Ed25519KeyPair
+            >>>
+            >>> # Generate a key pair
+            >>> key_pair = Ed25519KeyPair.generate()
+            >>>
+            >>> # Sign some data
+            >>> message = b"Hello, World!"
+            >>> signed_data = key_pair.sign(message)
+            >>>
+            >>> # The signed data is longer than the original (64 bytes added)
+            >>> assert len(signed_data) == len(message) + 64
+            >>>
+            >>> # The signature is deterministic
+            >>> signed_data2 = key_pair.sign(message)
+            >>> assert signed_data == signed_data2
+            >>>
+            >>> # Different data produces different signatures
+            >>> signed_data3 = key_pair.sign(b"Different message")
+            >>> assert signed_data != signed_data3
+            >>>
+            >>> # Verify the signature using the public key
+            >>> from usmd_rdsh.security.ed25519 import unb64u
+            >>> pub_key_bytes = unb64u(key_pair.pub32_b64u)
+            >>> verify_result = Ed25519KeyPair.verify(pub_key_bytes, signed_data)
+            >>> assert verify_result.is_ok()
+            >>> assert verify_result.unwrap() == message
+        """
+        return bytes(self.sk.sign(data))
+
+
+@dataclass
+class Ed25519Certificate:
+    """Self-signed X.509 certificate for Ed25519 keys.
+
+    Builds PEM-encoded certificate + private key and writes them to a single
+    file. Uses the same Ed25519 key material as Ed25519KeyPair (seed/priv/pub).
+    Certificate is valid for 365 days and uses the given node_id as CN and
+    SAN (DNSName).
+
+    Example:
+        >>> from usmd_rdsh.security.ed25519 import Ed25519Certificate
+        >>> kp = Ed25519Certificate.generate("myserver.local", "/tmp/mycert.pem")
+        >>> # File contains: PEM certificate then PEM private key
+        >>> with open("/tmp/mycert.pem", "rb") as f:
+        ...     data = f.read()
+        >>> assert b"-----BEGIN CERTIFICATE-----" in data
+        >>> assert b"-----BEGIN PRIVATE KEY-----" in data
+    """
+
+    @staticmethod
+    def generate(node_id: str, cert_dir: str) -> "Ed25519KeyPair":
+        """Generate a new Ed25519 key pair and a self-signed X.509 cert; write to file.
+
+        Creates an Ed25519 key pair, builds a self-signed certificate with
+        subject/issuer CN = node_id and SAN DNS = node_id, then writes
+        certificate (PEM) followed by private key (PEM, PKCS#8, unencrypted)
+        to the given path. Returns the same key pair for use in code.
+
+        Args:
+            node_id: Common name and DNS SAN for the certificate (e.g. hostname).
+            cert_dir: Directory to write PEM certificate + private key.
+
+        Returns:
+            Ed25519KeyPair: The generated key pair (seed/priv/pub in Base64URL).
+
+        Example:
+            >>> kp = Ed25519Certificate.generate("node1.example.com", "cert.pem")
+            >>> assert kp.pub32_b64u
+            >>> import os
+            >>> os.path.exists("cert.pem")
+            True
+        """
+        # New key pair (PyNaCl); same format as Ed25519KeyPair
+        kp = Ed25519KeyPair.generate()
+        # cryptography's Ed25519 private key expects 32-byte seed (not 64-byte priv)
+        pk = ed25519.Ed25519PrivateKey.from_private_bytes(unb64u(kp.seed32_b64u))
+
+        # Self-signed: subject and issuer are the same
+        subjet = issuer = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, node_id)])
+
+        now = datetime.now(timezone.utc)
+
+        # Build X.509 cert: CN, validity 1 year, SAN DNS = node_id
+        cert = (
+            x509.CertificateBuilder()
+            .subject_name(subjet)
+            .issuer_name(issuer)
+            .public_key(pk.public_key())
+            .serial_number(x509.random_serial_number())
+            .not_valid_before(now)
+            .not_valid_after(now + timedelta(days=365))
+            .add_extension(
+                x509.SubjectAlternativeName([x509.DNSName(node_id)]), critical=False
+            )
+            .sign(private_key=pk, algorithm=None)
+        )
+
+        cert_pem = cert.public_bytes(encoding=Encoding.PEM)
+        key_pem = pk.private_bytes(
+            encoding=Encoding.PEM,
+            format=PrivateFormat.PKCS8,
+            encryption_algorithm=NoEncryption(),
+        )
+
+        # Single file: cert first, then key (common for TLS servers)
+        os.makedirs(cert_dir, exist_ok=True)
+        with open(os.path.join(cert_dir, "node.crt"), "wb") as f:
+            f.write(cert_pem)
+        with open(os.path.join(cert_dir, "node.key"), "wb") as f:
+            f.write(key_pem)
+
+        return kp
+
+    @staticmethod
+    def load(cert_dir: str) -> "Ed25519KeyPair":
+        """Load an Ed25519 key pair from a directory containing node.key (PEM).
+
+        Reads the private key from ``{cert_dir}/node.key`` (PKCS#8 PEM, as
+        written by :meth:`generate`), then reconstructs an :class:`Ed25519KeyPair`
+        with the same seed/priv/pub in Base64URL. The certificate file
+        (e.g. ``node.crt``) is not required for loading the key pair.
+
+        Args:
+            cert_dir: Directory containing ``node.key`` (and optionally
+                      ``node.crt``).
+
+        Returns:
+            Ed25519KeyPair: Key pair loaded from the PEM file, with
+                            seed32_b64u, priv64_b64u, pub32_b64u and internal
+                            SigningKey populated.
+
+        Raises:
+            FileNotFoundError: If ``node.key`` is missing under ``cert_dir``.
+            ValueError: If the PEM data is not a valid Ed25519 private key.
+
+        Example:
+            >>> from usmd_rdsh.security.ed25519 import Ed25519Certificate, Ed25519KeyPair
+            >>> import tempfile, os
+            >>> with tempfile.TemporaryDirectory() as d:
+            ...     kp1 = Ed25519Certificate.generate("node1.local", d)
+            ...     kp2 = Ed25519Certificate.load(d)
+            ...     assert kp1.pub32_b64u == kp2.pub32_b64u
+            ...     assert kp1.sign(b"test") == kp2.sign(b"test")
+            >>>
+            >>> # Load from a custom path
+            >>> kp = Ed25519Certificate.load("/etc/myapp/certs")
+            >>> msg = b"authenticated"
+            >>> sig = kp.sign(msg)
+        """
+        key_path = os.path.join(cert_dir, "node.key")
+        with open(key_path, "rb") as f:
+            key_pem = f.read()
+
+        # Parse PEM and get cryptography Ed25519 private key
+        pk = load_pem_private_key(key_pem, password=None)
+        if not isinstance(pk, ed25519.Ed25519PrivateKey):
+            raise ValueError("node.key is not an Ed25519 private key")
+
+        # Export 32-byte raw seed (same as PyNaCl seed) and build Ed25519KeyPair
+        raw_seed_32 = pk.private_bytes(
+            encoding=Encoding.Raw,
+            format=PrivateFormat.Raw,
+            encryption_algorithm=NoEncryption(),
+        )
+        return Ed25519KeyPair.from_b64u(seed32_b64u=b64u(raw_seed_32))

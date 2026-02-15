@@ -1,6 +1,6 @@
-"""Here I Am packet decoder for NNDP protocol.
+"""HIA packet decoder for NNDP protocol.
 
-This module provides a decoder for the "Here I Am" packet type in the NNDP
+This module provides a decoder for the "HIA" packet type in the NNDP
 (Network Node Discovery Protocol). The decoder parses incoming UDP packets
 containing node discovery information and publishes events when valid packets
 are received.
@@ -17,7 +17,7 @@ Examples:
     Basic usage:
     >>> from usmd_rdsh.proto.base.bitvec import BitVec, Msb
     >>> from usmd_rdsh.proto.base.decoder import BitDecoder, FrameDecoder
-    >>> from usmd_rdsh.proto.nndp.base.env import MAGIC
+    >>> from usmd_rdsh.proto.base.env import PROTO_MAGIC
     >>>
     >>> # Create a frame decoder with packet data
     >>> frame_decoder = FrameDecoder[Msb](BitVec.from_bytes(packet_bytes, Msb))
@@ -32,11 +32,13 @@ Examples:
     ...     print("Packet decoded successfully")
 """
 
+from typing import Any
 from usmd_rdsh.managers.event import EVENT_BUS
 from usmd_rdsh.proto.base.bitvec import Msb
 from usmd_rdsh.proto.base.decoder import BitDecoder, Frame
 from usmd_rdsh.proto.base.event import EventDecoder
-from usmd_rdsh.proto.nndp.base.env import MAGIC, HereIAmData
+from usmd_rdsh.proto.base.env import PROTO_MAGIC
+from usmd_rdsh.proto.nndp.base.env import HereIAmData
 from usmd_rdsh.proto.nndp.server.events.here_i_am import HereIAmReceivedEvent
 from usmd_rdsh.utils.errors import Error, ErrorKind
 from usmd_rdsh.utils.node_state import NodeState
@@ -44,9 +46,9 @@ from usmd_rdsh.utils.result import Result
 
 
 class HereIAmDecoder(EventDecoder[Msb]):
-    """Decoder for "Here I Am" packets in the NNDP protocol.
+    """Decoder for "HIA" packets in the NNDP protocol.
 
-    This decoder parses incoming "Here I Am" packets from the network and
+    This decoder parses incoming "HIA" packets from the network and
     extracts node discovery information. Upon successful decoding, it publishes
     a HereIAmReceivedEvent to the global event bus, allowing other components
     to react to node discovery events.
@@ -74,7 +76,7 @@ class HereIAmDecoder(EventDecoder[Msb]):
     """
 
     def __init__(self, decoder: BitDecoder[Msb]) -> None:
-        """Initialize the Here I Am decoder.
+        """Initialize the HIA decoder.
 
         Args:
             decoder: The bit decoder instance used to read packet data from
@@ -90,8 +92,8 @@ class HereIAmDecoder(EventDecoder[Msb]):
         """
         self.decoder = decoder
 
-    def decode(self, frame: Frame[Msb]) -> Result[None, Error]:
-        """Decode a "Here I Am" packet from the frame.
+    def decode(self, *args: Any, frame: Frame[Msb]) -> Result[None, Error]:
+        """Decode a "HIA" packet from the frame.
 
         This method reads the packet structure from the frame, validates the
         magic number, extracts all fields, and publishes a HereIAmReceivedEvent
@@ -106,6 +108,7 @@ class HereIAmDecoder(EventDecoder[Msb]):
             - State (16 bits): Node state enumeration value
 
         Args:
+            *args: Additional arguments to the decoder
             frame: The frame containing the packet data to decode. The frame
                 must be in MSB-first bit ordering.
 
@@ -118,11 +121,11 @@ class HereIAmDecoder(EventDecoder[Msb]):
             >>> from usmd_rdsh.proto.base.decoder import FrameDecoder
             >>> from usmd_rdsh.proto.base.bitvec import BitVec, Msb
             >>>
-            >>> # Assume packet_bytes contains a valid "Here I Am" packet
+            >>> # Assume packet_bytes contains a valid "HIA" packet
             >>> frame_decoder = FrameDecoder[Msb](BitVec.from_bytes(packet_bytes, Msb))
             >>> decoder = HereIAmDecoder(frame_decoder.get_decoder())
             >>>
-            >>> result = decoder.decode(frame_decoder.get_frame())
+            >>> result = decoder.decode(None, frame_decoder.get_frame())
             >>> if result.is_ok():
             ...     # Event has been published to EVENT_BUS
             ...     print("Packet decoded and event published")
@@ -131,11 +134,17 @@ class HereIAmDecoder(EventDecoder[Msb]):
         """
         Result.hide()
 
+        if len(args) != 2:
+            return Result.Err(Error.new(ErrorKind.BAD_REQUEST, "Invalid arguments"))
+
+        pub32 = args[0]
+        ip = args[1]
+
         magic = self.decoder.read_data(16)
         if magic.is_err():
             return Result.Err(magic.unwrap_err())
 
-        if magic.unwrap().to_int().unwrap() != MAGIC:
+        if magic.unwrap().to_int().unwrap() != PROTO_MAGIC:
             return Result.Err(
                 Error.new(ErrorKind.PROTOCOL_ERROR, "Invalid magic number")
             )
@@ -163,6 +172,8 @@ class HereIAmDecoder(EventDecoder[Msb]):
         node_id_str = node_id_bytes.unwrap().to_bytes().decode("utf-8")
 
         data = HereIAmData(
+            ed25519_pub32=pub32,
+            ip=ip,
             version=version.unwrap().to_int().unwrap(),
             node_id=node_id_str,
             next_hia_pkt_time=next_hia_pkt_time.unwrap().to_int().unwrap(),

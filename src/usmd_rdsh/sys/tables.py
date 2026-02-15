@@ -30,15 +30,15 @@ Example usage:
     >>> # Add a node identity
     >>> node_id = NodeIdentity(
     ...     ed25519_pub32=b"\\x00" * 32,
-    ...     id="01ARZ3NDEKTSV4RRFFQ69G5FAV",
-    ...     ip="192.168.1.100",
+    ...     node_id="01ARZ3NDEKTSV4RRFFQ69G5FAV",
+    ...     node_ip="192.168.1.100",
     ...     ttl=300,
     ... )
     >>> tables.nit.append(node_id)
     >>>
     >>> # Add node access information
     >>> access = NodeAccess(
-    ...     pubkey="base64url_encoded_key",
+    ...     ed25519_pub_key_32="base64url_encoded_key",
     ...     roles=[Role.NODE_OPERATOR],
     ... )
     >>> tables.nal.append(access)
@@ -46,7 +46,7 @@ Example usage:
     >>> # Access the tables
     >>> assert len(tables.nit) == 1
     >>> assert len(tables.nal) == 1
-    >>> assert tables.nit[0].id == "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+    >>> assert tables.nit[0].node_id == "01ARZ3NDEKTSV4RRFFQ69G5FAV"
 """
 
 from dataclasses import dataclass, field
@@ -99,22 +99,22 @@ class TableAggregator:
         >>> # Add a node identity
         >>> identity = NodeIdentity(
         ...     ed25519_pub32=b"\\x00" * 32,
-        ...     id="01ARZ3NDEKTSV4RRFFQ69G5FAV",
-        ...     ip="192.168.1.100",
+        ...     node_id="01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        ...     node_ip="192.168.1.100",
         ...     ttl=300,
         ... )
         >>> tables.nit.append(identity)
         >>>
         >>> # Add access control information
         >>> access = NodeAccess(
-        ...     pubkey="dGVzdF9wdWJsaWNfa2V5XzMyX2J5dGVz",
+        ...     ed25519_pub_key_32="dGVzdF9wdWJsaWNfa2V5XzMyX2J5dGVz",
         ...     roles=[Role.NODE_OPERATOR, Role.NODE_EXECUTOR],
         ... )
         >>> tables.nal.append(access)
         >>>
         >>> # Add neighbor information
         >>> neighbor = NodeNeighbor(
-        ...     id="01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        ...     node_id="01ARZ3NDEKTSV4RRFFQ69G5FAV",
         ...     hosted_services=["service1", "service2"],
         ...     node_references=["ref1", "ref2"],
         ...     usage={"cpu": 0.5, "memory": 0.7},
@@ -127,8 +127,8 @@ class TableAggregator:
         >>> assert len(tables.nit) == 1
         >>> assert len(tables.nal) == 1
         >>> assert len(tables.unl) == 1
-        >>> assert tables.nit[0].id == "01ARZ3NDEKTSV4RRFFQ69G5FAV"
-        >>> assert tables.nal[0].pubkey == "dGVzdF9wdWJsaWNfa2V5XzMyX2J5dGVz"
+        >>> assert tables.nit[0].node_id == "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+        >>> assert tables.nal[0].ed25519_pub_key_32 == "dGVzdF9wdWJsaWNfa2V5XzMyX2J5dGVz"
         >>> assert tables.unl[0].state == NodeState.ACTIVE
         >>>
         >>> # Each instance has its own independent tables

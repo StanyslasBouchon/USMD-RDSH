@@ -2,7 +2,7 @@
 
 This module provides a controller class for managing NNDP client and server services,
 allowing nodes to discover each other on the network by broadcasting and receiving
-"Here I Am" packets.
+"HIA" packets.
 
 Examples:
     Basic usage:
@@ -14,7 +14,7 @@ Examples:
     >>> os.environ["NNDP_CLIENT_PORT"] = "8080"
     >>> os.environ["NNDP_SERVER_PORT"] = "8081"
     >>>
-    >>> # Define callback for received Here I Am packets
+    >>> # Define callback for received HIA packets
     >>> def on_here_i_am(data: HereIAmData) -> None:
     ...     print(f"Received from: {data.node_id}, state: {data.state}")
     >>>
@@ -51,7 +51,7 @@ from usmd_rdsh.security.ed25519 import Ed25519KeyPair
 class NNDPController:
     """Controller for managing NNDP client and server services.
 
-    This class coordinates both the client (broadcasting "Here I Am" packets) and
+    This class coordinates both the client (broadcasting "HIA" packets) and
     server (listening for incoming packets) components of the NNDP protocol. It
     manages the lifecycle of both services and handles event subscriptions.
 
@@ -61,7 +61,8 @@ class NNDPController:
 
     Examples:
         >>> import os
-        >>> from usmd_rdsh.proto.nndp.base.env import HereIAmData, VERSION
+        >>> from usmd_rdsh.proto.nndp.base.env import HereIAmData
+        >>> from usmd_rdsh.proto.base.env import NNDP_VERSION
         >>> from usmd_rdsh.utils.node_state import NodeState
         >>>
         >>> os.environ["NNDP_CLIENT_PORT"] = "8080"
@@ -72,7 +73,7 @@ class NNDPController:
         >>>
         >>> def payload_provider() -> HereIAmData:
         ...     return HereIAmData(
-        ...         version=VERSION,
+        ...         version=NNDP_VERSION,
         ...         node_id="my-node",
         ...         next_hia_pkt_time=int((time.time() + 15.0) * 1000),
         ...         state=NodeState.ACTIVE,
@@ -93,7 +94,7 @@ class NNDPController:
         """Initialize the NNDP controller.
 
         Args:
-            cb_hia: Callback function called when a "Here I Am" packet is received.
+            cb_hia: Callback function called when a "HIA" packet is received.
                 The callback receives a HereIAmData object containing the node
                 information.
             client_pp: Payload provider function that returns HereIAmData for
@@ -107,14 +108,14 @@ class NNDPController:
             >>>
             >>> def payload_provider() -> HereIAmData:
             ...     return HereIAmData(
-            ...         version=VERSION,
+            ...         version=NNDP_VERSION,
             ...         node_id="my-node",
             ...         next_hia_pkt_time=int((time.time() + 15.0) * 1000),
             ...         state=NodeState.ACTIVE,
             ...     )
             >>>
-            >>> ed25519_keypair = Ed25519KeyPair.generate()
-            >>> controller = NNDPController(cb_hia=on_here_i_am, client_pp=payload_provider, ed25519_keypair=ed25519_keypair)
+            >>> ed25519_keypair = Ed25519Certificate.generate("my-node", "~/.usmd/")
+        >>> controller = NNDPController(cb_hia=on_here_i_am, client_pp=payload_provider, ed25519_keypair=ed25519_keypair)
         """
         self._cb_hia = cb_hia
         self._client_pp = client_pp
@@ -132,7 +133,7 @@ class NNDPController:
     def _create_client(self) -> None:
         """Create the NNDP client service.
 
-        Initializes the client mount service that will broadcast "Here I Am"
+        Initializes the client mount service that will broadcast "HIA"
         packets using the configured payload provider.
 
         Examples:
@@ -151,7 +152,7 @@ class NNDPController:
         """Create the NNDP server service.
 
         Initializes the server mount service that will listen for incoming
-        "Here I Am" packets and subscribes to the event bus to receive decoded
+        "HIA" packets and subscribes to the event bus to receive decoded
         packets.
 
         Examples:
@@ -172,7 +173,7 @@ class NNDPController:
         """Start the NNDP controller.
 
         Creates and starts both the client and server services. The client will
-        begin broadcasting "Here I Am" packets periodically, and the server will
+        begin broadcasting "HIA" packets periodically, and the server will
         start listening for incoming packets.
 
         Examples:

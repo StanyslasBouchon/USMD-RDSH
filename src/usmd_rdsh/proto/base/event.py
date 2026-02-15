@@ -38,7 +38,7 @@ Example usage:
 """
 
 from abc import ABC, abstractmethod
-from typing import Generic
+from typing import Any, Generic
 
 from usmd_rdsh.proto.base.bitvec import R
 from usmd_rdsh.utils.result import Result
@@ -100,7 +100,7 @@ class EventDecoder(Generic[R], ABC):
 
     Example:
         >>> class LoginDecoder(EventDecoder[R]):
-        ...     def decode(self, frame: Frame[R]) -> Result[None, Error]:
+        ...     def decode(self, *args: Any, frame: Frame[R]) -> Result[None, Error]:
         ...         user_id = frame.read_int(8)  # Read event data
         ...         return Result.Ok(None)
         ...
@@ -109,9 +109,11 @@ class EventDecoder(Generic[R], ABC):
     """
 
     @abstractmethod
-    def decode(self, frame: Frame[R]) -> Result[None, Error]:
+    def decode(self, *args: Any, frame: Frame[R]) -> Result[None, Error]:
         """Decode event data from a frame.
 
         Args:
+            *args: Additional arguments to the decoder
             frame (Frame): The frame containing the event data
         """
+        return Result.Ok(None)

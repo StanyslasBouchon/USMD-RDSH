@@ -10,7 +10,7 @@ import time
 import pytest
 
 from usmd_rdsh.managers.event import EVENT_BUS
-from usmd_rdsh.proto.nndp.base.env import HereIAmData, VERSION
+from usmd_rdsh.proto.nndp.base.env import HereIAmData, NNDP_VERSION
 from usmd_rdsh.proto.nndp.client.mount import MountService as ClientMountService
 from usmd_rdsh.proto.nndp.server.events.here_i_am import HereIAmReceivedEvent
 from usmd_rdsh.proto.nndp.server.mount import MountService as ServerMountService
@@ -31,7 +31,7 @@ def nndp_ports():
 def test_nndp_packet_send_receive(nndp_ports):  # pylint: disable=redefined-outer-name
     """Test that NNDP packets can be sent and received correctly.
 
-    This test creates a server that listens for Here I Am packets and a client
+    This test creates a server that listens for HIA packets and a client
     that sends them. It verifies that the data received matches the data sent.
 
     Args:
@@ -47,19 +47,19 @@ def test_nndp_packet_send_receive(nndp_ports):  # pylint: disable=redefined-oute
     lock = threading.Lock()
 
     def on_here_i_am_received(event: HereIAmReceivedEvent) -> None:
-        """Capture received Here I Am event."""
+        """Capture received HIA event."""
         with lock:
             received_data.append(event.data)
 
-    # Subscribe to Here I Am events on the global EVENT_BUS
+    # Subscribe to HIA events on the global EVENT_BUS
     subscription = EVENT_BUS.subscribe(HereIAmReceivedEvent, on_here_i_am_received)
 
     try:
         # Create payload provider function
         def payload_provider() -> HereIAmData:
-            """Provide Here I Am data for the client."""
+            """Provide HIA data for the client."""
             return HereIAmData(
-                version=VERSION,
+                version=NNDP_VERSION,
                 node_id=node_id,
                 next_hia_pkt_time=int((time.time() + 0.1) * 1000),
                 state=state,
@@ -99,8 +99,8 @@ def test_nndp_packet_send_receive(nndp_ports):  # pylint: disable=redefined-oute
             received_here_i_am.state == state
         ), f"State mismatch: expected {state}, got {received_here_i_am.state}"
         assert (
-            received_here_i_am.version == VERSION
-        ), f"Version mismatch: expected {VERSION}, got {received_here_i_am.version}"
+            received_here_i_am.version == NNDP_VERSION
+        ), f"Version mismatch: expected {NNDP_VERSION}, got {received_here_i_am.version}"
 
         # Verify next_hia_pkt_time is close (within 1 second)
         time_diff = abs(received_here_i_am.next_hia_pkt_time - next_hia_pkt_time)

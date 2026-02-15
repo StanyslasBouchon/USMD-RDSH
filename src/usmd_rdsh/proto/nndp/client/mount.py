@@ -1,6 +1,6 @@
-"""UDP service for sending Here I Am packets periodically via broadcast.
+"""UDP service for sending HIA packets periodically via broadcast.
 
-This module provides a UDP service that sends Here I Am packets every 15 seconds
+This module provides a UDP service that sends HIA packets every 15 seconds
 via broadcast to announce the node's presence on the network.
 """
 
@@ -13,7 +13,8 @@ from typing import Awaitable, Callable, Optional, Union
 
 from usmd_rdsh.proto.base.bitvec import Msb
 from usmd_rdsh.proto.base.encoder import FrameEncoder
-from usmd_rdsh.proto.nndp.base.env import VERSION, HereIAmData
+from usmd_rdsh.proto.base.env import NNDP_VERSION
+from usmd_rdsh.proto.nndp.base.env import HereIAmData
 from usmd_rdsh.proto.nndp.client.packets.here_i_am import HereIAmPacket
 from usmd_rdsh.security.ed25519 import Ed25519KeyPair, unb64u
 from usmd_rdsh.utils.errors import Error, ErrorKind
@@ -23,9 +24,9 @@ PayloadProvider = Union[Callable[[], HereIAmData], Callable[[], Awaitable[HereIA
 
 
 class MountService:
-    """UDP service for periodically sending Here I Am packets via broadcast.
+    """UDP service for periodically sending HIA packets via broadcast.
 
-    This service creates a UDP socket configured for broadcast and sends Here I Am
+    This service creates a UDP socket configured for broadcast and sends HIA
     packets every 15 seconds to announce the node's presence on the network.
     The service runs in a separate thread and can be started and stopped as needed.
 
@@ -55,7 +56,7 @@ class MountService:
         """Initialize the mount service.
 
         Args:
-            payload_provider: The provider for the payload for the Here I Am packet
+            payload_provider: The provider for the payload for the HIA packet
             send_port: The UDP port for sending broadcast packets
             receive_port: The UDP port for receiving packets (socket will bind to this)
             ed25519_keypair: The Ed25519 key pair for the node
@@ -88,7 +89,7 @@ class MountService:
         """Start the UDP broadcast service.
 
         Creates a UDP socket configured for broadcast and starts a background
-        thread that sends Here I Am packets at the configured interval.
+        thread that sends HIA packets at the configured interval.
 
         Examples:
             >>> service = MountService(8080, 8081)
@@ -110,7 +111,7 @@ class MountService:
                 )
                 self.thread.start()
                 logging.info(
-                    "[NNDP] MountService started: sending Here I Am packets via broadcast "
+                    "[NNDP] MountService started: sending HIA packets via broadcast "
                     "to port %d, receiving on port %d, every %.1f seconds",
                     self.send_port,
                     self.receive_port,
@@ -155,7 +156,7 @@ class MountService:
     async def _run(self) -> None:
         """Main service loop running in background thread.
 
-        Continuously sends Here I Am packets at the configured interval
+        Continuously sends HIA packets at the configured interval
         until the service is stopped.
         """
         while self.running:
@@ -163,9 +164,7 @@ class MountService:
                 result = await self._send_packet()
                 if result.is_err():
                     error = result.unwrap_err()
-                    logging.error(
-                        "[NNDP] Failed to send Here I Am packet: %s", error.message
-                    )
+                    logging.error("[NNDP] Failed to send HIA packet: %s", error.message)
             except (OSError, RuntimeError) as e:
                 logging.error("[NNDP] Error in MountService loop: %s", e)
 
@@ -177,9 +176,9 @@ class MountService:
                 elapsed += sleep_time
 
     async def _send_packet(self) -> Result[None, Error]:
-        """Encode and send a Here I Am packet via UDP broadcast.
+        """Encode and send a HIA packet via UDP broadcast.
 
-        Creates a Here I Am packet, encodes it using FrameEncoder, converts
+        Creates a HIA packet, encodes it using FrameEncoder, converts
         it to bytes, and sends it via UDP broadcast to all nodes on the network.
 
         Returns:
@@ -208,7 +207,7 @@ class MountService:
             return Result.Err(encode_result.unwrap_err())
 
         # Encode the frame
-        frame_encoder = FrameEncoder[Msb](version=VERSION)
+        frame_encoder = FrameEncoder[Msb](version=NNDP_VERSION)
         frame_result = frame_encoder.encode(packet)
         if frame_result.is_err():
             return Result.Err(frame_result.unwrap_err())
@@ -218,7 +217,7 @@ class MountService:
         packet_bytes = bitvec.to_bytes()
 
         # Sign the packet
-        signed_packet = bytes(self.ed25519_keypair.sk.sign(packet_bytes))
+        signed_packet = self.ed25519_keypair.sign(packet_bytes)
         pub_key_bytes = unb64u(self.ed25519_keypair.pub32_b64u)
         full_packet = pub_key_bytes + signed_packet
 
@@ -227,7 +226,7 @@ class MountService:
             broadcast_address = "255.255.255.255"
             self.socket.sendto(full_packet, (broadcast_address, self.send_port))
             logging.debug(
-                "[NNDP] Sent Here I Am packet (%d bytes) via broadcast to port %d",
+                "[NNDP] Sent HIA packet (%d bytes) via broadcast to port %d",
                 len(full_packet),
                 self.send_port,
             )
@@ -241,10 +240,10 @@ class MountService:
             )
 
     async def _get_payload(self) -> HereIAmData:
-        """Get the payload for the Here I Am packet.
+        """Get the payload for the HIA packet.
 
         Returns:
-            HereIAmData: The payload for the Here I Am packet
+            HereIAmData: The payload for the HIA packet
         """
         res = self.payload_provider()
         if asyncio.iscoroutinefunction(self.payload_provider):

@@ -1,5 +1,4 @@
 import sys
-import time
 import logging
 from typing import Optional
 import dotenv
@@ -15,10 +14,7 @@ CORE: Optional[Core] = None
 
 def main() -> None:
     """Main function."""
-    while True:
-        if not CORE.is_running():
-            CORE.start()
-        time.sleep(1)
+    CORE.run()
 
 
 if __name__ == "__main__":

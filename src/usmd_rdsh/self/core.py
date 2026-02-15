@@ -8,7 +8,7 @@ The Core class handles:
     - Node identity and cryptographic properties
     - Node state management
     - NNDP packet broadcasting and reception
-    - Event handling for incoming "Here I Am" packets
+    - Event handling for incoming "HIA" packets
 
 Example usage:
 
@@ -22,7 +22,7 @@ Example usage:
     >>> core.start()
     >>> assert core.is_running()
     >>>
-    >>> # The core will now broadcast "Here I Am" packets and listen for others
+    >>> # The core will now broadcast "HIA" packets and listen for others
     >>> time.sleep(2)  # Let it run for a bit
     >>>
     >>> # Stop the core
@@ -31,14 +31,14 @@ Example usage:
 """
 
 import logging
+import os
+import socket
 import time
-from usmd_rdsh.proto.nndp.base.env import (
-    HereIAmData,
-    get_node_properties,
-    NodeProperties,
-)
+from usmd_rdsh.proto.base.env import get_node_properties, NodeProperties
+from usmd_rdsh.proto.nndp.base.env import HereIAmData
 from usmd_rdsh.proto.nndp.server.events.here_i_am import HereIAmReceivedEvent
 from usmd_rdsh.self.nndp import NNDPController
+from usmd_rdsh.sys.nit import NodeIdentity
 from usmd_rdsh.sys.tables import TableAggregator
 from usmd_rdsh.utils.node_state import NodeState
 
@@ -99,7 +99,7 @@ class Core:
         """Initialize the Core instance.
 
         Creates and configures the NNDP controller with callback functions
-        for handling incoming "Here I Am" packets and providing payload data
+        for handling incoming "HIA" packets and providing payload data
         for outgoing packets.
 
         Example:
@@ -111,18 +111,18 @@ class Core:
         self._nndp: NNDPController = NNDPController(
             cb_hia=self._nndp_cb_hia,
             client_pp=self._nndp_client_pp,
-            ed25519_keypair=self.properties.ed25519_keypair,
+            ed25519_keypair=self.properties.self_ed25519_keypair,
         )
 
     def _nndp_cb_hia(self, hia_event: HereIAmReceivedEvent) -> None:
-        """Callback for handling received "Here I Am" packets.
+        """Callback for handling received "HIA" packets.
 
-        This method is called by the NNDP controller whenever a "Here I Am"
+        This method is called by the NNDP controller whenever a "HIA"
         packet is received from another node. It filters out packets from the
         current node itself and logs information about packets from other nodes.
 
         Args:
-            hia_event: Event containing the decoded "Here I Am" packet data
+            hia_event: Event containing the decoded "HIA" packet data
 
         Note:
             Packets from the current node (matching self.properties.node_id)
@@ -148,20 +148,26 @@ class Core:
         if hia_event.data.node_id == self.properties.node_id:
             return
 
+        tbi = int(os.getenv("NNDP_HIA_TROLERANCE_BEFORE_INACTIVE_IN_SEC", "5"))
+
+        self.tables.nit.append(
+            NodeIdentity(
+                ed25519_pub32=hia_event.data.ed25519_pub32,
+                node_id=hia_event.data.node_id,
+                node_ip=hia_event.data.ip,
+                ttl=int(tbi * 1000 + hia_event.data.next_hia_pkt_time),
+            )
+        )
+
         logging.info(
-            "[CORE] Received Here I Am packet from %s (state: %s, "
-            "next HIA packet time: %d, version: %d)",
-            hia_event.data.node_id,
-            hia_event.data.state.name,
-            hia_event.data.next_hia_pkt_time,
-            hia_event.data.version,
+            "[NNDP] Received HIA packet from %s, table updated", hia_event.data.node_id
         )
 
     def _nndp_client_pp(self) -> HereIAmData:
-        """Payload provider for NNDP "Here I Am" packets.
+        """Payload provider for NNDP "HIA" packets.
 
         This method is called by the NNDP client service to generate the
-        payload data for outgoing "Here I Am" packets. It creates a HereIAmData
+        payload data for outgoing "HIA" packets. It creates a HereIAmData
         instance with the current node's identity, state, and the timestamp
         for the next packet (15 seconds in the future).
 
@@ -185,14 +191,16 @@ class Core:
             node_id=self.properties.node_id,
             next_hia_pkt_time=int((time.time() + 15.0) * 1000),
             state=self.state,
+            ed25519_pub32=self.properties.self_ed25519_keypair.pub32_b64u,
+            ip=socket.gethostbyname(socket.gethostname()),
         )
 
     def start(self) -> None:
         """Start the core and begin NNDP services.
 
         This method starts the NNDP controller, which begins:
-            - Broadcasting "Here I Am" packets periodically
-            - Listening for incoming "Here I Am" packets from other nodes
+            - Broadcasting "HIA" packets periodically
+            - Listening for incoming "HIA" packets from other nodes
 
         The core must be started before it can participate in network discovery.
 
@@ -205,11 +213,56 @@ class Core:
         """
         self._nndp.start()
 
+    def run(self) -> None:
+        """Run the core in a continuous loop, ensuring it stays active.
+
+        This method runs the core in a blocking loop that continuously monitors
+        the core's running state. If the core stops running for any reason, it
+        will automatically restart the NNDP services. The loop sleeps for 1 second
+        between checks to avoid excessive CPU usage.
+
+        The method will continue running until the core is explicitly stopped
+        (e.g., via KeyboardInterrupt or calling stop() from another thread).
+
+        Note:
+            This is a blocking method that will run indefinitely until interrupted.
+            It should typically be called from the main thread or a dedicated
+            worker thread. The method ensures the core remains active by
+            automatically restarting services if they stop unexpectedly.
+
+        Example:
+            >>> import threading
+            >>> import time
+            >>> from usmd_rdsh.self.core import Core
+            >>>
+            >>> # Create and start the core
+            >>> core = Core()
+            >>> core.start()
+            >>>
+            >>> # Run the core in a separate thread
+            >>> runner_thread = threading.Thread(target=core.run, daemon=True)
+            >>> runner_thread.start()
+            >>>
+            >>> # The core will continue running and auto-restart if needed
+            >>> time.sleep(2)
+            >>> assert core.is_running()
+            >>>
+            >>> # Stop the core (this will exit the run loop)
+            >>> core.stop()
+            >>> time.sleep(0.1)
+            >>> # The run loop will exit when is_running() returns False
+        """
+        while True:
+            if not self.is_running():
+                self.start()
+
+            time.sleep(1)
+
     def stop(self) -> None:
         """Stop the core and shutdown NNDP services.
 
         This method stops the NNDP controller, which halts:
-            - Broadcasting "Here I Am" packets
+            - Broadcasting "HIA" packets
             - Listening for incoming packets
 
         After stopping, the core can be restarted by calling start() again.

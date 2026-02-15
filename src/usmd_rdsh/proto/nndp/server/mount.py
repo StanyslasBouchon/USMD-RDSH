@@ -1,6 +1,6 @@
-"""UDP service for receiving and decoding Here I Am packets.
+"""UDP service for receiving and decoding HIA packets.
 
-This module provides a UDP service that listens for Here I Am packets on a
+This module provides a UDP service that listens for HIA packets on a
 specified port, decodes them, and publishes events when packets are received.
 """
 
@@ -18,9 +18,9 @@ from usmd_rdsh.utils.result import Result
 
 
 class MountService:
-    """UDP service for receiving and decoding Here I Am packets.
+    """UDP service for receiving and decoding HIA packets.
 
-    This service creates a UDP socket that listens for Here I Am packets on a
+    This service creates a UDP socket that listens for HIA packets on a
     specified port. It decodes incoming packets and publishes events when valid
     packets are received from a specific source port. The service runs in a
     separate thread and can be started and stopped as needed.
@@ -125,7 +125,7 @@ class MountService:
         """Main service loop running in background thread.
 
         Continuously listens for incoming UDP packets, validates the source port,
-        and decodes valid Here I Am packets.
+        and decodes valid HIA packets.
         """
         if not self.socket:
             return
@@ -149,11 +149,11 @@ class MountService:
                         continue
 
                     # Decode the packet
-                    result = self._decode_packet(data)
+                    result = self._decode_packet(data, addr)
                     if result.is_err():
                         error = result.unwrap_err()
                         logging.warning(
-                            "[NNDP] Failed to decode Here I Am packet: %s",
+                            "[NNDP] Failed to decode HIA packet: %s",
                             error.message,
                         )
                 except socket.timeout:
@@ -163,14 +163,17 @@ class MountService:
                 if self.running:
                     logging.error("[NNDP] Error in MountService loop: %s", e)
 
-    def _decode_packet(self, packet_bytes: bytes) -> Result[None, Error]:
-        """Decode a Here I Am packet from bytes.
+    def _decode_packet(
+        self, packet_bytes: bytes, addr: tuple[str, int]
+    ) -> Result[None, Error]:
+        """Decode a HIA packet from bytes.
 
         Converts bytes to BitVec, decodes the frame structure, and then decodes
-        the Here I Am packet data.
+        the HIA packet data.
 
         Args:
             packet_bytes: The raw UDP packet bytes to decode
+            addr: The address of the sender
 
         Returns:
             Result[None, Error]: Ok(None) if packet was decoded successfully,
@@ -205,7 +208,7 @@ class MountService:
 
             frame: Frame[Msb] = frame_result.unwrap()
 
-            # Check if this is a Here I Am packet (event ID 0x0001)
+            # Check if this is a HIA packet (event ID 0x0001)
             if frame.event != 0x0001:
                 return Result.Err(
                     Error.new(
@@ -214,15 +217,15 @@ class MountService:
                     )
                 )
 
-            # Create a new decoder from the frame data for Here I Am decoding
+            # Create a new decoder from the frame data for HIA decoding
             data_decoder = BitDecoder[Msb](frame.data)
             here_i_am_decoder = HereIAmDecoder(data_decoder)
-            decode_result = here_i_am_decoder.decode(frame)
+            decode_result = here_i_am_decoder.decode(pub_key, addr[0], frame=frame)
             if decode_result.is_err():
                 return Result.Err(decode_result.unwrap_err())
 
             logging.debug(
-                "[NNDP] Successfully decoded Here I Am packet (version=%d, event=%d, "
+                "[NNDP] Successfully decoded HIA packet (version=%d, event=%d, "
                 "data_size=%d)",
                 frame.version,
                 frame.event,
