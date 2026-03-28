@@ -5,3 +5,4 @@ __pycache__
 usmd_keys.json
 usmd.yaml
 usmd_rdsh.egg-info
+usmd.sock

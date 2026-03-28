@@ -38,7 +38,7 @@
       <!-- Role badge -->
       <span class="badge badge-role">{{ n.role }}</span>
 
-      {% if node._is_local %}<span class="badge bg-secondary ms-auto">local</span>{% endif %}
+      {% if node.is_local %}<span class="badge bg-secondary ms-auto">local</span>{% endif %}
 
       <!-- Link to detail page -->
       <a href="{% url 'node_detail' n.address %}"

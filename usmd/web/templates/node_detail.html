@@ -28,7 +28,7 @@
         <span class="badge badge-state-default fs-6">{{ n.state }}</span>
       {% endif %}
       <span class="badge badge-role">{{ n.role }}</span>
-      {% if node_data._is_local %}<span class="badge bg-secondary">local</span>{% endif %}
+      {% if node_data.is_local %}<span class="badge bg-secondary">local</span>{% endif %}
     </div>
     <div class="row g-3">
       <div class="col-sm-4">

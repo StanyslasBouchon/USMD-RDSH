@@ -174,13 +174,55 @@ def _run_daemon(args: argparse.Namespace) -> None:
 
     daemon = NodeDaemon.from_config(cfg)
 
+    if sys.platform == "win32":
+        _run_daemon_windows(daemon)
+    else:
+        try:
+            asyncio.run(daemon.run())
+        except KeyboardInterrupt:
+            pass
+        except Exception as exc:  # pylint: disable=broad-except
+            logging.critical("[\x1b[38;5;51mUSMD\x1b[0m] Fatal error: %s", exc)
+            sys.exit(1)
+
+
+def _run_daemon_windows(daemon: "NodeDaemon") -> None:
+    """Run the daemon on Windows with proper Ctrl+C support.
+
+    On Windows the event loop can block indefinitely in native I/O waits
+    (IocpProactor), preventing Python's signal handler from running and making
+    Ctrl+C appear to hang.  A lightweight periodic wakeup callback (every
+    250 ms) gives the interpreter a chance to process pending signals.
+    """
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    def _wakeup() -> None:
+        """Reschedule itself every 250 ms so signals can be delivered."""
+        loop.call_later(0.25, _wakeup)
+
+    loop.call_soon(_wakeup)
+    main_task = loop.create_task(daemon.run())
+
     try:
-        asyncio.run(daemon.run())
+        loop.run_until_complete(main_task)
     except KeyboardInterrupt:
-        pass
+        logging.info("[\x1b[38;5;51mUSMD\x1b[0m] Arrêt demandé (Ctrl+C)…")
+        main_task.cancel()
+        try:
+            loop.run_until_complete(main_task)
+        except asyncio.CancelledError:
+            pass
     except Exception as exc:  # pylint: disable=broad-except
         logging.critical("[\x1b[38;5;51mUSMD\x1b[0m] Fatal error: %s", exc)
-        sys.exit(1)
+    finally:
+        # Cancel any remaining tasks (e.g. web dashboard, heartbeat)
+        pending = asyncio.all_tasks(loop)
+        for task in pending:
+            task.cancel()
+        if pending:
+            loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+        loop.close()
 
 
 # ---------------------------------------------------------------------------

@@ -99,7 +99,7 @@ async def _collect_all_nodes() -> list[dict]:
 
     # Local node (direct call — no network)
     local_snap = state.snapshot_fn()
-    local_snap["_is_local"] = True
+    local_snap["is_local"] = True
     nodes = [local_snap]
 
     # Remote nodes listed in the NIT
@@ -117,7 +117,7 @@ async def _collect_all_nodes() -> list[dict]:
     results = await asyncio.gather(*tasks, return_exceptions=True)
     for addr, snap in zip(remote_addrs, results):
         if isinstance(snap, dict) and snap:
-            snap["_is_local"] = False
+            snap["is_local"] = False
             nodes.append(snap)
         elif snap and not isinstance(snap, Exception):
             pass  # None — node unreachable
@@ -176,7 +176,7 @@ async def node_detail(request: HttpRequest, address: str) -> HttpResponse:
     local_addr = state.snapshot_fn().get("node", {}).get("address", "")
     if address in (local_addr, "local"):
         snap = state.snapshot_fn()
-        snap["_is_local"] = True
+        snap["is_local"] = True
     else:
         snap = await _fetch_remote_snapshot(address, state.ncp_port)
         if not snap:
@@ -184,7 +184,7 @@ async def node_detail(request: HttpRequest, address: str) -> HttpResponse:
                 "error": f"Nœud {address} injoignable.",
                 "address": address,
             })
-        snap["_is_local"] = False
+        snap["is_local"] = False
 
     return render(request, "node_detail.html", {"node_data": snap, "address": address})
 
