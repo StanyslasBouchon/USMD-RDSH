@@ -178,6 +178,7 @@ usd:
 bootstrap: false         # true = create a new USD; false = join existing
 keys_file: /var/lib/usmd/usmd_keys.json
 nndp_ttl: 30
+ctl_socket: /run/usmd/usmd.sock
 
 # -----------------------------------------------------------------------
 # Ports (spec values — change only on conflict)
@@ -186,6 +187,7 @@ ports:
   ncp: 5626
   nndp_listen: 5221
   nndp_send: 5222
+  broadcast: auto        # "auto" = diffuse sur toutes les interfaces ; ou "192.168.1.255"
 EOF
     chown root:"${SERVICE_USER}" "${CONFIG_FILE}"
     chmod 640 "${CONFIG_FILE}"
@@ -224,6 +226,10 @@ TimeoutStopSec=30
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=usmd
+
+# Runtime directory (creates /run/usmd, owned by usmd, cleared on reboot)
+RuntimeDirectory=usmd
+RuntimeDirectoryMode=0755
 
 # Security hardening
 NoNewPrivileges=yes
@@ -282,3 +288,4 @@ echo -e "    ${YELLOW}systemctl stop usmd${NC}            — stop"
 echo
 echo -e "  Edit ${CYAN}${CONFIG_FILE}${NC} then restart the service."
 echo
+                                                                                                                                                                                                                                                                                                                                                                                                             

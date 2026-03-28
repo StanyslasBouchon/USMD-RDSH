@@ -1,10 +1,15 @@
 """NNDP service — UDP broadcaster and listener for USMD-RDSH.
 
-Broadcasts a signed Here-I-Am (HIA) packet every TTL seconds on the
-broadcast address (source port 5222, destination port 5221).
+Broadcasts a signed Here-I-Am (HIA) packet every TTL seconds on **every**
+active network interface (source port 5222, destination port 5221).
+When ``broadcast_address`` is ``"auto"`` (the default) the service enumerates
+all IPv4 interfaces at each cycle and sends a directed broadcast per interface
+(e.g. ``192.168.1.255``).  If ``psutil`` is not installed it falls back to the
+limited broadcast ``255.255.255.255``.  A specific address can always be forced
+by passing it explicitly.
 
-Listens on UDP port 5221 for incoming HIA packets. For every valid,
-cryptographically-verified packet a caller-supplied callback is invoked
+Listens on UDP port 5221 for incoming HIA packets on all interfaces.  For every
+valid, cryptographically-verified packet a caller-supplied callback is invoked
 so the daemon can initiate the NCP join handshake.
 
 Examples:
@@ -33,6 +38,53 @@ from ..nndp.protocol.here_i_am import HereIAmPacket, PACKET_SIZE
 # Offset into a raw HIA packet where the sender's Ed25519 public key starts.
 _PUB_KEY_OFFSET = 4   # 4 bytes NNDP version prefix
 _PUB_KEY_SIZE = 32
+
+_FALLBACK_BROADCAST = "255.255.255.255"
+
+
+def _get_interface_broadcasts(fallback: str) -> list[str]:
+    """Return the list of IPv4 broadcast addresses to use for NNDP.
+
+    When *fallback* is a specific IP address it is returned as-is (single
+    element list), which lets operators pin broadcasts to a particular subnet.
+
+    When *fallback* is ``"auto"`` the function enumerates every active IPv4
+    interface via ``psutil`` (optional dependency) and collects their directed
+    broadcast addresses.  If ``psutil`` is unavailable, or if enumeration
+    yields no usable address, ``["255.255.255.255"]`` is returned as a
+    safe fallback.
+
+    Args:
+        fallback: Either ``"auto"`` or an explicit broadcast IP such as
+            ``"192.168.1.255"`` or ``"255.255.255.255"``.
+
+    Returns:
+        list[str]: One or more broadcast addresses to send HIA packets to.
+
+    Examples:
+        >>> addrs = _get_interface_broadcasts("10.255.255.255")
+        >>> addrs
+        ['10.255.255.255']
+        >>> isinstance(_get_interface_broadcasts("auto"), list)
+        True
+    """
+    if fallback != "auto":
+        return [fallback]
+
+    try:
+        import psutil  # pylint: disable=import-outside-toplevel
+
+        broadcasts: list[str] = []
+        for iface_addrs in psutil.net_if_addrs().values():
+            for addr in iface_addrs:
+                if addr.family == socket.AF_INET and addr.broadcast:
+                    broadcasts.append(addr.broadcast)
+        if broadcasts:
+            return broadcasts
+    except ImportError:
+        pass
+
+    return [_FALLBACK_BROADCAST]
 
 
 class _NndpListenerProtocol(asyncio.DatagramProtocol):
@@ -119,7 +171,7 @@ class NndpService:  # pylint: disable=too-many-instance-attributes
         on_peer_discovered: Callable[[HereIAmPacket, str], None],
         listen_port: int = 5221,
         send_port: int = 5222,
-        broadcast_address: str = "255.255.255.255",
+        broadcast_address: str = "auto",
     ) -> None:
         """Initialise the NNDP service.
 
@@ -132,7 +184,8 @@ class NndpService:  # pylint: disable=too-many-instance-attributes
             on_peer_discovered: Called with (packet, sender_ip) on valid HIA.
             listen_port: UDP port to listen on. Default: 5221.
             send_port: UDP source port for broadcasts. Default: 5222.
-            broadcast_address: Broadcast destination IP. Default: 255.255.255.255.
+            broadcast_address: ``"auto"`` to broadcast on all interfaces
+                (default), or a specific IP such as ``"192.168.1.255"``.
         """
         self.node_name = node_name
         self.ttl = ttl
@@ -181,7 +234,11 @@ class NndpService:  # pylint: disable=too-many-instance-attributes
     # ------------------------------------------------------------------
 
     async def broadcast_loop(self) -> None:
-        """Broadcast a signed HIA packet every TTL seconds (runs forever).
+        """Broadcast a signed HIA packet every TTL seconds on all interfaces.
+
+        On each cycle, :func:`_get_interface_broadcasts` is called to obtain
+        the current list of broadcast addresses so that newly-added interfaces
+        are picked up without a restart.  One HIA packet is sent per address.
 
         This coroutine should be started as an asyncio Task. It stops only
         when cancelled.
@@ -200,7 +257,7 @@ class NndpService:  # pylint: disable=too-many-instance-attributes
 
         logging.info(
             "[\x1b[38;5;51mUSMD\x1b[0m] NNDP broadcaster started "
-            "(ttl=%ds → %s:%d)",
+            "(ttl=%ds, broadcast=%s, port=%d)",
             self.ttl,
             self._broadcast_address,
             self._listen_port,
@@ -217,23 +274,32 @@ class NndpService:  # pylint: disable=too-many-instance-attributes
                     state=state,
                 )
                 raw = pkt.to_bytes()
-                try:
-                    await asyncio.get_running_loop().run_in_executor(
-                        None,
-                        lambda r=raw: sock.sendto(
-                            r, (self._broadcast_address, self._listen_port)
-                        ),
-                    )
-                    logging.debug(
-                        "[\x1b[38;5;51mUSMD\x1b[0m] NNDP HIA sent (%d bytes, "
-                        "state=%s)",
-                        len(raw),
-                        state.value,
-                    )
-                except OSError as exc:
-                    logging.warning(
-                        "[\x1b[38;5;51mUSMD\x1b[0m] NNDP broadcast error: %s", exc
-                    )
+
+                targets = _get_interface_broadcasts(self._broadcast_address)
+                for bcast in targets:
+                    try:
+                        await asyncio.get_running_loop().run_in_executor(
+                            None,
+                            lambda r=raw, b=bcast: sock.sendto(
+                                r, (b, self._listen_port)
+                            ),
+                        )
+                        logging.debug(
+                            "[\x1b[38;5;51mUSMD\x1b[0m] NNDP HIA → %s:%d "
+                            "(%d bytes, state=%s)",
+                            bcast,
+                            self._listen_port,
+                            len(raw),
+                            state.value,
+                        )
+                    except OSError as exc:
+                        logging.warning(
+                            "[\x1b[38;5;51mUSMD\x1b[0m] NNDP broadcast error "
+                            "on %s: %s",
+                            bcast,
+                            exc,
+                        )
+
                 await asyncio.sleep(self.ttl)
         except asyncio.CancelledError:
             logging.debug("[\x1b[38;5;51mUSMD\x1b[0m] NNDP broadcast loop cancelled")

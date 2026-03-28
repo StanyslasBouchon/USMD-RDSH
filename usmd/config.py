@@ -94,11 +94,14 @@ class NodeConfig:  # pylint: disable=too-many-instance-attributes
     ncp_port: int = 5626
     nndp_listen_port: int = 5221
     nndp_send_port: int = 5222
-    broadcast_address: str = "255.255.255.255"
+    broadcast_address: str = "auto"
 
     # Timeouts
     ncp_timeout: float = 5.0
     join_timeout: float = 30.0
+
+    # Control socket
+    ctl_socket: str = "usmd.sock"
 
     # ------------------------------------------------------------------ #
     # Derived properties                                                   #
@@ -220,5 +223,8 @@ class NodeConfig:  # pylint: disable=too-many-instance-attributes
         cfg.ncp_port = int(ports_sec.get("ncp", cfg.ncp_port))
         cfg.nndp_listen_port = int(ports_sec.get("nndp_listen", cfg.nndp_listen_port))
         cfg.nndp_send_port = int(ports_sec.get("nndp_send", cfg.nndp_send_port))
+        cfg.broadcast_address = str(ports_sec.get("broadcast", cfg.broadcast_address))
+
+        cfg.ctl_socket = str(data.get("ctl_socket", cfg.ctl_socket))
 
         return cfg

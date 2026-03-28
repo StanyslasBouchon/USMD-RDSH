@@ -45,6 +45,7 @@ from .node.nit import NodeIdentityTable
 from .node.node import Node
 from .node.role import NodeRole
 from .node.state import NodeState
+from .ctl.server import CtlServer
 from .security.crypto import Ed25519Pair, X25519Pair
 from .security.endorsement import EndorsementFactory
 
@@ -228,11 +229,16 @@ class NodeDaemon:  # pylint: disable=too-many-instance-attributes
             ping_tolerance_ms=cfg.ping_tolerance_ms,
         )
 
+        self._start_time: float = time.time()
         self._handler = NcpCommandHandler(handler_ctx)
         self._ncp_server = NcpServer(
             handler=self._handler,
             port=cfg.ncp_port,
             timeout=cfg.ncp_timeout,
+        )
+        self._ctl = CtlServer(
+            socket_path=cfg.ctl_socket,
+            snapshot_fn=self._build_status_snapshot,
         )
         self._nndp = NndpService(
             node_name=self.node.name,
@@ -249,6 +255,96 @@ class NodeDaemon:  # pylint: disable=too-many-instance-attributes
         # Pending peers waiting for the join handshake
         self._pending_peers: list[tuple[HereIAmPacket, str]] = []
         self._joined = asyncio.Event()
+
+    # ------------------------------------------------------------------
+    # Status snapshot (served via CTL socket)
+    # ------------------------------------------------------------------
+
+    def _build_status_snapshot(self) -> dict:
+        """Return a fully serialisable dict of the current node state.
+
+        Called by the CTL server on every incoming status request.
+        All bytes are hex-encoded and truncated for readability.
+        """
+        now = time.time()
+
+        # NIT
+        nit_data = []
+        for entry in self.nit._entries.values():  # pylint: disable=protected-access
+            ttl_remaining = max(0, int(entry.ttl - (now - entry.registered_at)))
+            nit_data.append({
+                "address":       entry.address,
+                "pub_key":       entry.public_key.hex()[:20] + "…",
+                "ttl_remaining": ttl_remaining,
+                "expired":       entry.is_expired(),
+            })
+
+        # NAL
+        nal_data = []
+        # pylint: disable=protected-access
+        for pub_key, roles in self.nal._entries.items():
+            nal_data.append({
+                "pub_key":   pub_key.hex()[:20] + "…",
+                "roles":     [r.value for r in roles],
+                "permanent": self.nal.is_permanent(pub_key),
+            })
+
+        # NEL — received
+        nel_received = None
+        recv = self.nel.get_received()
+        if recv:
+            nel_received = {
+                "endorser_key": recv.endorser_key.hex()[:20] + "…",
+                "node_name":    recv.node_name,
+                "roles":        [r.value for r in recv.roles],
+                "expiration":   recv.expiration,
+                "expired":      recv.is_expired(),
+            }
+
+        # NEL — issued
+        nel_issued = [
+            {
+                "node_pub_key": pkt.node_pub_key.hex()[:20] + "…",
+                "node_name":    pkt.node_name,
+                "roles":        [r.value for r in pkt.roles],
+                "expiration":   pkt.expiration,
+                "expired":      pkt.is_expired(),
+            }
+            for pkt in self.nel.all_issued()
+        ]
+
+        # Resources
+        usage = _get_resource_usage()
+
+        return {
+            "node": {
+                "name":           self.node.name,
+                "address":        self.node.address,
+                "state":          self.node.state.value,
+                "role":           self.cfg.node_role.value,
+                "uptime_seconds": now - self._start_time,
+            },
+            "usd": {
+                "name":           self.usd.config.name,
+                "cluster_name":   self.usd.config.cluster_name,
+                "edb_address":    self.usd.config.edb_address,
+                "config_version": self.usd.config.version,
+                "node_count":     len(self.usd.nodes),
+            },
+            "nit": nit_data,
+            "nal": nal_data,
+            "nel": {
+                "received": nel_received,
+                "issued":   nel_issued,
+            },
+            "resources": {
+                "cpu_percent":     usage.cpu_percent,
+                "ram_percent":     usage.ram_percent,
+                "disk_percent":    usage.disk_percent,
+                "network_percent": usage.network_percent,
+                "reference_load":  usage.reference_load(),
+            },
+        }
 
     # ------------------------------------------------------------------
     # Peer discovery callback (called from NNDP listener)
@@ -465,10 +561,13 @@ class NodeDaemon:  # pylint: disable=too-many-instance-attributes
         # 1. NCP TCP server
         await self._ncp_server.start()
 
-        # 2. NNDP listener
+        # 2. CTL Unix socket
+        await self._ctl.start()
+
+        # 3. NNDP listener
         listener_transport = await self._nndp.start_listener()
 
-        # 3. Bootstrap or join
+        # 4. Bootstrap or join
         # For join: start the broadcaster *before* waiting for peers, so
         # other nodes can also discover us.
         if not self.cfg.bootstrap:
@@ -482,7 +581,7 @@ class NodeDaemon:  # pylint: disable=too-many-instance-attributes
                 self._nndp.broadcast_loop(), name="nndp-broadcast"
             )
 
-        # 5. Heartbeat
+        # 6. Heartbeat
         heartbeat_task = asyncio.create_task(self._heartbeat_loop(), name="heartbeat")
 
         logger.info(
@@ -501,6 +600,7 @@ class NodeDaemon:  # pylint: disable=too-many-instance-attributes
             broadcast_task.cancel()
             heartbeat_task.cancel()
             self._ncp_server.close()
+            self._ctl.close()
             if listener_transport:
                 listener_transport.close()
             logger.info("[\x1b[38;5;51mUSMD\x1b[0m] Node %d shut down.", self.node.name)

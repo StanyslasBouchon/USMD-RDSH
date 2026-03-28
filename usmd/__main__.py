@@ -1,12 +1,14 @@
 """Entry point for USMD-RDSH.
 
-Run with::
+Two modes of operation:
 
-    python -m usmd [options]
+**Daemon** (default) — start or join a USD::
 
-or, if installed::
+    python -m usmd [--config PATH] [--bootstrap] [--role ROLE] [--address IP]
 
-    usmd [options]
+**Status** — inspect a running daemon via its control socket::
+
+    python -m usmd status [--socket PATH] [--json]
 
 Examples::
 
@@ -16,13 +18,20 @@ Examples::
     # Join an existing USD as a plain executor
     python -m usmd --config usmd.yaml
 
-    # Override role and address on the command line
-    python -m usmd --role usd_operator --address 192.168.1.5
+    # Inspect a running node (pretty output)
+    python -m usmd status
+
+    # Inspect and pipe to jq
+    python -m usmd status --json | jq .node
+
+    # Inspect with a custom socket path
+    python -m usmd status --socket /run/usmd/usmd.sock
 
 """
 
 import argparse
 import asyncio
+import json
 import logging
 import sys
 
@@ -30,22 +39,29 @@ from .config import NodeConfig
 from .node_daemon import NodeDaemon
 
 
-def _parse_args() -> argparse.Namespace:
+# ---------------------------------------------------------------------------
+# Argument parsing
+# ---------------------------------------------------------------------------
+
+def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="usmd",
-        description="USMD-RDSH node — Unified System Management and Deployment",
+        description="USMD-RDSH — Unified System Management and Deployment",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
+
+    # --- Daemon arguments (apply when no subcommand is given) ---
     parser.add_argument(
         "--config",
         default="usmd.yaml",
         metavar="PATH",
-        help="Path to YAML configuration file (default: usmd.yaml)",
+        help="YAML configuration file (default: usmd.yaml)",
     )
     parser.add_argument(
         "--bootstrap",
         action="store_true",
         default=None,
-        help="Bootstrap: create a new USD instead of joining an existing one",
+        help="Create a new USD instead of joining an existing one",
     )
     parser.add_argument(
         "--role",
@@ -65,13 +81,70 @@ def _parse_args() -> argparse.Namespace:
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
         help="Logging verbosity (default: INFO)",
     )
-    return parser.parse_args()
+
+    # --- Subcommands ---
+    subparsers = parser.add_subparsers(dest="command", metavar="COMMAND")
+
+    status = subparsers.add_parser(
+        "status",
+        help="Inspect the state of a running USMD node",
+        description="Connect to a running node's control socket and print its status.",
+    )
+    status.add_argument(
+        "--socket",
+        default=None,
+        metavar="PATH",
+        help=(
+            "Path to the Unix control socket "
+            "(default: read from config, or usmd.sock)"
+        ),
+    )
+    status.add_argument(
+        "--config",
+        default="usmd.yaml",
+        metavar="PATH",
+        help="Config file to read ctl_socket path from (default: usmd.yaml)",
+    )
+    status.add_argument(
+        "--json",
+        action="store_true",
+        dest="as_json",
+        help="Output raw JSON instead of formatted text",
+    )
+
+    return parser
 
 
-def main() -> None:
-    """Parse arguments, load config, and run the node daemon."""
-    args = _parse_args()
+# ---------------------------------------------------------------------------
+# Status command
+# ---------------------------------------------------------------------------
 
+def _run_status(args: argparse.Namespace) -> None:
+    """Connect to the CTL socket of a running daemon and print its status."""
+    from .ctl.client import get_status, print_status  # pylint: disable=import-outside-toplevel
+
+    # Resolve socket path: CLI > config file > default
+    socket_path: str
+    if args.socket:
+        socket_path = args.socket
+    else:
+        cfg = NodeConfig.from_file(args.config)
+        socket_path = cfg.ctl_socket
+
+    data = asyncio.run(get_status(socket_path))
+
+    if args.as_json:
+        print(json.dumps(data, indent=2, ensure_ascii=False))
+    else:
+        print_status(data)
+
+
+# ---------------------------------------------------------------------------
+# Daemon command (default)
+# ---------------------------------------------------------------------------
+
+def _run_daemon(args: argparse.Namespace) -> None:
+    """Start the USMD node daemon."""
     logging.basicConfig(
         level=getattr(logging, args.log_level),
         format="%(asctime)s %(levelname)-8s %(message)s",
@@ -97,6 +170,21 @@ def main() -> None:
     except Exception as exc:  # pylint: disable=broad-except
         logging.critical("[\x1b[38;5;51mUSMD\x1b[0m] Fatal error: %s", exc)
         sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+def main() -> None:
+    """Dispatch to daemon or status command."""
+    parser = _build_parser()
+    args = parser.parse_args()
+
+    if args.command == "status":
+        _run_status(args)
+    else:
+        _run_daemon(args)
 
 
 if __name__ == "__main__":
