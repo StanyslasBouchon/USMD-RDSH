@@ -1,0 +1,6 @@
+.tox
+.pytest_cache
+.venv
+__pycache__
+usmd_keys.json
+usmd.yaml

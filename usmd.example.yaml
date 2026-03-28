@@ -1,0 +1,39 @@
+# usmd.yaml — Example USMD-RDSH node configuration
+#
+# All keys are optional; unset values fall back to the built-in defaults.
+# Run with:  python -m usmd --config usmd.yaml [--bootstrap]
+
+# -----------------------------------------------------------------------
+# Network identity
+# -----------------------------------------------------------------------
+node:
+  address: auto          # "auto" = detect outbound interface; or "192.168.1.5"
+  role: executor         # executor | operator | usd_operator | ucd_operator
+
+# -----------------------------------------------------------------------
+# Unified System Domain (USD) parameters
+# -----------------------------------------------------------------------
+usd:
+  name: my-domain        # Human-readable USDN (Unified System Domain Name)
+  cluster_name: ""       # USCN — empty if this USD is not part of a cluster
+  edb_address: null      # Optional DNS/IP of the Easy Deployment Base server
+  max_reference_nodes: 5
+  load_threshold: 0.8    # Normalised load above which the node is "weakened"
+  ping_tolerance_ms: 200 # Max tolerated ping T (ms) in the distance formula
+  load_check_interval: 30
+  emergency_threshold: 0.9
+
+# -----------------------------------------------------------------------
+# Startup behaviour
+# -----------------------------------------------------------------------
+bootstrap: false         # true = create a new USD; false = join an existing one
+keys_file: usmd_keys.json
+nndp_ttl: 30             # Seconds between Here-I-Am broadcasts
+
+# -----------------------------------------------------------------------
+# Port numbers (spec defaults — change only if you have conflicts)
+# -----------------------------------------------------------------------
+ports:
+  ncp: 5626
+  nndp_listen: 5221
+  nndp_send: 5222
