@@ -34,6 +34,10 @@ from ..protocol.commands.request_emergency import (
     RequestEmergencyResponse,
 )
 from ..protocol.commands.request_help import RequestHelpRequest, RequestHelpResponse
+from ..protocol.commands.request_snapshot import (
+    RequestSnapshotRequest,
+    RequestSnapshotResponse,
+)
 from ..protocol.commands.send_mutation_properties import SendMutationPropertiesRequest
 from ..protocol.commands.send_ucd_properties import SendUcdPropertiesRequest
 from ..protocol.commands.send_usd_properties import SendUsdPropertiesRequest
@@ -82,6 +86,7 @@ class HandlerContext:  # pylint: disable=too-many-instance-attributes
     nel: NodeEndorsementList
     endorsement_factory: EndorsementFactory
     resource_getter: Callable[[], ResourceUsage]
+    snapshot_fn: Callable[[], dict] = lambda: {}
     ping_tolerance_ms: int = 200
 
 
@@ -137,6 +142,7 @@ class NcpCommandHandler:  # pylint: disable=too-few-public-methods
             NcpCommandId.SEND_USD_PROPERTIES: self._handle_send_usd_properties,
             NcpCommandId.SEND_MUTATION_PROPERTIES: self._handle_send_mutation_properties,
             NcpCommandId.INFORM_REFERENCE_NODE: self._handle_inform_reference_node,
+            NcpCommandId.REQUEST_SNAPSHOT: self._handle_request_snapshot,
         }
 
     def handle(self, frame: NcpFrame) -> NcpFrame:
@@ -421,3 +427,15 @@ class NcpCommandHandler:  # pylint: disable=too-few-public-methods
             req.reference_names,
         )
         return _make_response(NcpCommandId.INFORM_REFERENCE_NODE, b"")
+
+    # ------------------------------------------------------------------
+    # Command 9: Request_snapshot
+    # ------------------------------------------------------------------
+
+    def _handle_request_snapshot(self, frame: NcpFrame) -> NcpFrame:
+        _ = RequestSnapshotRequest.from_payload(frame.payload)
+        snapshot = self.ctx.snapshot_fn()
+        return _make_response(
+            NcpCommandId.REQUEST_SNAPSHOT,
+            RequestSnapshotResponse(snapshot).to_payload(),
+        )

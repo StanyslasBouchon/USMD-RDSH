@@ -1,0 +1,180 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}Tableau de bord — USMD-RDSH{% endblock title %}
+{% block breadcrumb %}Tableau de bord{% endblock breadcrumb %}
+
+{% block content %}
+
+<!-- ─── Header ──────────────────────────────────────────────────── -->
+<div class="d-flex align-items-center mb-3">
+  <h5 class="mb-0 fw-semibold text-light me-auto">
+    <i class="bi bi-grid-1x2-fill me-2 text-info"></i>Nœuds du domaine
+  </h5>
+  <span class="badge bg-secondary" id="node-count">{{ nodes|length }} nœud(s)</span>
+</div>
+
+<!-- ─── Node grid ────────────────────────────────────────────────── -->
+<div class="row g-3" id="node-grid">
+{% for node in nodes %}
+{% with n=node.node r=node.resources %}
+<div class="col-xl-4 col-lg-6" data-address="{{ n.address }}">
+  <div class="node-card">
+    <div class="card-header d-flex align-items-center gap-2">
+
+      <!-- State badge -->
+      {% if n.state == "active" %}
+        <span class="badge badge-state-active"><i class="bi bi-check-circle-fill me-1"></i>ACTIF</span>
+      {% elif "pending" in n.state %}
+        <span class="badge badge-state-pending"><i class="bi bi-hourglass-split me-1"></i>EN ATTENTE</span>
+      {% elif "exclu" in n.state or "excluded" in n.state %}
+        <span class="badge badge-state-excluded"><i class="bi bi-x-circle-fill me-1"></i>EXCLU</span>
+      {% elif "inactive" in n.state or "timeout" in n.state %}
+        <span class="badge badge-state-inactive"><i class="bi bi-dash-circle-fill me-1"></i>INACTIF</span>
+      {% else %}
+        <span class="badge badge-state-default">{{ n.state }}</span>
+      {% endif %}
+
+      <!-- Role badge -->
+      <span class="badge badge-role">{{ n.role }}</span>
+
+      {% if node._is_local %}<span class="badge bg-secondary ms-auto">local</span>{% endif %}
+
+      <!-- Link to detail page -->
+      <a href="{% url 'node_detail' n.address %}"
+         class="btn btn-sm btn-outline-secondary ms-auto py-0 px-2 detail-link-btn">
+        <i class="bi bi-arrow-right"></i>
+      </a>
+    </div>
+
+    <div class="card-body">
+
+      <!-- Identity -->
+      <div class="mb-2">
+        <div class="text-light fw-semibold node-addr">
+          <i class="bi bi-hdd-network me-1 text-info"></i>{{ n.address }}
+        </div>
+        <div class="text-muted small">
+          <i class="bi bi-tag me-1"></i>#{{ n.name }} · <i class="bi bi-clock me-1"></i>uptime {{ n.uptime_seconds|floatformat:0 }}s
+        </div>
+      </div>
+
+      <!-- Resource bars -->
+      <div class="res-bar mb-1">
+        <div class="d-flex justify-content-between res-label">
+          <span><i class="bi bi-cpu-fill me-1 icon-cpu"></i>CPU</span>
+          <span class="res-val-cpu">{{ r.cpu_percent|floatformat:1|stringformat:"s" }}%</span>
+        </div>
+        <!-- djlint:off H021 -->
+        <div class="progress">
+          <div class="progress-bar cpu res-bar-cpu"
+               style="width:{% widthratio r.cpu_percent 1 100 %}%"></div>
+        </div>
+        <!-- djlint:on -->
+      </div>
+      <div class="res-bar mb-1">
+        <div class="d-flex justify-content-between res-label">
+          <span><i class="bi bi-memory me-1 icon-ram"></i>RAM</span>
+          <span class="res-val-ram">{{ r.ram_percent|floatformat:1|stringformat:"s" }}%</span>
+        </div>
+        <!-- djlint:off H021 -->
+        <div class="progress">
+          <div class="progress-bar ram res-bar-ram"
+               style="width:{% widthratio r.ram_percent 1 100 %}%"></div>
+        </div>
+        <!-- djlint:on -->
+      </div>
+      <div class="res-bar mb-1">
+        <div class="d-flex justify-content-between res-label">
+          <span><i class="bi bi-device-hdd me-1 icon-disk"></i>Disque</span>
+          <span class="res-val-disk">{{ r.disk_percent|floatformat:1|stringformat:"s" }}%</span>
+        </div>
+        <!-- djlint:off H021 -->
+        <div class="progress">
+          <div class="progress-bar disk res-bar-disk"
+               style="width:{% widthratio r.disk_percent 1 100 %}%"></div>
+        </div>
+        <!-- djlint:on -->
+      </div>
+      <div class="res-bar">
+        <div class="d-flex justify-content-between res-label">
+          <span><i class="bi bi-arrow-left-right me-1 icon-net"></i>Réseau</span>
+          <span class="res-val-net">{{ r.network_percent|floatformat:1|stringformat:"s" }}%</span>
+        </div>
+        <!-- djlint:off H021 -->
+        <div class="progress">
+          <div class="progress-bar net res-bar-net"
+               style="width:{% widthratio r.network_percent 1 100 %}%"></div>
+        </div>
+        <!-- djlint:on -->
+      </div>
+
+    </div><!-- /card-body -->
+  </div><!-- /node-card -->
+</div><!-- /col -->
+{% endwith %}
+{% empty %}
+<div class="col-12">
+  <div class="alert alert-secondary">
+    <i class="bi bi-info-circle me-2"></i>Aucun nœud détecté.
+  </div>
+</div>
+{% endfor %}
+</div><!-- /#node-grid -->
+
+{% endblock content %}
+
+{% block extra_js %}
+<script>
+// ── Server-Sent Events — mise à jour toutes les 5 s ───────────────
+const evtSource = new EventSource("{% url 'api_stream' %}");
+
+evtSource.onmessage = function(e) {
+  const data = JSON.parse(e.data);
+  if (data.error) return;
+
+  const nodes = data.nodes;
+  document.getElementById('node-count').textContent = nodes.length + ' nœud(s)';
+
+  nodes.forEach(function(node) {
+    const addr = node.node?.address;
+    if (!addr) return;
+
+    const card = document.querySelector(`[data-address="${addr}"]`);
+    if (!card) {
+      // New node appeared — do a full reload to add it
+      location.reload();
+      return;
+    }
+
+    const r = node.resources;
+    const pct = v => (v * 100).toFixed(1) + '%';
+    const width = v => (Math.min(100, Math.max(0, v * 100)).toFixed(1)) + '%';
+
+    card.querySelector('.res-val-cpu').textContent  = pct(r.cpu_percent);
+    card.querySelector('.res-val-ram').textContent  = pct(r.ram_percent);
+    card.querySelector('.res-val-disk').textContent = pct(r.disk_percent);
+    card.querySelector('.res-val-net').textContent  = pct(r.network_percent);
+
+    card.querySelector('.res-bar-cpu').style.width  = width(r.cpu_percent);
+    card.querySelector('.res-bar-ram').style.width  = width(r.ram_percent);
+    card.querySelector('.res-bar-disk').style.width = width(r.disk_percent);
+    card.querySelector('.res-bar-net').style.width  = width(r.network_percent);
+
+    // Update uptime
+    const uptime = card.querySelector('.text-muted.small');
+    if (uptime && node.node.uptime_seconds !== undefined) {
+      const s = Math.floor(node.node.uptime_seconds);
+      const h = Math.floor(s/3600), m = Math.floor((s%3600)/60), sec = s%60;
+      const uptimeStr = h ? `${h}h ${m}m ${sec}s` : m ? `${m}m ${sec}s` : `${sec}s`;
+      const t = uptime.querySelector('i[class*="bi-clock"]');
+      if (t && t.nextSibling) t.nextSibling.textContent = ' uptime ' + uptimeStr;
+    }
+  });
+};
+
+evtSource.onerror = function() {
+  console.warn("USMD SSE connexion perdue, reconnexion automatique…");
+};
+</script>
+{% endblock extra_js %}

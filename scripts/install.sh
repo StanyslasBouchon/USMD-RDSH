@@ -135,6 +135,9 @@ info "Upgrading pip..."
 
 info "Installing usmd-rdsh from '${SOURCE_DIR}'..."
 "${VENV_DIR}/bin/pip" install --quiet "${SOURCE_DIR}"
+info "Installing optional web dashboard dependencies..."
+"${VENV_DIR}/bin/pip" install --quiet "django>=4.2" "uvicorn[standard]>=0.29" || \
+    warn "Web dashboard deps (django, uvicorn) could not be installed — dashboard disabled."
 
 chown -R root:root "${INSTALL_DIR}"
 chmod -R o-w "${INSTALL_DIR}"
@@ -188,6 +191,18 @@ ports:
   nndp_listen: 5221
   nndp_send: 5222
   broadcast: auto        # "auto" = diffuse sur toutes les interfaces ; ou "192.168.1.255"
+
+# -----------------------------------------------------------------------
+# Tableau de bord web (optionnel)
+# -----------------------------------------------------------------------
+web:
+  enabled: false         # true pour activer le dashboard
+  host: 0.0.0.0
+  port: 8443
+  username: admin
+  password: changeme     # À MODIFIER en production !
+  ssl_cert: ""           # Chemin vers le certificat TLS (PEM) ; vide = auto self-signed
+  ssl_key:  ""           # Chemin vers la clé TLS (PEM)
 EOF
     chown root:"${SERVICE_USER}" "${CONFIG_FILE}"
     chmod 640 "${CONFIG_FILE}"

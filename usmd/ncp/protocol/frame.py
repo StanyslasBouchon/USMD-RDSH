@@ -52,6 +52,7 @@ class NcpCommandId(IntEnum):
         SEND_USD_PROPERTIES (6): Propagate USD configuration to reference nodes.
         SEND_MUTATION_PROPERTIES (7): Propagate mutation definitions.
         INFORM_REFERENCE_NODE (8): Notify reference nodes of one's peer list.
+        REQUEST_SNAPSHOT (9): Request a full JSON status snapshot (NIT, NAL, NEL, resources).
 
     Examples:
         >>> NcpCommandId.GET_STATUS.value
@@ -69,6 +70,7 @@ class NcpCommandId(IntEnum):
     SEND_USD_PROPERTIES = 6
     SEND_MUTATION_PROPERTIES = 7
     INFORM_REFERENCE_NODE = 8
+    REQUEST_SNAPSHOT = 9
 
 
 @dataclass

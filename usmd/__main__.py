@@ -6,9 +6,9 @@ Two modes of operation:
 
     python -m usmd [--config PATH] [--bootstrap] [--role ROLE] [--address IP]
 
-**Status** — inspect a running daemon via its control socket::
+**Status** — inspect a running daemon via its control interface::
 
-    python -m usmd status [--socket PATH] [--json]
+    python -m usmd status [--socket PATH] [--port PORT] [--json]
 
 Examples::
 
@@ -24,8 +24,11 @@ Examples::
     # Inspect and pipe to jq
     python -m usmd status --json | jq .node
 
-    # Inspect with a custom socket path
-    python -m usmd status --socket /run/usmd/usmd.sock
+    # Inspect with a custom socket path (Linux/macOS)
+    python -m usmd status --socket usmd.sock
+
+    # Inspect via TCP loopback (Windows)
+    python -m usmd status --port 5627
 
 """
 
@@ -88,22 +91,32 @@ def _build_parser() -> argparse.ArgumentParser:
     status = subparsers.add_parser(
         "status",
         help="Inspect the state of a running USMD node",
-        description="Connect to a running node's control socket and print its status.",
+        description="Connect to a running node's control interface and print its status.",
     )
     status.add_argument(
         "--socket",
         default=None,
         metavar="PATH",
         help=(
-            "Path to the Unix control socket "
-            "(default: read from config, or usmd.sock)"
+            "Path to the Unix control socket (Linux/macOS). "
+            "Default: read from config, or usmd.sock"
+        ),
+    )
+    status.add_argument(
+        "--port",
+        default=None,
+        type=int,
+        metavar="PORT",
+        help=(
+            "TCP loopback port of the CTL server (Windows). "
+            "Default: read from config (ctl_port: 5627)"
         ),
     )
     status.add_argument(
         "--config",
         default="usmd.yaml",
         metavar="PATH",
-        help="Config file to read ctl_socket path from (default: usmd.yaml)",
+        help="Config file to read ctl_socket / ctl_port from (default: usmd.yaml)",
     )
     status.add_argument(
         "--json",
@@ -120,18 +133,16 @@ def _build_parser() -> argparse.ArgumentParser:
 # ---------------------------------------------------------------------------
 
 def _run_status(args: argparse.Namespace) -> None:
-    """Connect to the CTL socket of a running daemon and print its status."""
+    """Connect to the CTL server of a running daemon and print its status."""
     from .ctl.client import get_status, print_status  # pylint: disable=import-outside-toplevel
 
-    # Resolve socket path: CLI > config file > default
-    socket_path: str
-    if args.socket:
-        socket_path = args.socket
-    else:
-        cfg = NodeConfig.from_file(args.config)
-        socket_path = cfg.ctl_socket
+    cfg = NodeConfig.from_file(args.config)
 
-    data = asyncio.run(get_status(socket_path))
+    # Resolve socket path (Linux/macOS) and CTL port (Windows)
+    socket_path: str = args.socket or cfg.ctl_socket
+    ctl_port: int = args.port if args.port is not None else cfg.ctl_port
+
+    data = asyncio.run(get_status(socket_path, ctl_port))
 
     if args.as_json:
         print(json.dumps(data, indent=2, ensure_ascii=False))
@@ -178,6 +189,11 @@ def _run_daemon(args: argparse.Namespace) -> None:
 
 def main() -> None:
     """Dispatch to daemon or status command."""
+    # On Windows, the default ProactorEventLoop does not support UDP
+    # (required by the NNDP service).  Switch to SelectorEventLoop instead.
+    if sys.platform == "win32":
+        asyncio.set_event_loop(asyncio.SelectorEventLoop())
+
     parser = _build_parser()
     args = parser.parse_args()
 

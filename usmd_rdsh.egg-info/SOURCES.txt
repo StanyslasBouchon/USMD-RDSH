@@ -2,6 +2,7 @@ README.md
 pyproject.toml
 setup.py
 tests/test_crypto.py
+tests/test_ctl.py
 tests/test_distance_formula.py
 tests/test_endorsement.py
 tests/test_nal.py
@@ -22,6 +23,9 @@ usmd/__init__.py
 usmd/__main__.py
 usmd/config.py
 usmd/node_daemon.py
+usmd/ctl/__init__.py
+usmd/ctl/client.py
+usmd/ctl/server.py
 usmd/domain/__init__.py
 usmd/domain/edb.py
 usmd/domain/usc.py
@@ -43,6 +47,7 @@ usmd/ncp/protocol/commands/inform_reference_node.py
 usmd/ncp/protocol/commands/request_approval.py
 usmd/ncp/protocol/commands/request_emergency.py
 usmd/ncp/protocol/commands/request_help.py
+usmd/ncp/protocol/commands/request_snapshot.py
 usmd/ncp/protocol/commands/send_mutation_properties.py
 usmd/ncp/protocol/commands/send_ucd_properties.py
 usmd/ncp/protocol/commands/send_usd_properties.py
@@ -66,6 +71,13 @@ usmd/security/endorsement.py
 usmd/utils/__init__.py
 usmd/utils/errors.py
 usmd/utils/result.py
+usmd/web/__init__.py
+usmd/web/asgi.py
+usmd/web/server.py
+usmd/web/settings.py
+usmd/web/state.py
+usmd/web/urls.py
+usmd/web/views.py
 usmd_rdsh.egg-info/PKG-INFO
 usmd_rdsh.egg-info/SOURCES.txt
 usmd_rdsh.egg-info/dependency_links.txt

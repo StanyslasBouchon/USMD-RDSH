@@ -13,3 +13,7 @@ pytest-asyncio>=0.23.0
 
 # Type checking
 mypy>=1.8.0
+
+# Web dashboard
+django>=4.2
+uvicorn[standard]>=0.29

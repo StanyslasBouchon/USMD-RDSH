@@ -11,12 +11,12 @@ V1 = NcpVersion(1, 0, 0, 0)
 
 class TestNcpCommandId(unittest.TestCase):
 
-    def test_all_nine_commands_exist(self):
+    def test_all_ten_commands_exist(self):
         expected = {
             "GET_STATUS", "CHECK_DISTANCE", "REQUEST_EMERGENCY",
             "REQUEST_HELP", "REQUEST_APPROVAL", "SEND_UCD_PROPERTIES",
             "SEND_USD_PROPERTIES", "SEND_MUTATION_PROPERTIES",
-            "INFORM_REFERENCE_NODE",
+            "INFORM_REFERENCE_NODE", "REQUEST_SNAPSHOT",
         }
         names = {cmd.name for cmd in NcpCommandId}
         self.assertEqual(names, expected)

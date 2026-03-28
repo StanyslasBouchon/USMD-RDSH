@@ -8,7 +8,7 @@ Author-email: contact@devling.fr
 Classifier: Programming Language :: Python :: 3
 Classifier: License :: OSI Approved :: MIT License
 Classifier: Operating System :: OS Independent
-Requires-Python: >=3.11
+Requires-Python: >=3.13
 Description-Content-Type: text/markdown
 Requires-Dist: cryptography>=42.0.0
 Requires-Dist: pyyaml>=6.0.0
@@ -16,6 +16,8 @@ Requires-Dist: asyncio-dgram>=2.1.0
 Requires-Dist: pytest>=8.0.0
 Requires-Dist: pytest-asyncio>=0.23.0
 Requires-Dist: mypy>=1.8.0
+Requires-Dist: django>=4.2
+Requires-Dist: uvicorn[standard]>=0.29
 Dynamic: author
 Dynamic: author-email
 Dynamic: classifier
@@ -44,21 +46,26 @@ USMD-RDSH est un système distribué de gestion de nœuds auto-organisés. Chaqu
 - [Configuration](#configuration)
 - [Options de la ligne de commande](#options-de-la-ligne-de-commande)
 - [Rôles des nœuds](#rôles-des-nœuds)
+- [Tableau de bord web](#tableau-de-bord-web)
 - [Tests](#tests)
 
 ---
 
 ## Architecture
 
-| Composant | Rôle |
-|-----------|------|
-| **NCP** — Node Cohesion Protocol | Communication inter-nœuds (TCP/5626) — 9 commandes |
-| **NNDP** — Node Neighbor Discovery Protocol | Découverte de voisins par broadcast UDP (src 5222 → dst 5221) |
-| **USD** — Unified System Domain | Domaine de gestion regroupant un ensemble de nœuds |
-| **USC** — Unified System Cluster | Grappe de domaines USD |
-| **NIT** — Node Identity Table | Table d'identité et de clés publiques des nœuds |
-| **NAL** — Node Access List | Liste de contrôle d'accès des nœuds |
-| **NEL** — Node Endorsement List | Liste des endorsements Ed25519 émis et reçus |
+
+| Composant                                   | Rôle                                                                          |
+| ------------------------------------------- | ----------------------------------------------------------------------------- |
+| **NCP** — Node Cohesion Protocol            | Communication inter-nœuds (TCP/5626) — 10 commandes                           |
+| **NNDP** — Node Neighbor Discovery Protocol | Découverte de voisins par broadcast UDP (src 5222 → dst 5221)                 |
+| **USD** — Unified System Domain             | Domaine de gestion regroupant un ensemble de nœuds                            |
+| **USC** — Unified System Cluster            | Grappe de domaines USD                                                        |
+| **NIT** — Node Identity Table               | Table d'identité et de clés publiques des nœuds                               |
+| **NAL** — Node Access List                  | Liste de contrôle d'accès des nœuds                                           |
+| **NEL** — Node Endorsement List             | Liste des endorsements Ed25519 émis et reçus                                  |
+| **CTL** — Control Socket                    | Socket Unix local pour introspection en direct (`python -m usmd status`)      |
+| **Web Dashboard**                           | Interface web Django (optionnelle) pour supervision multi-nœuds en temps réel |
+
 
 Chaque nœud génère une paire de clés **Ed25519** (signature) et **X25519** (échange de clés) au premier démarrage. Ces clés sont persistées localement et constituent l'identité cryptographique du nœud.
 
@@ -66,7 +73,7 @@ Chaque nœud génère une paire de clés **Ed25519** (signature) et **X25519** (
 
 ## Prérequis
 
-- Python **≥ 3.11**
+- Python **≥ 3.13**
 - Linux avec **systemd** (Ubuntu 20.04+, Debian 11+, RHEL 8+, Arch, …)
 - `python3-venv` installé (`apt install python3-venv` ou équivalent)
 - Accès **root** pour l'installation en service
@@ -166,7 +173,7 @@ source .venv/bin/activate       # Linux / macOS
 
 # 3. Installer les dépendances
 pip install -e .
-pip install pytest pytest-asyncio  # pour les tests
+pip install pytest pytest-asyncio tox pylint djlint # pour les tests
 
 # 4a. Démarrer le premier nœud (bootstrap — crée un nouveau USD)
 python -m usmd --config usmd.yaml --bootstrap
@@ -215,6 +222,20 @@ ports:
   ncp: 5626
   nndp_listen: 5221
   nndp_send: 5222
+  broadcast: auto        # "auto" = toutes les interfaces ; ou "192.168.1.255"
+
+# Socket CTL (introspection locale)
+ctl_socket: usmd.sock    # chemin du socket Unix
+
+# Tableau de bord web (optionnel)
+web:
+  enabled: false         # true pour activer
+  host: 0.0.0.0
+  port: 8443
+  username: admin
+  password: changeme     # À modifier !
+  ssl_cert: ""           # Chemin PEM ; vide = self-signed auto-généré
+  ssl_key:  ""
 ```
 
 En installation service, le fichier de configuration est `/etc/usmd/usmd.yaml` et le fichier de clés est `/var/lib/usmd/usmd_keys.json`.
@@ -224,14 +245,20 @@ En installation service, le fichier de configuration est `/etc/usmd/usmd.yaml` e
 ## Options de la ligne de commande
 
 ```
-python -m usmd [OPTIONS]
+python -m usmd [OPTIONS]                  # Lancer le daemon
+python -m usmd status [OPTIONS]           # Interroger un daemon en cours
 
-Options :
+Daemon :
   --config PATH         Fichier de configuration YAML (défaut : usmd.yaml)
   --bootstrap           Créer un nouvel USD au lieu d'en rejoindre un
   --role ROLE           Remplacer le rôle (executor|operator|usd_operator|ucd_operator)
   --address IP          Remplacer l'adresse réseau du nœud
   --log-level LEVEL     Verbosité des logs : DEBUG|INFO|WARNING|ERROR (défaut : INFO)
+
+Sous-commande status :
+  --socket PATH         Chemin du socket CTL (défaut : ctl_socket de la config)
+  --config PATH         Fichier de configuration pour lire le chemin du socket
+  --json                Afficher le snapshot brut en JSON au lieu de l'affichage formaté
 ```
 
 Les options CLI ont priorité sur le fichier de configuration.
@@ -240,12 +267,58 @@ Les options CLI ont priorité sur le fichier de configuration.
 
 ## Rôles des nœuds
 
-| Rôle | Description |
-|------|-------------|
-| `executor` | Nœud exécutant des services (rôle par défaut) |
-| `operator` | Nœud de gestion sans responsabilité de domaine |
-| `usd_operator` | Nœud responsable de la gestion d'un USD |
+
+| Rôle           | Description                                       |
+| -------------- | ------------------------------------------------- |
+| `executor`     | Nœud exécutant des services (rôle par défaut)     |
+| `operator`     | Nœud de gestion sans responsabilité de domaine    |
+| `usd_operator` | Nœud responsable de la gestion d'un USD           |
 | `ucd_operator` | Nœud responsable de la gestion d'un USC (cluster) |
+
+
+---
+
+## Tableau de bord web
+
+Le tableau de bord est un service Django optionnel qui s'exécute sur **chaque nœud** et offre une vue agrégée de l'ensemble du domaine USD en temps réel.
+
+### Fonctionnalités
+
+- Affichage de tous les nœuds connus (via NIT) avec état, rôle et ressources
+- Mise à jour automatique toutes les 5 secondes (Server-Sent Events)
+- Page de détail par nœud : NIT, NAL, NEL, USD, graphique historique CPU/RAM/Disque/Réseau
+- Authentification par identifiant/mot de passe (session cookie signée)
+- HTTPS par défaut — certificat auto-signé généré si aucun certificat n'est fourni (nécessite `openssl` dans le PATH) ; HTTP si openssl est absent
+
+### Activation
+
+Installez les dépendances supplémentaires :
+
+```bash
+pip install "django>=4.2" "uvicorn[standard]>=0.29"
+```
+
+Puis activez dans la configuration (`usmd.yaml`) :
+
+```yaml
+web:
+  enabled: true
+  port: 8443
+  username: admin
+  password: MonMotDePasse   # Changer obligatoirement !
+```
+
+Le dashboard sera accessible sur `https://<adresse-du-nœud>:8443/`.
+
+### Architecture de collecte
+
+Quand le tableau de bord d'un nœud A affiche un nœud B, il lui envoie la commande NCP **REQUEST_SNAPSHOT** (ID 9) sur le port 5626. Le nœud B répond avec son snapshot complet (NIT, NAL, NEL, ressources) encodé en JSON. Aucune base de données partagée n'est requise.
+
+### Sécurité
+
+- Changez impérativement `web.password` avant toute mise en production.
+- En production, fournissez un certificat TLS signé par une CA reconnue via `web.ssl_cert` et `web.ssl_key`.
+- Le tableau de bord expose des données internes — limitez l'accès au réseau d'administration.
 
 ---
 
@@ -265,4 +338,4 @@ tox
 pylint usmd/
 ```
 
-La suite de tests couvre les protocoles NCP et NNDP, la sérialisation des frames, le handler de commandes, le daemon et la cryptographie (246 tests, 28 sous-tests).
+La suite de tests couvre les protocoles NCP et NNDP, la sérialisation des frames, le handler de commandes, le daemon et la cryptographie (283 tests collectés, 276 passés, 7 skipped, 29 sous-tests — répartis sur 19 fichiers de test).

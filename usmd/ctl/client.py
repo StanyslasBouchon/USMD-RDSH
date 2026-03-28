@@ -1,10 +1,10 @@
 """Control socket client — queries a running USMD-RDSH node.
 
-Connects to the Unix-domain socket exposed by a running NodeDaemon,
-sends a status request, and formats the response for the terminal.
+On **Linux / macOS** connects to the Unix-domain socket exposed by a running
+NodeDaemon.  On **Windows** connects to the TCP loopback server instead.
 
 Usage (from __main__.py):
-    python -m usmd status [--socket PATH] [--json]
+    python -m usmd status [--socket PATH] [--port PORT] [--json]
 
 Examples:
     >>> isinstance(_format_uptime(3661), str)
@@ -28,11 +28,15 @@ from typing import Any
 # Network
 # ---------------------------------------------------------------------------
 
-async def get_status(socket_path: str) -> dict:
-    """Connect to *socket_path*, send a status request, and return the dict.
+async def get_status(socket_path: str, ctl_port: int = 0) -> dict:
+    """Connect to the daemon and return its status dict.
+
+    On Linux/macOS *socket_path* is used (a Unix-domain socket).
+    On Windows *ctl_port* is used (a TCP loopback connection to 127.0.0.1).
 
     Args:
-        socket_path: Path to the Unix-domain CTL socket.
+        socket_path: Path to the Unix-domain CTL socket (Linux/macOS).
+        ctl_port: TCP port of the CTL server (Windows).
 
     Returns:
         dict: Parsed status snapshot from the daemon.
@@ -41,12 +45,12 @@ async def get_status(socket_path: str) -> dict:
         SystemExit: On connection failure.
     """
     if sys.platform == "win32":
-        print(
-            "Erreur : le socket CTL Unix n'est pas disponible sur Windows.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
+        return await _get_status_tcp(ctl_port)
+    return await _get_status_unix(socket_path)
 
+
+async def _get_status_unix(socket_path: str) -> dict:
+    """Connect via Unix-domain socket (Linux / macOS)."""
     try:
         reader, writer = await asyncio.wait_for(
             asyncio.open_unix_connection(socket_path),
@@ -66,6 +70,39 @@ async def get_status(socket_path: str) -> dict:
         print("Délai dépassé en se connectant au daemon.", file=sys.stderr)
         sys.exit(1)
 
+    return await _exchange(reader, writer)
+
+
+async def _get_status_tcp(ctl_port: int) -> dict:
+    """Connect via TCP loopback (Windows)."""
+    if ctl_port <= 0:
+        print(
+            "Erreur : ctl_port non configuré. "
+            "Ajoutez 'ctl_port: 5627' à votre usmd.yaml.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    try:
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection("127.0.0.1", ctl_port),
+            timeout=3.0,
+        )
+    except ConnectionRefusedError:
+        print(
+            f"Erreur : connexion refusée sur 127.0.0.1:{ctl_port}.",
+            file=sys.stderr,
+        )
+        print("Le daemon USMD est-il en cours d'exécution ?", file=sys.stderr)
+        sys.exit(1)
+    except asyncio.TimeoutError:
+        print("Délai dépassé en se connectant au daemon.", file=sys.stderr)
+        sys.exit(1)
+
+    return await _exchange(reader, writer)
+
+
+async def _exchange(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> dict:
+    """Send a status request and return the parsed response."""
     try:
         writer.write(b'{"cmd": "status"}\n')
         await writer.drain()
@@ -123,7 +160,7 @@ def _row(label: str, value: Any, indent: int = 2) -> None:
 # Pretty-printer
 # ---------------------------------------------------------------------------
 
-def print_status(data: dict) -> None:
+def print_status(data: dict) -> None:  # pylint: disable=too-many-locals,too-many-statements
     """Pretty-print a status snapshot dict to stdout.
 
     Args:

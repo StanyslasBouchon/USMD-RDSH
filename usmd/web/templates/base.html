@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="fr" data-bs-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="USMD-RDSH — tableau de bord de supervision des nœuds distribués">
+  <meta name="keywords" content="USMD, RDSH, supervision, nœuds, dashboard, monitoring">
+  <title>{% block title %}USMD-RDSH{% endblock title %}</title>
+
+  <!-- Bootstrap 5.3 -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <!-- Bootstrap Icons -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+
+  <style>
+    :root {
+      --usmd-accent: #00d4ff;
+      --usmd-sidebar-bg: #0d1117;
+      --usmd-sidebar-width: 240px;
+    }
+
+    body { min-height: 100vh; background: #0d1117; }
+
+    /* ── Sidebar ─────────────────────────────────────────── */
+    #sidebar {
+      width: var(--usmd-sidebar-width);
+      min-height: 100vh;
+      background: var(--usmd-sidebar-bg);
+      border-right: 1px solid #1e2938;
+      position: fixed;
+      top: 0; left: 0;
+      display: flex;
+      flex-direction: column;
+      z-index: 100;
+    }
+
+    #sidebar .brand {
+      padding: 1.2rem 1.2rem 1rem;
+      border-bottom: 1px solid #1e2938;
+      font-size: .78rem;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      color: var(--usmd-accent);
+      font-weight: 700;
+    }
+
+    #sidebar .brand i { font-size: 1.1rem; }
+
+    #sidebar .nav-link {
+      color: #8b949e;
+      padding: .55rem 1.2rem;
+      font-size: .875rem;
+      border-left: 3px solid transparent;
+      border-radius: 0;
+      transition: color .15s, background .15s, border-color .15s;
+    }
+
+    #sidebar .nav-link:hover,
+    #sidebar .nav-link.active {
+      color: #e6edf3;
+      background: #161b22;
+      border-left-color: var(--usmd-accent);
+    }
+
+    #sidebar .nav-link i { margin-right: .5rem; font-size: 1rem; }
+
+    #sidebar .nav-section {
+      font-size: .7rem;
+      text-transform: uppercase;
+      letter-spacing: .1em;
+      color: #4a5568;
+      padding: 1rem 1.2rem .25rem;
+    }
+
+    #sidebar footer {
+      margin-top: auto;
+      padding: 1rem 1.2rem;
+      font-size: .75rem;
+      color: #484f58;
+      border-top: 1px solid #1e2938;
+    }
+
+    /* ── Main content ────────────────────────────────────── */
+    #main {
+      margin-left: var(--usmd-sidebar-width);
+      min-height: 100vh;
+      background: #0d1117;
+    }
+
+    .topbar {
+      background: #161b22;
+      border-bottom: 1px solid #1e2938;
+      padding: .75rem 1.5rem;
+    }
+
+    .page-content { padding: 1.5rem; }
+
+    /* ── State badges ────────────────────────────────────── */
+    .badge-state-active        { background: #1a7f37; color: #56d364; }
+    .badge-state-pending       { background: #5a3e00; color: #d29922; }
+    .badge-state-inactive      { background: #3d1c1c; color: #f85149; }
+    .badge-state-excluded      { background: #3d1c1c; color: #f85149; }
+    .badge-state-default       { background: #21262d; color: #8b949e; }
+
+    /* ── Role badge ──────────────────────────────────────── */
+    .badge-role {
+      background: #1e3a5f;
+      color: #58a6ff;
+      font-size: .7rem;
+      font-weight: 500;
+    }
+
+    /* ── Node cards ──────────────────────────────────────── */
+    .node-card {
+      border: 1px solid #1e2938;
+      background: #161b22;
+      border-radius: 8px;
+      transition: border-color .2s, box-shadow .2s;
+    }
+    .node-card:hover {
+      border-color: #30363d;
+      box-shadow: 0 4px 16px rgba(0,0,0,.4);
+    }
+    .node-card .card-header {
+      background: #1e2938;
+      border-bottom: 1px solid #253344;
+      padding: .75rem 1rem;
+      border-radius: 7px 7px 0 0;
+    }
+    .node-card .card-body { padding: 1rem; }
+
+    /* ── Resource bar ────────────────────────────────────── */
+    .res-label { font-size: .75rem; color: #8b949e; margin-bottom: .2rem; }
+    .res-bar .progress { height: 6px; border-radius: 3px; background: #21262d; }
+    .res-bar .progress-bar { border-radius: 3px; }
+    .res-bar .progress-bar.cpu   { background: #58a6ff; }
+    .res-bar .progress-bar.ram   { background: #3fb950; }
+    .res-bar .progress-bar.disk  { background: #d29922; }
+    .res-bar .progress-bar.net   { background: #bc8cff; }
+
+    /* ── Tables ──────────────────────────────────────────── */
+    .table-sm td, .table-sm th { font-size: .8rem; }
+    .table { --bs-table-bg: transparent; --bs-table-striped-bg: #161b22; }
+    .table thead th { border-bottom-color: #1e2938; color: #8b949e; font-size: .75rem; text-transform: uppercase; letter-spacing: .06em; }
+
+    /* ── Live indicator ──────────────────────────────────── */
+    .live-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: #56d364;
+      display: inline-block;
+      animation: pulse 2s infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: .3; }
+    }
+
+    /* ── Detail tabs ──────────────────────────────────────── */
+    .nav-tabs { border-color: #1e2938; }
+    .nav-tabs .nav-link { color: #8b949e; border: none; padding: .5rem 1rem; }
+    .nav-tabs .nav-link.active { color: var(--usmd-accent); border-bottom: 2px solid var(--usmd-accent); background: transparent; }
+
+    /* ── Icon accent colours ─────────────────────────────── */
+    .icon-cpu   { color: #58a6ff; }
+    .icon-ram   { color: #3fb950; }
+    .icon-disk  { color: #d29922; }
+    .icon-net   { color: #bc8cff; }
+    .icon-accent { color: var(--usmd-accent); font-size: 2rem; }
+
+    /* ── Detail page helpers ─────────────────────────────── */
+    .progress-lg            { height: 10px; border-radius: 4px; background: #21262d; }
+    .progress-lg .progress-bar { height: 10px; border-radius: 4px; }
+    .detail-card-full       { height: 100%; }
+    .detail-chart           { max-height: 200px; }
+    .detail-label-col       { width: 200px; }
+    .detail-link-btn        { font-size: .7rem; }
+    .code-key               { font-size: .75rem; }
+    .code-key-sm            { font-size: .7rem; }
+    .node-addr              { font-size: .9rem; }
+  </style>
+</head>
+<body>
+
+<!-- ─────────────────────────── Sidebar ──────────────────────────── -->
+<nav id="sidebar">
+  <div class="brand">
+    <i class="bi bi-cpu"></i>&nbsp; USMD-RDSH
+  </div>
+
+  <div class="nav-section">Navigation</div>
+  <ul class="nav flex-column">
+    <li class="nav-item">
+      <a class="nav-link {% if request.resolver_match.url_name == 'dashboard' %}active{% endif %}"
+         href="{% url 'dashboard' %}">
+        <i class="bi bi-grid-1x2-fill"></i> Tableau de bord
+      </a>
+    </li>
+  </ul>
+
+  <div class="nav-section">Session</div>
+  <ul class="nav flex-column">
+    <li class="nav-item">
+      <a class="nav-link text-danger" href="{% url 'logout' %}">
+        <i class="bi bi-box-arrow-right"></i> Déconnexion
+      </a>
+    </li>
+  </ul>
+
+  <footer>
+    <div>USMD-RDSH © {% now "Y" %}</div>
+    <div class="mt-1">
+      <span class="live-dot"></span>
+      <span class="ms-1">Temps réel</span>
+    </div>
+  </footer>
+</nav>
+
+<!-- ─────────────────────────── Main ─────────────────────────────── -->
+<div id="main">
+  <div class="topbar d-flex align-items-center">
+    <div class="me-auto">
+      <span class="text-muted small">
+        {% block breadcrumb %}Tableau de bord{% endblock breadcrumb %}
+      </span>
+    </div>
+    <div class="text-muted small" id="last-update">
+      <i class="bi bi-clock"></i> <span>—</span>
+    </div>
+  </div>
+
+  <div class="page-content">
+    {% block content %}{% endblock content %}
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+
+<script>
+// ── Live clock ────────────────────────────────────────────────────
+function updateClock() {
+  const el = document.querySelector('#last-update span');
+  if (el) el.textContent = new Date().toLocaleTimeString('fr-FR');
+}
+setInterval(updateClock, 1000);
+updateClock();
+</script>
+
+{% block extra_js %}{% endblock extra_js %}
+</body>
+</html>

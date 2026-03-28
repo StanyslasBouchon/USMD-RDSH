@@ -24,10 +24,13 @@ Examples:
     True
 """
 
+from __future__ import annotations
+
 import asyncio
 import json
 import logging
 import os
+import sys
 import time
 from .config import NodeConfig
 from .domain.usd import UnifiedSystemDomain
@@ -46,6 +49,7 @@ from .node.node import Node
 from .node.role import NodeRole
 from .node.state import NodeState
 from .ctl.server import CtlServer
+from .web.server import WebServer
 from .security.crypto import Ed25519Pair, X25519Pair
 from .security.endorsement import EndorsementFactory
 
@@ -67,7 +71,8 @@ def _get_resource_usage() -> ResourceUsage:
 
         ram = psutil.virtual_memory().percent / 100.0
         cpu = psutil.cpu_percent(interval=None) / 100.0
-        disk = psutil.disk_usage("/").percent / 100.0
+        _disk_root = "C:\\" if sys.platform == "win32" else "/"
+        disk = psutil.disk_usage(_disk_root).percent / 100.0
         net_io = psutil.net_io_counters()
         # Approximate network usage as bytes_sent fraction of a 125 MB/s link
         net = min(1.0, (net_io.bytes_sent + net_io.bytes_recv) / (125_000_000 * 10))
@@ -218,6 +223,8 @@ class NodeDaemon:  # pylint: disable=too-many-instance-attributes
             endorser_public_key=self._ed_pub,
         )
 
+        self._start_time: float = time.time()
+
         handler_ctx = HandlerContext(
             node=self.node,
             usd=self.usd,
@@ -226,10 +233,10 @@ class NodeDaemon:  # pylint: disable=too-many-instance-attributes
             nel=self.nel,
             endorsement_factory=endorsement_factory,
             resource_getter=_get_resource_usage,
+            snapshot_fn=self._build_status_snapshot,
             ping_tolerance_ms=cfg.ping_tolerance_ms,
         )
 
-        self._start_time: float = time.time()
         self._handler = NcpCommandHandler(handler_ctx)
         self._ncp_server = NcpServer(
             handler=self._handler,
@@ -239,6 +246,16 @@ class NodeDaemon:  # pylint: disable=too-many-instance-attributes
         self._ctl = CtlServer(
             socket_path=cfg.ctl_socket,
             snapshot_fn=self._build_status_snapshot,
+            ctl_port=cfg.ctl_port,
+        )
+        self._web: WebServer | None = (
+            WebServer(
+                cfg=cfg,
+                snapshot_fn=self._build_status_snapshot,
+                nit=self.nit,
+            )
+            if cfg.web_enabled
+            else None
         )
         self._nndp = NndpService(
             node_name=self.node.name,
@@ -564,6 +581,11 @@ class NodeDaemon:  # pylint: disable=too-many-instance-attributes
         # 2. CTL Unix socket
         await self._ctl.start()
 
+        # 3. Web dashboard (optional)
+        web_task: asyncio.Task[None] | None = None
+        if self._web is not None:
+            web_task = asyncio.create_task(self._web.start(), name="web-dashboard")
+
         # 3. NNDP listener
         listener_transport = await self._nndp.start_listener()
 
@@ -599,6 +621,10 @@ class NodeDaemon:  # pylint: disable=too-many-instance-attributes
         finally:
             broadcast_task.cancel()
             heartbeat_task.cancel()
+            if web_task is not None:
+                if self._web is not None:
+                    self._web.close()
+                web_task.cancel()
             self._ncp_server.close()
             self._ctl.close()
             if listener_transport:

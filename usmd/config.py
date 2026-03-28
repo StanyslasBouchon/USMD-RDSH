@@ -62,6 +62,8 @@ class NodeConfig:  # pylint: disable=too-many-instance-attributes
         broadcast_address: UDP broadcast destination.
         ncp_timeout: Per-connection NCP timeout in seconds.
         join_timeout: Seconds to wait for peer discovery + approval on startup.
+        ctl_socket: Path to the Unix-domain control socket (Linux/macOS).
+        ctl_port: TCP loopback port for the control server (Windows).
 
     Examples:
         >>> cfg = NodeConfig()
@@ -100,8 +102,18 @@ class NodeConfig:  # pylint: disable=too-many-instance-attributes
     ncp_timeout: float = 5.0
     join_timeout: float = 30.0
 
-    # Control socket
-    ctl_socket: str = "usmd.sock"
+    # Control socket / TCP (Linux: Unix-domain socket; Windows: TCP loopback)
+    ctl_socket: str = "usmd.sock"   # Unix-domain socket path (Linux/macOS)
+    ctl_port: int = 5627            # TCP loopback port (Windows)
+
+    # Web dashboard
+    web_enabled: bool = False
+    web_host: str = "0.0.0.0"
+    web_port: int = 8443
+    web_username: str = "admin"
+    web_password: str = "changeme"
+    web_ssl_cert: str = ""   # path to TLS cert (PEM), "" → auto self-signed
+    web_ssl_key: str = ""    # path to TLS key (PEM)
 
     # ------------------------------------------------------------------ #
     # Derived properties                                                   #
@@ -226,5 +238,15 @@ class NodeConfig:  # pylint: disable=too-many-instance-attributes
         cfg.broadcast_address = str(ports_sec.get("broadcast", cfg.broadcast_address))
 
         cfg.ctl_socket = str(data.get("ctl_socket", cfg.ctl_socket))
+        cfg.ctl_port = int(data.get("ctl_port", cfg.ctl_port))
+
+        web_sec = data.get("web", {}) or {}
+        cfg.web_enabled = bool(web_sec.get("enabled", cfg.web_enabled))
+        cfg.web_host = str(web_sec.get("host", cfg.web_host))
+        cfg.web_port = int(web_sec.get("port", cfg.web_port))
+        cfg.web_username = str(web_sec.get("username", cfg.web_username))
+        cfg.web_password = str(web_sec.get("password", cfg.web_password))
+        cfg.web_ssl_cert = str(web_sec.get("ssl_cert", cfg.web_ssl_cert))
+        cfg.web_ssl_key = str(web_sec.get("ssl_key", cfg.web_ssl_key))
 
         return cfg

@@ -344,3 +344,59 @@ class TestPrintStatus:
         print_status(snap)
         out = capsys.readouterr().out
         assert "bootstrap" in out.lower()
+
+
+# ---------------------------------------------------------------------------
+# CtlServer TCP tests (cross-platform — works on Linux and Windows)
+# ---------------------------------------------------------------------------
+
+
+class TestCtlServerTCP:
+
+    @pytest.mark.asyncio
+    async def test_tcp_status_command_returns_snapshot(self):
+        """A 'status' request over TCP must return the snapshot dict."""
+        srv = CtlServer(socket_path="unused.sock", snapshot_fn=_make_snapshot, ctl_port=0)
+        # Force TCP path regardless of platform
+        await srv._start_tcp()  # pylint: disable=protected-access
+
+        try:
+            reader, writer = await asyncio.open_connection("127.0.0.1", srv.actual_port)
+            writer.write(b'{"cmd": "status"}\n')
+            await writer.drain()
+            line = await asyncio.wait_for(reader.readline(), timeout=3.0)
+            writer.close()
+            data = json.loads(line.decode().strip())
+        finally:
+            srv.close()
+
+        assert data["node"]["name"] == 1710000000
+        assert data["usd"]["name"] == "test-domain"
+
+    @pytest.mark.asyncio
+    async def test_tcp_unknown_command_returns_error(self):
+        """An unknown command over TCP must return an error key."""
+        srv = CtlServer(socket_path="unused.sock", snapshot_fn=_make_snapshot, ctl_port=0)
+        await srv._start_tcp()  # pylint: disable=protected-access
+
+        try:
+            reader, writer = await asyncio.open_connection("127.0.0.1", srv.actual_port)
+            writer.write(b'{"cmd": "unknown"}\n')
+            await writer.drain()
+            line = await asyncio.wait_for(reader.readline(), timeout=3.0)
+            writer.close()
+            data = json.loads(line.decode().strip())
+        finally:
+            srv.close()
+
+        assert "error" in data
+
+    @pytest.mark.asyncio
+    async def test_tcp_actual_port_nonzero_after_start(self):
+        """actual_port must be updated to the OS-assigned port after start."""
+        srv = CtlServer(socket_path="unused.sock", snapshot_fn=_make_snapshot, ctl_port=0)
+        await srv._start_tcp()  # pylint: disable=protected-access
+        try:
+            assert srv.actual_port > 0
+        finally:
+            srv.close()
