@@ -55,8 +55,8 @@ def _get_resource_usage() -> ResourceUsage:
         )
     except ImportError:
         logger.warning(
-            "[\x1b[38;5;51mUSMD\x1b[0m] psutil non installé — "
-            "métriques ressources indisponibles. Exécutez : pip install psutil"
+            "[\x1b[38;5;51mUSMD\x1b[0m] psutil not installed — "
+            "resource metrics unavailable. Run: pip install psutil"
         )
         return ResourceUsage(
             ram_percent=0.0,
@@ -65,7 +65,7 @@ def _get_resource_usage() -> ResourceUsage:
             network_percent=0.0,
         )
     except Exception as exc:
-        logger.debug("[\x1b[38;5;51mUSMD\x1b[0m] Erreur lecture ressources : %s", exc)
+        logger.debug("[\x1b[38;5;51mUSMD\x1b[0m] Error reading resources: %s", exc)
         return ResourceUsage(
             ram_percent=0.0,
             cpu_percent=0.0,

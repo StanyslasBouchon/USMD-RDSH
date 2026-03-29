@@ -58,8 +58,8 @@ async def _revoke_endorsements_on_shutdown(daemon: "NodeDaemon") -> None:
         addr = daemon.nit.get_address(packet.node_pub_key)
         if addr is None:
             logger.warning(
-                "[\x1b[38;5;51mUSMD\x1b[0m] REVOKE: adresse NIT introuvable "
-                "pour le nœud endossé %s — impossible de notifier.",
+                "[\x1b[38;5;51mUSMD\x1b[0m] REVOKE: NIT address not found "
+                "for endorsed node %s — cannot notify.",
                 packet.node_pub_key.hex()[:16] + "…",
             )
             continue
@@ -71,13 +71,13 @@ async def _revoke_endorsements_on_shutdown(daemon: "NodeDaemon") -> None:
         result = await client.send(NcpCommandId.REVOKE_ENDORSEMENT, payload)
         if result.is_err():
             logger.warning(
-                "[\x1b[38;5;51mUSMD\x1b[0m] REVOKE → nœud endossé %s : échec : %s",
+                "[\x1b[38;5;51mUSMD\x1b[0m] REVOKE → endorsed node %s: failed: %s",
                 addr,
                 result.unwrap_err(),
             )
         else:
             logger.info(
-                "[\x1b[38;5;51mUSMD\x1b[0m] REVOKE → nœud endossé %s notifié.",
+                "[\x1b[38;5;51mUSMD\x1b[0m] REVOKE → endorsed node %s notified.",
                 addr,
             )
 
@@ -89,8 +89,8 @@ async def _revoke_endorsements_on_shutdown(daemon: "NodeDaemon") -> None:
         addr = daemon.nit.get_address(received.endorser_key)
         if addr is None:
             logger.warning(
-                "[\x1b[38;5;51mUSMD\x1b[0m] REVOKE: adresse NIT introuvable "
-                "pour l'endosseur %s — impossible de notifier.",
+                "[\x1b[38;5;51mUSMD\x1b[0m] REVOKE: NIT address not found "
+                "for endorser %s — cannot notify.",
                 received.endorser_key.hex()[:16] + "…",
             )
         else:
@@ -102,13 +102,13 @@ async def _revoke_endorsements_on_shutdown(daemon: "NodeDaemon") -> None:
             result = await client.send(NcpCommandId.REVOKE_ENDORSEMENT, payload)
             if result.is_err():
                 logger.warning(
-                    "[\x1b[38;5;51mUSMD\x1b[0m] REVOKE → endosseur %s : échec : %s",
+                    "[\x1b[38;5;51mUSMD\x1b[0m] REVOKE → endorser %s: failed: %s",
                     addr,
                     result.unwrap_err(),
                 )
             else:
                 logger.info(
-                    "[\x1b[38;5;51mUSMD\x1b[0m] REVOKE → endosseur %s notifié.",
+                    "[\x1b[38;5;51mUSMD\x1b[0m] REVOKE → endorser %s notified.",
                     addr,
                 )
 
@@ -148,7 +148,7 @@ async def _run(daemon: "NodeDaemon") -> None:
         def _on_web_done(task: asyncio.Task) -> None:  # type: ignore[type-arg]
             if not task.cancelled() and task.exception():
                 logger.error(
-                    "[\x1b[38;5;51mUSMD\x1b[0m] Tableau de bord web arrêté : %s",
+                    "[\x1b[38;5;51mUSMD\x1b[0m] Web dashboard stopped: %s",
                     task.exception(),
                 )
 

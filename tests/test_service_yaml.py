@@ -107,6 +107,21 @@ class TestServiceYamlParser(unittest.TestCase):
         svc = ServiceYamlParser.parse("svc", FULL_YAML).unwrap()
         self.assertIsInstance(svc, Service)
 
+    def test_type_dynamic(self):
+        y = "type: dynamic\nbuild:\n  - command: echo d\n"
+        svc = ServiceYamlParser.parse("dyn", y).unwrap()
+        self.assertTrue(svc.service_type.is_dynamic())
+
+    def test_update_section(self):
+        y = """
+        build:
+          - command: echo b
+        update:
+          - command: echo up
+        """
+        svc = ServiceYamlParser.parse("u", y).unwrap()
+        self.assertEqual(svc.update_commands, ["echo up"])
+
 
 if __name__ == "__main__":
     unittest.main()

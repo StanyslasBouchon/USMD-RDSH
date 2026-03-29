@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from usmd._daemon_heartbeat import _heartbeat_loop
+from usmd._daemon_heartbeat import _format_reference_load_for_log, _heartbeat_loop
 from usmd.node.node import Node
 from usmd.node.nit import NodeIdentityTable
 from usmd.node.nrt import NodeReferenceTable
@@ -48,7 +48,40 @@ def _make_daemon(*, active_peer: bool = True, expired_peer: bool = False):
     daemon.nit = nit
     daemon.nrt = nrt
     daemon.usd = usd
+    daemon.consume_monotonic_gate = MagicMock(
+        side_effect=lambda kind, *a, **kw: kind == "peer_status_poll"
+    )
     return daemon
+
+
+# ---------------------------------------------------------------------------
+# Load colour helper (USD thresholds)
+# ---------------------------------------------------------------------------
+
+
+class TestFormatReferenceLoadForLog:
+    def test_green_below_load_threshold(self):
+        s = _format_reference_load_for_log(0.5, 0.8, 0.9)
+        assert "\x1b[32m" in s
+        assert "50.0%" in s
+
+    def test_yellow_weakened_band(self):
+        s = _format_reference_load_for_log(0.85, 0.8, 0.9)
+        assert "\x1b[33m" in s
+        assert "85.0%" in s
+
+    def test_red_emergency_band(self):
+        s = _format_reference_load_for_log(0.95, 0.8, 0.9)
+        assert "\x1b[31m" in s
+        assert "95.0%" in s
+
+    def test_boundary_load_threshold_is_yellow(self):
+        s = _format_reference_load_for_log(0.8, 0.8, 0.9)
+        assert "\x1b[33m" in s
+
+    def test_boundary_emergency_is_red(self):
+        s = _format_reference_load_for_log(0.9, 0.8, 0.9)
+        assert "\x1b[31m" in s
 
 
 # ---------------------------------------------------------------------------

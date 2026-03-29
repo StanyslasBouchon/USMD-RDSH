@@ -81,6 +81,21 @@ class NcpCommandId(IntEnum):
     REVOKE_ENDORSEMENT = 13
 
 
+# Dark blue (SGR 34) for command names in terminal logs — reset with SGR 0.
+_NCP_CMD_BLUE = "\x1b[34m"
+_NCP_CMD_RESET = "\x1b[0m"
+
+# Direction arrows in NCP TCP logs: inbound green (32), outbound red (31).
+NCP_LOG_ARROW_IN = "\x1b[32m←\x1b[0m"
+NCP_LOG_ARROW_OUT = "\x1b[31m→\x1b[0m"
+
+
+def format_ncp_cmd_for_log(command_id: NcpCommandId | str) -> str:
+    """Return an NCP command *name* wrapped in dark-blue ANSI for log output."""
+    name = command_id.name if isinstance(command_id, NcpCommandId) else str(command_id)
+    return f"{_NCP_CMD_BLUE}{name}{_NCP_CMD_RESET}"
+
+
 @dataclass
 class NcpFrame:
     """A complete NCP protocol frame ready for transmission.

@@ -8,7 +8,7 @@ function formatUptime(s) {
   const h = Math.floor((s % 86400) / 3600);
   const m = Math.floor((s % 3600) / 60);
   const sec = s % 60;
-  if (d > 0) return `${d}j ${h}h ${String(m).padStart(2,'0')}m ${String(sec).padStart(2,'0')}s`;
+  if (d > 0) return `${d}d ${h}h ${String(m).padStart(2,'0')}m ${String(sec).padStart(2,'0')}s`;
   if (h > 0) return `${h}h ${String(m).padStart(2,'0')}m ${String(sec).padStart(2,'0')}s`;
   if (m > 0) return `${m}m ${String(sec).padStart(2,'0')}s`;
   return `${sec}s`;
@@ -47,8 +47,8 @@ function renderNit(entries) {
     const expired = !!entry.expired;
     const ttlClass = expired ? 'text-danger' : ttl < 30 ? 'text-warning' : 'text-success';
     const stateBadge = expired
-      ? '<span class="badge badge-state-inactive">Expiré</span>'
-      : '<span class="badge badge-state-active">Valide</span>';
+      ? '<span class="badge badge-state-inactive">Expired</span>'
+      : '<span class="badge badge-state-active">Valid</span>';
     const rowClass = expired ? ' class="table-danger"' : '';
     const addr = entry.address || '';
     const pk = entry.pub_key || '';
@@ -62,7 +62,7 @@ function renderNit(entries) {
   }).join('');
 
   if (nitLastUpd) {
-    nitLastUpd.textContent = `— actualisé à ${new Date().toLocaleTimeString('fr-FR')}`;
+    nitLastUpd.textContent = `— updated at ${new Date().toLocaleTimeString('en-US')}`;
   }
 }
 
@@ -78,7 +78,7 @@ function nrtBarColor(d) {
   return 'bg-success';
 }
 
-/** True si la ligne NRT correspond à un nœud listé dans reference_nodes. */
+/** True if the NRT row matches a node listed in reference_nodes. */
 function nrtRowIsReference(entry, refs) {
   const addr = entry.address != null ? String(entry.address).trim() : '';
   const nm = entry.node_name;
@@ -117,10 +117,10 @@ function renderNrt(entries, refs) {
     const isRef = nrtRowIsReference(e, refs);
     const tr   = e.stale ? ' class="text-muted"' : '';
     const staleTag = e.stale
-      ? ' <span class="badge badge-state-inactive ms-1">Périmé</span>'
+      ? ' <span class="badge badge-state-inactive ms-1">Stale</span>'
       : '';
     const refTag = isRef
-      ? '<span class="badge badge-state-active"><i class="bi bi-check-lg me-1"></i>Oui</span>'
+      ? '<span class="badge badge-state-active"><i class="bi bi-check-lg me-1"></i>Yes</span>'
       : '';
     const addrCell = `<a href="/node/${e.address}" class="text-info text-decoration-none">` +
       `<i class="bi bi-hdd-network me-1"></i>${e.address}</a>`;
@@ -139,7 +139,7 @@ function renderNrt(entries, refs) {
   }).join('');
 
   if (nrtLastUpd) {
-    nrtLastUpd.textContent = `— actualisé à ${new Date().toLocaleTimeString('fr-FR')}`;
+    nrtLastUpd.textContent = `— updated at ${new Date().toLocaleTimeString('en-US')}`;
   }
 }
 
@@ -178,7 +178,7 @@ function renderNrl(entries) {
   }).join('');
 
   if (nrlLastUpd) {
-    nrlLastUpd.textContent = `— actualisé à ${new Date().toLocaleTimeString('fr-FR')}`;
+    nrlLastUpd.textContent = `— updated at ${new Date().toLocaleTimeString('en-US')}`;
   }
 }
 
@@ -201,8 +201,8 @@ if (chartCtx) {
       datasets: [
         makeDataset('CPU',    '#58a6ff'),
         makeDataset('RAM',    '#3fb950'),
-        makeDataset('Disque', '#d29922'),
-        makeDataset('Réseau', '#bc8cff'),
+        makeDataset('Disk', '#d29922'),
+        makeDataset('Network', '#bc8cff'),
       ],
     },
     options: {

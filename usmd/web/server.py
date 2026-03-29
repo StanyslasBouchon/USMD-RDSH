@@ -67,7 +67,7 @@ class WebServer:
     """Asyncio-compatible web server wrapping Django + uvicorn.
 
     Attributes:
-        cfg: NodeConfig containing web_host, web_port, credentials, etc.
+        cfg: NodeConfig (``cfg.web.host``, ``cfg.web.port``, credentials, etc.).
 
     Examples:
         >>> srv = WebServer.__new__(WebServer)
@@ -100,6 +100,7 @@ class WebServer:
         self._on_ncp_failure = on_ncp_failure
         self._uvicorn_server: Optional[object] = None
         self._cleanup: contextlib.ExitStack = contextlib.ExitStack()
+        self._mutation_apply_fn: Optional[Callable[..., object]] = None
 
     # ------------------------------------------------------------------
     # SSL / TLS helpers
@@ -113,8 +114,8 @@ class WebServer:
         2. Auto-generate self-signed cert via openssl.
         3. Fall back to HTTP (None, None).
         """
-        cert = self._cfg.web_ssl_cert
-        key = self._cfg.web_ssl_key
+        cert = self._cfg.web.ssl_cert
+        key = self._cfg.web.ssl_key
 
         if cert and key and Path(cert).is_file() and Path(key).is_file():
             logger.info("[\x1b[38;5;51mUSMD\x1b[0m] Web: using TLS cert %s", cert)
@@ -181,8 +182,8 @@ class WebServer:
 
         # 1. Configure Django settings
         _configure_django(
-            username=self._cfg.web_username,
-            password=self._cfg.web_password,
+            username=self._cfg.web.username,
+            password=self._cfg.web.password,
             secret_key=secrets.token_hex(32),
         )
 
@@ -205,6 +206,7 @@ class WebServer:
                 ncp_port=self._cfg.ncp_port,
                 cfg=self._cfg,
                 on_ncp_failure=self._on_ncp_failure,
+                mutation_apply_fn=self._mutation_apply_fn,
             )
         )
 
@@ -219,29 +221,36 @@ class WebServer:
         app = get_asgi_application()
         config = uvicorn.Config(
             app=app,
-            host=self._cfg.web_host,
-            port=self._cfg.web_port,
+            host=self._cfg.web.host,
+            port=self._cfg.web.port,
             ssl_certfile=cert,
             ssl_keyfile=key,
             log_level="warning",
         )
 
-        # Uvicorn récent enveloppe ``serve()`` avec ``capture_signals()`` qui
-        # fait ``signal.signal(SIGINT, handle_exit)`` : Ctrl+C n'atteint plus
-        # ``KeyboardInterrupt`` ni la tâche ``daemon.run()`` du parent.
-        # Les versions plus anciennes utilisent ``install_signal_handlers``.
+        # Recent uvicorn wraps ``serve()`` with ``capture_signals()`` which calls
+        # ``signal.signal(SIGINT, handle_exit)``: Ctrl+C no longer reaches
+        # ``KeyboardInterrupt`` or the parent ``daemon.run()`` task.
+        # Older versions use ``install_signal_handlers``.
         class _EmbeddedUvicornServer(uvicorn.Server):
             @contextlib.contextmanager
             def capture_signals(self):  # type: ignore[override]
+                """Do not register uvicorn SIGINT/SIGTERM handlers (parent owns signals)."""
                 yield
 
+            def install_signal_handlers(self) -> None:
+                """No-op: parent daemon must receive SIGINT, not uvicorn."""
+
         self._uvicorn_server = _EmbeddedUvicornServer(config)
-        if hasattr(self._uvicorn_server, "install_signal_handlers"):
-            self._uvicorn_server.install_signal_handlers = lambda: None  # noqa: E731
 
         await self._uvicorn_server.serve()
 
+    def set_mutation_apply_fn(self, fn: Optional[Callable[..., object]]) -> None:
+        """Register async callback for dashboard mutation publish (usd_operator)."""
+        self._mutation_apply_fn = fn
+
     def close(self) -> None:
         """Signal the uvicorn server to stop."""
-        if self._uvicorn_server is not None:
-            self._uvicorn_server.should_exit = True
+        srv = self._uvicorn_server
+        if srv is not None:
+            setattr(srv, "should_exit", True)

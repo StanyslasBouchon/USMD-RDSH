@@ -59,6 +59,10 @@ class SendUsdPropertiesRequest:
     ping_tolerance_ms: int
     load_check_interval: int
     emergency_threshold: float
+    min_services: int = 0
+    max_services: int | None = None
+    dependency_check_interval: int = 60
+    dependency_min_reference_nodes: int = 1
 
     @staticmethod
     def from_usd_config(cfg: USDConfig) -> "SendUsdPropertiesRequest":
@@ -87,6 +91,10 @@ class SendUsdPropertiesRequest:
             ping_tolerance_ms=cfg.ping_tolerance_ms,
             load_check_interval=cfg.load_check_interval,
             emergency_threshold=cfg.emergency_threshold,
+            min_services=cfg.min_services,
+            max_services=cfg.max_services,
+            dependency_check_interval=cfg.dependency_check_interval,
+            dependency_min_reference_nodes=cfg.dependency_min_reference_nodes,
         )
 
     def to_usd_config(self) -> USDConfig:
@@ -105,6 +113,10 @@ class SendUsdPropertiesRequest:
             load_check_interval=self.load_check_interval,
             emergency_threshold=self.emergency_threshold,
             version=self.config_version,
+            min_services=self.min_services,
+            max_services=self.max_services,
+            dependency_check_interval=self.dependency_check_interval,
+            dependency_min_reference_nodes=self.dependency_min_reference_nodes,
         )
 
     def to_payload(self) -> bytes:
@@ -119,6 +131,10 @@ class SendUsdPropertiesRequest:
             "ping_tol_ms": self.ping_tolerance_ms,
             "load_interval": self.load_check_interval,
             "emerg_thresh": self.emergency_threshold,
+            "min_svc": self.min_services,
+            "max_svc": self.max_services,
+            "dep_check_iv": self.dependency_check_interval,
+            "dep_min_refs": self.dependency_min_reference_nodes,
         }
         return json.dumps(doc).encode("utf-8")
 
@@ -141,6 +157,7 @@ class SendUsdPropertiesRequest:
         """
         try:
             doc = json.loads(payload.decode("utf-8"))
+            max_svc = doc.get("max_svc")
             return Result.Ok(
                 SendUsdPropertiesRequest(
                     config_version=int(doc["version"]),
@@ -152,6 +169,10 @@ class SendUsdPropertiesRequest:
                     ping_tolerance_ms=int(doc.get("ping_tol_ms", 200)),
                     load_check_interval=int(doc.get("load_interval", 30)),
                     emergency_threshold=float(doc.get("emerg_thresh", 0.9)),
+                    min_services=int(doc.get("min_svc", 0)),
+                    max_services=int(max_svc) if max_svc is not None else None,
+                    dependency_check_interval=int(doc.get("dep_check_iv", 60)),
+                    dependency_min_reference_nodes=int(doc.get("dep_min_refs", 1)),
                 )
             )
         except (ValueError, KeyError, TypeError, UnicodeDecodeError) as exc:

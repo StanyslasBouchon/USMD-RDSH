@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}Mutation — USMD-RDSH{% endblock title %}
+{% block breadcrumb %}Mutation / transmutation{% endblock breadcrumb %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h1 class="h4 mb-1"><i class="bi bi-diagram-3-fill icon-accent me-2"></i> Publish a mutation</h1>
+    <p class="text-muted small mb-0">
+      YAML definition for a service (static or dynamic). Reserved for the <code>usd_operator</code> role.
+      Current USD version: <strong>{{ usd_version }}</strong>
+      {% if min_services %}— min. services: {{ min_services }}{% endif %}
+      {% if max_services %}— max: {{ max_services }}{% endif %}
+    </p>
+  </div>
+</div>
+
+{% if error %}
+<div class="alert alert-danger">{{ error }}</div>
+{% endif %}
+{% if success %}
+<div class="alert alert-success">{{ success }}</div>
+{% endif %}
+
+<div class="row g-4">
+  <div class="col-lg-7">
+    <div class="card node-card">
+      <div class="card-header small text-uppercase text-muted">New / update</div>
+      <div class="card-body">
+        <form method="post" action="{% url 'mutation_publish' %}">
+          {% csrf_token %}
+          <div class="mb-3">
+            <label class="form-label" for="service_name">Service name</label>
+            <input type="text" class="form-control" id="service_name" name="service_name"
+                   placeholder="e.g. backend" required autocomplete="off">
+          </div>
+          <div class="mb-3">
+            <label class="form-label" for="yaml">YAML file (one service)</label>
+            <textarea class="form-control font-monospace" id="yaml" name="yaml" rows="18"
+              placeholder="type: static&#10;dependencies: []&#10;build:&#10;  - command: echo start&#10;unbuild:&#10;  - command: echo stop&#10;emergency: []&#10;check_health: []&#10;update: []"></textarea>
+          </div>
+          <div class="form-check mb-3">
+            <input class="form-check-input" type="checkbox" name="apply_locally" id="apply_locally">
+            <label class="form-check-label" for="apply_locally">
+              Run build / update / health on <strong>this node</strong> now
+            </label>
+            <div class="form-text">If unchecked: catalogue save + NCP broadcast only (recommended for dry runs).</div>
+          </div>
+          <button type="submit" class="btn btn-primary">
+            <i class="bi bi-cloud-upload"></i> Save and broadcast
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-5">
+    <div class="card node-card">
+      <div class="card-header small text-uppercase text-muted">Known services (this domain)</div>
+      <div class="card-body p-0">
+        {% if services %}
+        <table class="table table-sm mb-0">
+          <thead><tr><th>Name</th><th>Type</th><th>Version</th></tr></thead>
+          <tbody>
+            {% for s in services %}
+            <tr>
+              <td><code>{{ s.name }}</code></td>
+              <td>{{ s.service_type.value }}</td>
+              <td>{{ s.version }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+        <p class="text-muted small p-3 mb-0">No mutations recorded yet.</p>
+        {% endif %}
+      </div>
+    </div>
+    <div class="card node-card mt-3">
+      <div class="card-body small text-muted">
+        <p class="mb-2">On success, the USD version is incremented and
+          <code>SEND_USD_PROPERTIES</code> + <code>SEND_MUTATION_PROPERTIES</code>
+          are sent to reference nodes (with YAML when available).</p>
+        <p class="mb-0">Phases: <strong>build</strong> (bring-up), <strong>unbuild</strong> (tear-down),
+          <strong>emergency</strong>, <strong>check_health</strong>,
+          <strong>update</strong> (in-place update).</p>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock content %}

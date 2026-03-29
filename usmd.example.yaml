@@ -38,16 +38,16 @@ ports:
   ncp: 5626
   nndp_listen: 5221
   nndp_send: 5222
-  broadcast: auto # "auto" = diffuse sur toutes les interfaces ; ou "192.168.1.255"
+  broadcast: auto # "auto" = broadcast on all interfaces; or e.g. "192.168.1.255"
 
 # -----------------------------------------------------------------------
-# Tableau de bord web
+# Web dashboard
 # -----------------------------------------------------------------------
 web:
-  enabled: true # true pour activer
+  enabled: true # true to enable
   host: 0.0.0.0
   port: 8443
   username: admin
-  password: changeme # À modifier !
-  ssl_cert: "" # Chemin PEM ; vide = self-signed auto-généré
+  password: changeme # Change this!
+  ssl_cert: "" # PEM path; empty = auto-generated self-signed
   ssl_key: ""

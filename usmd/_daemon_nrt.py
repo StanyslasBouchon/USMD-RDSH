@@ -25,6 +25,7 @@ import logging
 import time
 from typing import TYPE_CHECKING, Callable
 
+from ._daemon_mutation_hosting import refresh_mutation_hosting
 from .ncp.client.tcp import NcpClient
 from .ncp.protocol.commands.check_distance import (
     CheckDistanceRequest,
@@ -241,9 +242,9 @@ def _log_ref_change(
     if removed_names:
         parts.append(f"-[{fmt(removed_names)}]")
     logger.info(
-        "[\x1b[38;5;51mUSMD\x1b[0m] Nœuds de référence → %s  (%s)",
-        [f"#{n}" for n in new_ref_names] or "aucun",
-        "  ".join(parts) if parts else "inchangé",
+        "[\x1b[38;5;51mUSMD\x1b[0m] Reference nodes → %s  (%s)",
+        [f"#{n}" for n in new_ref_names] or "none",
+        "  ".join(parts) if parts else "unchanged",
     )
 
 
@@ -300,7 +301,7 @@ async def _send_inform_reference_node(
         result = await client.send(NcpCommandId.INFORM_REFERENCE_NODE, payload)
         if result.is_err():
             logger.debug(
-                "[\x1b[38;5;51mUSMD\x1b[0m] INFORM_REFERENCE_NODE → %s échoué: %s",
+                "[\x1b[38;5;51mUSMD\x1b[0m] INFORM_REFERENCE_NODE → %s failed: %s",
                 addr,
                 result.unwrap_err(),
             )
@@ -363,4 +364,6 @@ async def _update_reference_nodes(
     new_ref_addrs = {name_to_addr[n] for n in new_ref_names if n in name_set}
     removed_addrs = {name_to_addr[n] for n in removed_names if n in name_set}
     await _send_inform_reference_node(
-        daemon, new_ref_addrs | removed_addrs, new_ref_names)
+        daemon, new_ref_addrs | removed_addrs, new_ref_names
+    )
+    await refresh_mutation_hosting(daemon, poll_peers=True, force_peer_poll=True)

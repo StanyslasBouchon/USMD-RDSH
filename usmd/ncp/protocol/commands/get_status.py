@@ -27,7 +27,7 @@ Examples:
 """
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 from ....node.state import NodeState
@@ -45,6 +45,8 @@ class NodeStatus:
         disk_percent: Disk utilisation ∈ [0, 1].
         network_percent: Network card utilisation ∈ [0, 1].
         service_name: Name of the active mutation service (or None).
+        hosting_static: Static services this node runs (may be empty).
+        hosting_dynamic: Dynamic shards on this node (may be empty).
         state: Current NodeState.
 
     Examples:
@@ -59,6 +61,8 @@ class NodeStatus:
     network_percent: float
     service_name: Optional[str]
     state: NodeState
+    hosting_static: list[str] = field(default_factory=list)
+    hosting_dynamic: list[str] = field(default_factory=list)
 
     def reference_load(self) -> float:
         """Return the reference load (maximum of all metrics).
@@ -137,6 +141,8 @@ class GetStatusResponse:
             "net": self.status.network_percent,
             "service": self.status.service_name,
             "state": self.status.state.value,
+            "hosting_static": self.status.hosting_static,
+            "hosting_dynamic": self.status.hosting_dynamic,
         }
         return json.dumps(doc).encode("utf-8")
 
@@ -159,6 +165,16 @@ class GetStatusResponse:
         try:
             doc = json.loads(payload.decode("utf-8"))
             state = NodeState(doc["state"])
+            hs = (
+                [str(x) for x in doc["hosting_static"]]
+                if "hosting_static" in doc
+                else []
+            )
+            hd = (
+                [str(x) for x in doc["hosting_dynamic"]]
+                if "hosting_dynamic" in doc
+                else []
+            )
             status = NodeStatus(
                 ram_percent=float(doc["ram"]),
                 cpu_percent=float(doc["cpu"]),
@@ -166,6 +182,8 @@ class GetStatusResponse:
                 network_percent=float(doc["net"]),
                 service_name=doc.get("service"),
                 state=state,
+                hosting_static=hs,
+                hosting_dynamic=hd,
             )
             return Result.Ok(GetStatusResponse(status))
         except (ValueError, KeyError, TypeError, UnicodeDecodeError) as exc:

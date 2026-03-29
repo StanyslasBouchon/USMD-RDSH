@@ -116,11 +116,14 @@ def _build_status_snapshot(daemon: "NodeDaemon") -> dict:
 
     return {
         "node": {
-            "name":           daemon.node.name,
-            "address":        daemon.node.address,
-            "state":          daemon.node.state.value,
-            "role":           daemon.cfg.node_role.value,
-            "uptime_seconds": now - daemon.start_time,
+            "name":              daemon.node.name,
+            "address":           daemon.node.address,
+            "state":             daemon.node.state.value,
+            "role":              daemon.cfg.node_role.value,
+            "uptime_seconds":    now - daemon.start_time,
+            "service_name":      daemon.node.service_name,
+            "hosting_static":    list(daemon.node.hosting_static),
+            "hosting_dynamic":   list(daemon.node.hosting_dynamic),
         },
         "usd": {
             "name":           daemon.usd.config.name,
@@ -128,7 +131,21 @@ def _build_status_snapshot(daemon: "NodeDaemon") -> dict:
             "edb_address":    daemon.usd.config.edb_address,
             "config_version": daemon.usd.config.version,
             "node_count":     len(daemon.usd.nodes),
+            "min_services":   daemon.usd.config.min_services,
+            "max_services":   daemon.usd.config.max_services,
+            "dependency_check_interval": (
+                daemon.usd.config.dependency_check_interval
+            ),
         },
+        "mutations": [
+            {
+                "name":    s.name,
+                "type":    s.service_type.value,
+                "version": s.version,
+                "deps":    s.dependencies,
+            }
+            for s in daemon.usd.mutation_catalog.all_services()
+        ],
         "nit": nit_data,
         "nal": nal_data,
         "nel": {
@@ -136,7 +153,7 @@ def _build_status_snapshot(daemon: "NodeDaemon") -> dict:
             "issued":   nel_issued,
         },
         "reference_nodes": ref_nodes_data,
-        # Même carte adresse → nom que la sélection des références (_usd_addr_to_peer_name)
+        # Same address → name map as reference selection (_usd_addr_to_peer_name)
         "nrt": _nrt_rows_for_snapshot(daemon),
         "nrl": daemon.nrl.get_all_dicts(),
         "resources": {
@@ -147,7 +164,7 @@ def _build_status_snapshot(daemon: "NodeDaemon") -> dict:
             "reference_load":  usage.reference_load(),
         },
         "quorum": {
-            "enabled":       daemon.cfg.quorum_enabled,
+            "enabled":       daemon.cfg.quorum.enabled,
             "is_operator":   (
                 daemon.quorum_manager.is_operator
                 if daemon.quorum_manager else False

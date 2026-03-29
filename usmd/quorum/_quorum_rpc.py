@@ -344,6 +344,6 @@ def on_promotion_announced(
     voted_epochs[role].discard(epoch)
     nqt.add(
         epoch, pub_key, address,
-        f"Annonce reçue d'un pair (epoch {epoch})",
+        f"Peer announcement received (epoch {epoch})",
         role.value,
     )

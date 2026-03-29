@@ -75,6 +75,7 @@ def _make_nrt_daemon(*, peer_address="10.0.0.2"):
     daemon.nrt = nrt
     daemon.nrl = nrl
     daemon.reference_since = {}
+    daemon.consume_monotonic_gate = MagicMock(return_value=True)
     return daemon
 
 
@@ -233,7 +234,7 @@ class TestLogRefChange:
         )
 
     def test_no_change(self):
-        """Empty sets should produce 'inchangé'."""
+        """Empty sets should produce 'unchanged'."""
         _log_ref_change(
             new_ref_names=[],
             added_names=set(),
@@ -415,7 +416,7 @@ class TestComputeReferenceNames:
         assert set(out) == {1, 2}
 
     def test_sticky_keeps_peer_if_no_strictly_better_outside(self):
-        # Tri par distance : 2 puis 1 ; aucun d strictement < d(2) hors set ne préempte
+        # Sort by distance: 2 then 1; no strictly lower d outside set preempts
         cands = [(2, "b", 0.60), (1, "a", 0.65)]
         old = [2]
         since = {2: 800.0}

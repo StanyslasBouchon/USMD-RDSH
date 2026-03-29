@@ -3,11 +3,11 @@
   <div class="node-card p-3">
     <table class="table table-sm table-borderless mb-0">
       <tbody>
-        <tr><td class="text-muted detail-label-col">Nom USD</td><td class="text-light">{{ usd.name }}</td></tr>
+        <tr><td class="text-muted detail-label-col">USD name</td><td class="text-light">{{ usd.name }}</td></tr>
         <tr><td class="text-muted">Cluster</td><td class="text-light">{{ usd.cluster_name|default:"—" }}</td></tr>
         <tr><td class="text-muted">EDB</td><td class="text-light">{{ usd.edb_address|default:"—" }}</td></tr>
-        <tr><td class="text-muted">Version config</td><td class="text-light">{{ usd.config_version }}</td></tr>
-        <tr><td class="text-muted">Nœuds dans l'USD</td><td class="text-light">{{ usd.node_count }}</td></tr>
+        <tr><td class="text-muted">Config version</td><td class="text-light">{{ usd.config_version }}</td></tr>
+        <tr><td class="text-muted">Nodes in USD</td><td class="text-light">{{ usd.node_count }}</td></tr>
       </tbody>
     </table>
   </div>

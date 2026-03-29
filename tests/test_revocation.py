@@ -132,9 +132,9 @@ class TestRevokeEndorsementHandler:
 
         assert response.command_id == NcpCommandId.REVOKE_ENDORSEMENT
         assert handler_ctx.nel.get_received() is None, (
-            "Le paquet reçu doit être effacé après la révocation de l'endosseur."
+            "Received packet must be cleared after endorser revocation."
         )
-        assert rejoin_called, "rejoin_fn doit être appelé après la révocation de l'endosseur."
+        assert rejoin_called, "rejoin_fn must be called after endorser revocation."
 
     def test_case1_rejoin_fn_none_does_not_raise(self, handler_ctx):
         """Case 1 with rejoin_fn=None must not raise (graceful degradation)."""
@@ -161,7 +161,7 @@ class TestRevokeEndorsementHandler:
 
         assert response.command_id == NcpCommandId.REVOKE_ENDORSEMENT
         assert not handler_ctx.nel.has_issued_to(endorsed_key), (
-            "L'entrée doit être retirée de NEL._issued après la révocation."
+            "Entry must be removed from NEL._issued after revocation."
         )
 
     def test_no_relationship_permanently_excludes_sender(self, handler_ctx):
@@ -173,7 +173,7 @@ class TestRevokeEndorsementHandler:
 
         assert response.command_id == NcpCommandId.REVOKE_ENDORSEMENT
         assert handler_ctx.nit.is_excluded(unknown_key), (
-            "Un nœud sans relation d'endossement doit être exclu de façon permanente."
+            "A node with no endorsement relationship must be permanently excluded."
         )
 
     def test_malformed_payload_returns_empty_response(self, handler_ctx):
@@ -228,9 +228,14 @@ class TestScheduleRejoin:
         daemon = NodeDaemon(cfg)
         daemon.node.set_state(NodeState.ACTIVE)
 
-        # Patch create_task to avoid needing a running loop
+        # Patch create_task to avoid needing a running loop (close coroutine or
+        # Python warns: coroutine '_join' was never awaited).
+        def _capture_create_task(coro, **_kw):
+            coro.close()
+            return MagicMock()
+
         with patch("asyncio.get_event_loop") as mock_loop:
-            mock_loop.return_value.create_task = MagicMock()
+            mock_loop.return_value.create_task = _capture_create_task
             daemon._schedule_rejoin()
 
         assert daemon.node.state == NodeState.PENDING_APPROVAL
@@ -243,16 +248,22 @@ class TestScheduleRejoin:
         cfg = NodeConfig(bootstrap=True, usd_name="test-domain")
         daemon = NodeDaemon(cfg)
 
-        created = []
+        created: list[tuple[object, dict]] = []
         mock_loop = MagicMock()
-        mock_loop.create_task = lambda coro, **kw: created.append((coro, kw))
+
+        def _capture_create_task(coro, **kw):
+            created.append((coro, kw))
+            return MagicMock()
+
+        mock_loop.create_task = _capture_create_task
 
         with patch("asyncio.get_event_loop", return_value=mock_loop):
             daemon._schedule_rejoin()
 
         assert len(created) == 1
-        _, kw = created[0]
+        coro, kw = created[0]
         assert kw.get("name") == "rejoin-after-revocation"
+        coro.close()
 
     def test_no_error_when_no_event_loop(self):
         """_schedule_rejoin must not raise even when there is no running loop."""
@@ -284,10 +295,10 @@ class TestScheduleRejoin:
         daemon = NodeDaemon(cfg)
 
         assert daemon._handler.ctx.rejoin_fn is not None, (
-            "rejoin_fn ne doit pas être None après l'initialisation."
+            "rejoin_fn must not be None after initialization."
         )
         assert daemon._handler.ctx.rejoin_fn == daemon._schedule_rejoin, (
-            "rejoin_fn doit pointer vers _schedule_rejoin."
+            "rejoin_fn must point to _schedule_rejoin."
         )
 
 
@@ -353,7 +364,7 @@ class TestRevokeOnShutdown:
             await _revoke_endorsements_on_shutdown(mock_daemon)
 
         assert set(sent_to) == {"10.0.0.2", "10.0.0.3"}, (
-            "Les deux nœuds endossés doivent recevoir une notification."
+            "Both endorsed nodes must receive a notification."
         )
 
     @pytest.mark.asyncio
@@ -380,7 +391,7 @@ class TestRevokeOnShutdown:
             await _revoke_endorsements_on_shutdown(mock_daemon)
 
         assert sent_to == ["10.0.0.1"], (
-            "L'endosseur doit être notifié lorsque le nœud quitte le réseau."
+            "The endorser must be notified when the node leaves the network."
         )
 
     @pytest.mark.asyncio
@@ -444,7 +455,7 @@ class TestRevokeOnShutdown:
             await _revoke_endorsements_on_shutdown(mock_daemon)
 
         assert call_count == 2, (
-            "L'échec du premier envoi ne doit pas empêcher la notification du second nœud."
+            "First send failure must not block notifying the second node."
         )
 
     @pytest.mark.asyncio
@@ -483,5 +494,5 @@ class TestRevokeOnShutdown:
         assert len(captured_payloads) == 1
         parsed = RevokeEndorsementRequest.from_payload(captured_payloads[0]).unwrap()
         assert parsed.sender_pub_key == mock_daemon.ed_pub, (
-            "Le payload doit contenir la clé publique du nœud partant."
+            "Payload must contain the departing node's public key."
         )

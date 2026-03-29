@@ -13,13 +13,13 @@ Example usmd.yaml::
       cluster_name: ""
       edb_address: null
       max_reference_nodes: 5
-      reference_hold_seconds: 300  # stabilité des nœuds de référence (s), sauf préemption
+      reference_hold_seconds: 300  # reference node hold time (s), unless preempted
       load_threshold: 0.8
       ping_tolerance_ms: 200
       load_check_interval: 30
       emergency_threshold: 0.9
 
-    bootstrap: false         # true = créer un nouvel USD, false = rejoindre
+    bootstrap: false         # true = create a new USD, false = join existing
     keys_file: usmd_keys.json
     nndp_ttl: 30
 
@@ -30,13 +30,35 @@ Example usmd.yaml::
 """
 
 import socket
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 import yaml
 
 from .domain.usd import USDConfig
 from .node.role import NodeRole
+
+
+@dataclass
+class WebDashboardConfig:
+    """HTTP(S) dashboard: bind address, credentials, and optional TLS paths."""
+
+    enabled: bool = False
+    host: str = "0.0.0.0"
+    port: int = 8443
+    username: str = "admin"
+    password: str = "changeme"
+    ssl_cert: str = ""
+    ssl_key: str = ""
+
+
+@dataclass
+class QuorumElectionConfig:
+    """Distributed operator election: enable flag and timing."""
+
+    enabled: bool = True
+    check_interval: float = 30.0
+    election_timeout: float = 8.0
 
 
 @dataclass
@@ -59,6 +81,10 @@ class NodeConfig:
         ping_tolerance_ms: Max tolerated ping T (ms) for distance formula.
         load_check_interval: Seconds between resource usage checks.
         emergency_threshold: Load level that triggers an emergency request.
+        min_services: Minimum mutation services that must be defined in the USD.
+        max_services: Maximum mutation services (None = unlimited).
+        dependency_check_interval: Seconds between dependency reachability checks.
+        dependency_min_reference_nodes: Minimum reference peers per dependency.
         ncp_port: TCP port for the NCP server (spec: 5626).
         nndp_listen_port: UDP port that receives HIA packets (spec: 5221).
         nndp_send_port: UDP source port for HIA broadcasts (spec: 5222).
@@ -67,9 +93,8 @@ class NodeConfig:
         join_timeout: Seconds to wait for peer discovery + approval on startup.
         ctl_socket: Path to the Unix-domain control socket (Linux/macOS).
         ctl_port: TCP loopback port for the control server (Windows).
-        quorum_enabled: Enable the distributed operator election system.
-        quorum_check_interval: Seconds between operator liveness checks.
-        quorum_election_timeout: Max random candidacy delay in seconds.
+        web: Dashboard bind, credentials, and TLS file paths.
+        quorum: Operator election enable flag and intervals.
 
     Examples:
         >>> cfg = NodeConfig()
@@ -98,6 +123,10 @@ class NodeConfig:
     ping_tolerance_ms: int = 200
     load_check_interval: int = 30
     emergency_threshold: float = 0.9
+    min_services: int = 0
+    max_services: Optional[int] = None
+    dependency_check_interval: int = 60
+    dependency_min_reference_nodes: int = 1
 
     # Port numbers
     ncp_port: int = 5626
@@ -113,19 +142,9 @@ class NodeConfig:
     ctl_socket: str = "usmd.sock"  # Unix-domain socket path (Linux/macOS)
     ctl_port: int = 5627  # TCP loopback port (Windows)
 
-    # Web dashboard
-    web_enabled: bool = False
-    web_host: str = "0.0.0.0"
-    web_port: int = 8443
-    web_username: str = "admin"
-    web_password: str = "changeme"
-    web_ssl_cert: str = ""  # path to TLS cert (PEM), "" → auto self-signed
-    web_ssl_key: str = ""  # path to TLS key (PEM)
-
-    # Quorum election
-    quorum_enabled: bool = True
-    quorum_check_interval: float = 30.0  # seconds between operator liveness checks
-    quorum_election_timeout: float = 8.0  # max candidacy delay (random 1 to N seconds)
+    # Web dashboard + quorum (nested to keep NodeConfig attribute count low)
+    web: WebDashboardConfig = field(default_factory=WebDashboardConfig)
+    quorum: QuorumElectionConfig = field(default_factory=QuorumElectionConfig)
 
     # ------------------------------------------------------------------ #
     # Derived properties                                                   #
@@ -193,6 +212,10 @@ class NodeConfig:
             load_check_interval=self.load_check_interval,
             emergency_threshold=self.emergency_threshold,
             version=0,
+            min_services=self.min_services,
+            max_services=self.max_services,
+            dependency_check_interval=self.dependency_check_interval,
+            dependency_min_reference_nodes=self.dependency_min_reference_nodes,
         )
 
     # ------------------------------------------------------------------ #
@@ -253,6 +276,18 @@ class NodeConfig:
         cfg.emergency_threshold = float(
             usd_sec.get("emergency_threshold", cfg.emergency_threshold)
         )
+        cfg.min_services = int(usd_sec.get("min_services", cfg.min_services))
+        if "max_services" in usd_sec and usd_sec["max_services"] is not None:
+            cfg.max_services = int(usd_sec["max_services"])
+        cfg.dependency_check_interval = int(
+            usd_sec.get("dependency_check_interval", cfg.dependency_check_interval)
+        )
+        cfg.dependency_min_reference_nodes = int(
+            usd_sec.get(
+                "dependency_min_reference_nodes",
+                cfg.dependency_min_reference_nodes,
+            )
+        )
 
         ports_sec = data.get("ports", {}) or {}
         cfg.ncp_port = int(ports_sec.get("ncp", cfg.ncp_port))
@@ -264,21 +299,23 @@ class NodeConfig:
         cfg.ctl_port = int(data.get("ctl_port", cfg.ctl_port))
 
         web_sec = data.get("web", {}) or {}
-        cfg.web_enabled = bool(web_sec.get("enabled", cfg.web_enabled))
-        cfg.web_host = str(web_sec.get("host", cfg.web_host))
-        cfg.web_port = int(web_sec.get("port", cfg.web_port))
-        cfg.web_username = str(web_sec.get("username", cfg.web_username))
-        cfg.web_password = str(web_sec.get("password", cfg.web_password))
-        cfg.web_ssl_cert = str(web_sec.get("ssl_cert", cfg.web_ssl_cert))
-        cfg.web_ssl_key = str(web_sec.get("ssl_key", cfg.web_ssl_key))
+        w = cfg.web
+        w.enabled = bool(web_sec.get("enabled", w.enabled))
+        w.host = str(web_sec.get("host", w.host))
+        w.port = int(web_sec.get("port", w.port))
+        w.username = str(web_sec.get("username", w.username))
+        w.password = str(web_sec.get("password", w.password))
+        w.ssl_cert = str(web_sec.get("ssl_cert", w.ssl_cert))
+        w.ssl_key = str(web_sec.get("ssl_key", w.ssl_key))
 
         quorum_sec = data.get("quorum", {}) or {}
-        cfg.quorum_enabled = bool(quorum_sec.get("enabled", cfg.quorum_enabled))
-        cfg.quorum_check_interval = float(
-            quorum_sec.get("check_interval", cfg.quorum_check_interval)
+        q = cfg.quorum
+        q.enabled = bool(quorum_sec.get("enabled", q.enabled))
+        q.check_interval = float(
+            quorum_sec.get("check_interval", q.check_interval)
         )
-        cfg.quorum_election_timeout = float(
-            quorum_sec.get("election_timeout", cfg.quorum_election_timeout)
+        q.election_timeout = float(
+            quorum_sec.get("election_timeout", q.election_timeout)
         )
 
         return cfg

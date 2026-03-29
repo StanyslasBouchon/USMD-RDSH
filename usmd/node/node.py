@@ -17,7 +17,7 @@ Examples:
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Iterator, Optional
 
 from .state import NodeState
 
@@ -33,6 +33,8 @@ class NodeInfo:
         state: Current lifecycle state of the node.
         address: IPv4 or IPv6 address of the node.
         service_name: Name of the mutation/service currently hosted (or None).
+        hosting_static: Static mutation services this node runs (full catalogue set).
+        hosting_dynamic: Dynamic shards owned on this node (not held by references).
         reference_nodes: Names (timestamps) of this node's reference peers.
 
     Examples:
@@ -46,6 +48,8 @@ class NodeInfo:
     state: NodeState
     address: str
     service_name: Optional[str] = None
+    hosting_static: list[str] = field(default_factory=list)
+    hosting_dynamic: list[str] = field(default_factory=list)
     reference_nodes: list[int] = field(default_factory=list)
 
 
@@ -60,7 +64,9 @@ class Node:
         name: UNIX timestamp (s) of when this node joined — unique per USD.
         state: Current lifecycle state.
         address: Network address (IPv4/v6).
-        service_name: Active mutation service (None when inactive).
+        service_name: Active mutation service (None when inactive); legacy primary.
+        hosting_static: All static catalogue services to run on this node.
+        hosting_dynamic: Dynamic services not claimed by reference peers.
         reference_nodes: Sorted list of peer names used as proximity references.
         reference_load: Normalised load score in [0, 1] used by the distance formula.
 
@@ -97,6 +103,8 @@ class Node:
         self.state: NodeState = state
         self.address: str = address
         self.service_name: Optional[str] = service_name
+        self.hosting_static: list[str] = []
+        self.hosting_dynamic: list[str] = []
         self.reference_nodes: list[int] = []
         self.reference_load: float = 0.0
 
@@ -144,6 +152,26 @@ class Node:
             True
         """
         return self.state.is_active()
+
+    def iter_hosted_service_names(self) -> Iterator[str]:
+        """Yield static then dynamic hosted names (deduplicated, stable order)."""
+        seen: set[str] = set()
+        for n in self.hosting_static:
+            if n not in seen:
+                seen.add(n)
+                yield n
+        for n in self.hosting_dynamic:
+            if n not in seen:
+                seen.add(n)
+                yield n
+
+    def hosts_service(self, service_name: str) -> bool:
+        """True if this node hosts *service_name* (static, dynamic, or legacy)."""
+        return (
+            service_name in self.hosting_static
+            or service_name in self.hosting_dynamic
+            or self.service_name == service_name
+        )
 
     # ------------------------------------------------------------------
     # Reference node management
@@ -201,6 +229,8 @@ class Node:
             state=self.state,
             address=self.address,
             service_name=self.service_name,
+            hosting_static=list(self.hosting_static),
+            hosting_dynamic=list(self.hosting_dynamic),
             reference_nodes=list(self.reference_nodes),
         )
 

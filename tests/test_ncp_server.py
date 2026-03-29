@@ -249,6 +249,36 @@ class TestNcpCommandHandler:
         assert response.command_id == NcpCommandId.SEND_MUTATION_PROPERTIES
         assert response.payload == b""
 
+    def test_send_mutation_properties_yaml_updates_catalog(self, handler, handler_ctx):
+        yaml_def = "build:\n  - command: echo ok\n"
+        req = SendMutationPropertiesRequest(
+            services=[
+                MutationSummary("web", 2000, definition_yaml=yaml_def),
+            ]
+        )
+        frame = _make_frame(NcpCommandId.SEND_MUTATION_PROPERTIES, req.to_payload())
+        response = handler.handle(frame)
+        assert response.command_id == NcpCommandId.SEND_MUTATION_PROPERTIES
+        got = handler_ctx.usd.mutation_catalog.get("web")
+        assert got is not None
+        assert got.version == 2000
+
+    def test_send_usd_mutation_constraints_roundtrip(self):
+        cfg = USDConfig(
+            name="t",
+            version=5,
+            min_services=1,
+            max_services=9,
+            dependency_check_interval=45,
+            dependency_min_reference_nodes=2,
+        )
+        req = SendUsdPropertiesRequest.from_usd_config(cfg)
+        cfg2 = req.to_usd_config()
+        assert cfg2.min_services == 1
+        assert cfg2.max_services == 9
+        assert cfg2.dependency_check_interval == 45
+        assert cfg2.dependency_min_reference_nodes == 2
+
     def test_inform_reference_node_returns_empty(self, handler):
         req = InformReferenceNodeRequest(
             sender_name=1,

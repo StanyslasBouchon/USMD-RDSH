@@ -21,6 +21,7 @@ import logging
 from dataclasses import dataclass
 from typing import Optional
 
+from ..mutation.catalog import MutationCatalog
 from ..node.node import Node, NodeInfo
 from ..utils.errors import Error, ErrorKind
 from ..utils.result import Result
@@ -49,6 +50,10 @@ class USDConfig:
         emergency_threshold: Normalised load at which an emergency request is
             sent. Default: 0.9.
         version: Last modification timestamp (set by the USD master).
+        min_services: Minimum number of mutation services defined in the USD.
+        max_services: Maximum number of mutation services (None = no cap).
+        dependency_check_interval: Seconds between remote-dependency health polls.
+        dependency_min_reference_nodes: Minimum reference peers tracked per dependency.
 
     Examples:
         >>> cfg = USDConfig(name="staging", cluster_name="us-east",
@@ -68,6 +73,10 @@ class USDConfig:
     load_check_interval: int = 30
     emergency_threshold: float = 0.9
     version: int = 0
+    min_services: int = 0
+    max_services: Optional[int] = None
+    dependency_check_interval: int = 60
+    dependency_min_reference_nodes: int = 1
 
 
 class UnifiedSystemDomain:
@@ -107,6 +116,7 @@ class UnifiedSystemDomain:
         self.config = config
         self.private_key = private_key
         self.nodes: dict[int, Node] = {}
+        self.mutation_catalog = MutationCatalog()
 
         logging.info(
             "[\x1b[38;5;51mUSMD\x1b[0m] USD \x1b[38;5;220m%s\x1b[0m "

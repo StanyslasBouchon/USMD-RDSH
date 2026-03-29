@@ -5,10 +5,10 @@
     <table id="nit-table" class="table table-sm table-striped mb-0{% if not nit %} d-none{% endif %}">
       <thead>
         <tr>
-          <th>Adresse</th>
-          <th>Clé publique</th>
-          <th>TTL restant</th>
-          <th>État</th>
+          <th>Address</th>
+          <th>Public key</th>
+          <th>TTL remaining</th>
+          <th>State</th>
         </tr>
       </thead>
       <tbody id="nit-tbody">
@@ -31,9 +31,9 @@
           </td>
           <td>
             {% if entry.expired %}
-              <span class="badge badge-state-inactive">Expiré</span>
+              <span class="badge badge-state-inactive">Expired</span>
             {% else %}
-              <span class="badge badge-state-active">Valide</span>
+              <span class="badge badge-state-active">Valid</span>
             {% endif %}
           </td>
         </tr>
@@ -41,7 +41,7 @@
       </tbody>
     </table>
     <div id="nit-empty" class="p-3 text-muted small{% if nit %} d-none{% endif %}">
-      <i class="bi bi-info-circle me-1"></i>NIT vide.
+      <i class="bi bi-info-circle me-1"></i>NIT is empty.
     </div>
   </div>
 </div>

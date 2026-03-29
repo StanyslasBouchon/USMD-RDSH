@@ -21,6 +21,7 @@ Examples:
 
 import json
 from dataclasses import dataclass, field
+from typing import Optional
 
 from ....utils.errors import Error, ErrorKind
 from ....utils.result import Result
@@ -33,6 +34,7 @@ class MutationSummary:
     Attributes:
         name: Service name.
         version: Last modification UNIX timestamp (set by USD master).
+        definition_yaml: Optional full service YAML (for transmutation file sync).
 
     Examples:
         >>> m = MutationSummary(name="web", version=1710000000)
@@ -42,6 +44,7 @@ class MutationSummary:
 
     name: str
     version: int
+    definition_yaml: Optional[str] = None
 
 
 @dataclass
@@ -62,7 +65,12 @@ class SendMutationPropertiesRequest:
 
     def to_payload(self) -> bytes:
         """Serialise to JSON bytes."""
-        doc = [{"name": s.name, "version": s.version} for s in self.services]
+        doc: list[dict] = []
+        for s in self.services:
+            o: dict = {"name": s.name, "version": s.version}
+            if s.definition_yaml is not None:
+                o["yaml"] = s.definition_yaml
+            doc.append(o)
         return json.dumps(doc).encode("utf-8")
 
     @staticmethod
@@ -83,7 +91,13 @@ class SendMutationPropertiesRequest:
         try:
             data = json.loads(payload.decode("utf-8"))
             services = [
-                MutationSummary(name=str(s["name"]), version=int(s["version"]))
+                MutationSummary(
+                    name=str(s["name"]),
+                    version=int(s["version"]),
+                    definition_yaml=(
+                        str(s["yaml"]) if s.get("yaml") is not None else None
+                    ),
+                )
                 for s in data
             ]
             return Result.Ok(SendMutationPropertiesRequest(services=services))

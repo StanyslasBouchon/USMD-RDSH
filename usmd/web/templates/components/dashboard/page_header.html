@@ -1,6 +1,6 @@
 <div class="d-flex align-items-center mb-3">
   <h5 class="mb-0 fw-semibold text-light me-auto">
-    <i class="bi bi-grid-1x2-fill me-2 text-info"></i>Nœuds du domaine
+    <i class="bi bi-grid-1x2-fill me-2 text-info"></i>Domain nodes
   </h5>
-  <span class="badge bg-secondary" id="node-count">{{ nodes|length }} nœud(s)</span>
+  <span class="badge bg-secondary" id="node-count">{% if nodes|length == 1 %}1 node{% else %}{{ nodes|length }} nodes{% endif %}</span>
 </div>

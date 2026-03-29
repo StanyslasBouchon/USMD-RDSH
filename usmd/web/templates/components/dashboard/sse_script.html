@@ -6,23 +6,24 @@ evtSource.onmessage = function(e) {
   if (data.error) return;
 
   const nodes = data.nodes;
-  document.getElementById('node-count').textContent = nodes.length + ' nœud(s)';
+  document.getElementById('node-count').textContent =
+    nodes.length + (nodes.length === 1 ? ' node' : ' nodes');
 
   const STATE_REASONS = {
-    'inactive':                                  'Inactif',
-    'inactive_timeout':                          'Délai NCP dépassé',
-    'inactive_nndp_no_here_i_am':                'Aucun HIA reçu',
-    'inactive_mutating':                         'En mutation',
-    'inactive_emergency':                        'Urgence',
-    'inactive_emergency_out_of_resources':       'Ressources insuffisantes',
-    'inactive_emergency_dependency_inactive':    'Dépendance inactive',
-    'inactive_emergency_health_check_failed':    'Vérification santé échouée',
-    'inactive_emergency_update_failed':          'Mise à jour échouée',
-    'excluded_invalid_nit':                      'NIT invalide (exclu)',
-    'excluded_invalid_endorsement':              'Endorsement invalide (exclu)',
-    'excluded_unverifiable_endorsement':         'Endorsement invérifiable (exclu)',
-    'excluded_invalid_revocation':               'Révocation invalide (exclu)',
-    'excluded_invalid_endorsement_revocation':   'Révocation endorsement invalide (exclu)',
+    'inactive':                                  'Inactive',
+    'inactive_timeout':                          'NCP timeout exceeded',
+    'inactive_nndp_no_here_i_am':                'No HIA received',
+    'inactive_mutating':                         'Mutating',
+    'inactive_emergency':                        'Emergency',
+    'inactive_emergency_out_of_resources':       'Insufficient resources',
+    'inactive_emergency_dependency_inactive':    'Inactive dependency',
+    'inactive_emergency_health_check_failed':    'Health check failed',
+    'inactive_emergency_update_failed':          'Update failed',
+    'excluded_invalid_nit':                      'Invalid NIT (excluded)',
+    'excluded_invalid_endorsement':              'Invalid endorsement (excluded)',
+    'excluded_unverifiable_endorsement':         'Unverifiable endorsement (excluded)',
+    'excluded_invalid_revocation':               'Invalid revocation (excluded)',
+    'excluded_invalid_endorsement_revocation':   'Invalid endorsement revocation (excluded)',
   };
 
   nodes.forEach(function(node) {
@@ -42,16 +43,16 @@ evtSource.onmessage = function(e) {
       badge.dataset.state = state;
       if (state === 'active') {
         badge.className = 'badge badge-state-active node-state-badge';
-        badge.innerHTML = '<i class="bi bi-check-circle-fill me-1"></i>ACTIF';
+        badge.innerHTML = '<i class="bi bi-check-circle-fill me-1"></i>ACTIVE';
       } else if (state.includes('inactive') || state.includes('timeout')) {
         badge.className = 'badge badge-state-inactive node-state-badge';
-        badge.innerHTML = '<i class="bi bi-dash-circle-fill me-1"></i>INACTIF';
+        badge.innerHTML = '<i class="bi bi-dash-circle-fill me-1"></i>INACTIVE';
       } else if (state.includes('pending')) {
         badge.className = 'badge badge-state-pending node-state-badge';
-        badge.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>EN ATTENTE';
+        badge.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>PENDING';
       } else if (state.includes('exclud')) {
         badge.className = 'badge badge-state-excluded node-state-badge';
-        badge.innerHTML = '<i class="bi bi-x-circle-fill me-1"></i>EXCLU';
+        badge.innerHTML = '<i class="bi bi-x-circle-fill me-1"></i>EXCLUDED';
       } else {
         badge.className = 'badge badge-state-default node-state-badge';
         badge.textContent = state;
@@ -94,14 +95,15 @@ evtSource.onmessage = function(e) {
   });
 
   const promotions = data.promotions || [];
-  document.getElementById('promo-count').textContent = promotions.length + ' entrée(s)';
+  document.getElementById('promo-count').textContent =
+    promotions.length + (promotions.length === 1 ? ' entry' : ' entries');
 
   const section = document.getElementById('promo-section');
   if (section) {
     if (promotions.length === 0) {
       section.innerHTML =
         '<div class="alert alert-secondary text-muted small" id="promo-empty">' +
-        '<i class="bi bi-info-circle me-2"></i>Aucune promotion par quorum enregistrée.' +
+        '<i class="bi bi-info-circle me-2"></i>No quorum promotions recorded.' +
         '</div>';
     } else {
       let rows = '';
@@ -125,13 +127,13 @@ evtSource.onmessage = function(e) {
       section.innerHTML =
         '<div class="table-responsive"><table class="table table-sm table-hover align-middle" id="promo-table">' +
         '<thead><tr>' +
-        '<th>Époque</th><th>Rôle élu</th><th>Nœud promu</th><th>Clé publique</th><th>Horodatage</th><th>Cause</th>' +
+        '<th>Epoch</th><th>Elected role</th><th>Promoted node</th><th>Public key</th><th>Timestamp</th><th>Reason</th>' +
         '</tr></thead><tbody>' + rows + '</tbody></table></div>';
     }
   }
 };
 
 evtSource.onerror = function() {
-  console.warn("USMD SSE connexion perdue, reconnexion automatique…");
+  console.warn("USMD SSE connection lost, reconnecting…");
 };
 </script>

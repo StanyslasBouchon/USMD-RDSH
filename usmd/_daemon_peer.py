@@ -51,7 +51,7 @@ def _on_peer_discovered(daemon: "NodeDaemon", packet: HereIAmPacket, ip: str) ->
         if peer_node.state == NodeState.INACTIVE_TIMEOUT:
             peer_node.set_state(NodeState.ACTIVE)
             logger.info(
-                "[\x1b[38;5;51mUSMD\x1b[0m] Nœud %d (%s) → ACTIVE (HIA)",
+                "[\x1b[38;5;51mUSMD\x1b[0m] Node %d (%s) → ACTIVE (HIA)",
                 packet.sender_name,
                 ip,
             )
@@ -91,8 +91,8 @@ def _mark_peer_inactive(daemon: "NodeDaemon", address: str) -> None:
         ):
             peer_node.set_state(NodeState.INACTIVE_TIMEOUT)
             logger.info(
-                "[\x1b[38;5;51mUSMD\x1b[0m] Nœud %d (%s) → INACTIVE_TIMEOUT "
-                "(échec requête NCP sortante)",
+                "[\x1b[38;5;51mUSMD\x1b[0m] Node %d (%s) → INACTIVE_TIMEOUT "
+                "(outgoing NCP request failed)",
                 peer_node.name,
                 address,
             )

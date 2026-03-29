@@ -5,14 +5,14 @@
     <div class="card-header d-flex align-items-center gap-2">
 
       {% if n.state == "active" %}
-        <span class="badge badge-state-active node-state-badge" data-state="{{ n.state }}"><i class="bi bi-check-circle-fill me-1"></i>ACTIF</span>
+        <span class="badge badge-state-active node-state-badge" data-state="{{ n.state }}"><i class="bi bi-check-circle-fill me-1"></i>ACTIVE</span>
       {% elif "pending" in n.state %}
-        <span class="badge badge-state-pending node-state-badge" data-state="{{ n.state }}"><i class="bi bi-hourglass-split me-1"></i>EN ATTENTE</span>
+        <span class="badge badge-state-pending node-state-badge" data-state="{{ n.state }}"><i class="bi bi-hourglass-split me-1"></i>PENDING</span>
       {% elif "exclu" in n.state or "excluded" in n.state %}
-        <span class="badge badge-state-excluded node-state-badge" data-state="{{ n.state }}"><i class="bi bi-x-circle-fill me-1"></i>EXCLU</span>
+        <span class="badge badge-state-excluded node-state-badge" data-state="{{ n.state }}"><i class="bi bi-x-circle-fill me-1"></i>EXCLUDED</span>
       {% elif "inactive" in n.state or "timeout" in n.state %}
         <div>
-          <span class="badge badge-state-inactive node-state-badge" data-state="{{ n.state }}"><i class="bi bi-dash-circle-fill me-1"></i>INACTIF</span>
+          <span class="badge badge-state-inactive node-state-badge" data-state="{{ n.state }}"><i class="bi bi-dash-circle-fill me-1"></i>INACTIVE</span>
           {% if n.state_reason %}<div class="inactive-reason node-state-reason">{{ n.state_reason }}</div>{% endif %}
         </div>
       {% else %}
@@ -67,7 +67,7 @@
       </div>
       <div class="res-bar mb-1">
         <div class="d-flex justify-content-between res-label">
-          <span><i class="bi bi-device-hdd me-1 icon-disk"></i>Disque</span>
+          <span><i class="bi bi-device-hdd me-1 icon-disk"></i>Disk</span>
           <span class="res-val-disk">{{ r.disk_percent|floatformat:1|stringformat:"s" }}%</span>
         </div>
         <!-- djlint:off H021 -->
@@ -79,7 +79,7 @@
       </div>
       <div class="res-bar">
         <div class="d-flex justify-content-between res-label">
-          <span><i class="bi bi-arrow-left-right me-1 icon-net"></i>Réseau</span>
+          <span><i class="bi bi-arrow-left-right me-1 icon-net"></i>Network</span>
           <span class="res-val-net">{{ r.network_percent|floatformat:1|stringformat:"s" }}%</span>
         </div>
         <!-- djlint:off H021 -->

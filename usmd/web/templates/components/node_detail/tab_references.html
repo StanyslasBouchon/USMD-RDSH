@@ -2,24 +2,27 @@
 <div class="tab-pane fade" id="tab-refs">
 
   <h6 class="text-muted small text-uppercase mb-2">
-    <i class="bi bi-rulers me-1"></i>Table NRT — distances aux voisins
+    <i class="bi bi-rulers me-1"></i>NRT table — distances to neighbors
     <span id="nrt-count" class="badge bg-secondary ms-1">{{ nrt|length }}</span>
     <span id="nrt-last-update" class="text-muted fw-normal ms-2 table-meta-label"></span>
   </h6>
   <div class="node-card mb-3">
-    <table id="nrt-table" class="table table-sm table-striped mb-0{% if not nrt %} d-none{% endif %}">
+    {# Wrapper visibility: keep <table class="..."> static so djlint sees valid HTML. #}
+    <div class="{% if not nrt %}d-none {% endif %}">
+    <table id="nrt-table" class="table table-sm table-striped mb-0">
       <thead>
         <tr>
-          <th>Adresse</th>
-          <th title="d = t/T + c + p + n ∈ [0 ; 5] — plus bas = meilleur">Distance <em>d</em></th>
-          <th>Ping A/R</th>
-          <th>Nœud de réf.</th>
-          <th>Mis à jour</th>
+          <th>Address</th>
+          <th title="d = t/T + c + p + n ∈ [0 ; 5] — lower is better">Distance <em>d</em></th>
+          <th>RTT ping</th>
+          <th>Ref. node</th>
+          <th>Updated</th>
         </tr>
       </thead>
+      {# nrt-tbody is rewritten on the client by renderNrt() (scripts.html) on first load. #}
       <tbody id="nrt-tbody">
         {% for entry in nrt|dictsort:"address" %}
-        <tr{% if entry.stale %} class="text-muted"{% endif %}>
+        <tr class="{% if entry.stale %}text-muted{% endif %}">
           <td class="text-light">
             <a href="{% url 'node_detail' entry.address %}" class="text-info text-decoration-none">
               <i class="bi bi-hdd-network me-1"></i>{{ entry.address }}
@@ -40,25 +43,26 @@
           <td>
             {% for ref in refs %}
               {% if ref.address == entry.address or ref.name == entry.node_name %}
-                <span class="badge badge-state-active"><i class="bi bi-check-lg me-1"></i>Oui</span>
+                <span class="badge badge-state-active"><i class="bi bi-check-lg me-1"></i>Yes</span>
               {% endif %}
             {% endfor %}
           </td>
           <td class="text-muted small">
             {{ entry.updated_at_str }}
-            {% if entry.stale %}<span class="badge badge-state-inactive ms-1">Périmé</span>{% endif %}
+            {% if entry.stale %}<span class="badge badge-state-inactive ms-1">Stale</span>{% endif %}
           </td>
         </tr>
         {% endfor %}
       </tbody>
     </table>
+    </div>
     <div id="nrt-empty" class="p-3 text-muted small{% if nrt %} d-none{% endif %}">
-      <i class="bi bi-hourglass-split me-1"></i>NRT vide — en attente des réponses CHECK_DISTANCE.
+      <i class="bi bi-hourglass-split me-1"></i>NRT empty — awaiting CHECK_DISTANCE responses.
     </div>
   </div>
 
   <h6 class="text-muted small text-uppercase mb-2">
-    <i class="bi bi-diagram-2-fill me-1"></i>Nœuds de référence déclarés
+    <i class="bi bi-diagram-2-fill me-1"></i>Declared reference nodes
     <span class="badge bg-secondary ms-1">{{ refs|length }}</span>
   </h6>
   <div class="node-card mb-2">
@@ -66,11 +70,11 @@
     <table class="table table-sm table-striped mb-0">
       <thead>
         <tr>
-          <th>Nœud</th>
-          <th>Adresse</th>
-          <th>État</th>
+          <th>Node</th>
+          <th>Address</th>
+          <th>State</th>
           <th>Service</th>
-          <th>Charge ref. (c)</th>
+          <th>Ref. load (c)</th>
         </tr>
       </thead>
       <tbody>
@@ -88,11 +92,11 @@
           </td>
           <td>
             {% if ref.state == "active" %}
-              <span class="badge badge-state-active">Actif</span>
+              <span class="badge badge-state-active">Active</span>
             {% elif "pending" in ref.state %}
-              <span class="badge badge-state-pending">En attente</span>
+              <span class="badge badge-state-pending">Pending</span>
             {% elif "inactive" in ref.state or "timeout" in ref.state or ref.state == "unknown" %}
-              <span class="badge badge-state-inactive">Inactif</span>
+              <span class="badge badge-state-inactive">Inactive</span>
             {% else %}
               <span class="badge badge-state-default">{{ ref.state }}</span>
             {% endif %}
@@ -118,22 +122,23 @@
       </tbody>
     </table>
     {% else %}
-    <div class="p-3 text-muted small"><i class="bi bi-info-circle me-1"></i>Aucun nœud de référence déclaré.</div>
+    <div class="p-3 text-muted small"><i class="bi bi-info-circle me-1"></i>No reference nodes declared.</div>
     {% endif %}
   </div>
 
   <h6 class="text-muted small text-uppercase mb-2 mt-3">
-    <i class="bi bi-person-lines-fill me-1"></i>Table NRL — nœuds qui nous mandatent
+    <i class="bi bi-person-lines-fill me-1"></i>NRL table — nodes that reference us
     <span id="nrl-count" class="badge bg-secondary ms-1">{{ nrl|length }}</span>
     <span id="nrl-last-update" class="text-muted fw-normal ms-2 table-meta-label"></span>
   </h6>
   <div class="node-card mb-2">
-    <table id="nrl-table" class="table table-sm table-striped mb-0{% if not nrl %} d-none{% endif %}">
+    <div class="{% if not nrl %}d-none {% endif %}">
+    <table id="nrl-table" class="table table-sm table-striped mb-0">
       <thead>
         <tr>
-          <th>Nœud</th>
-          <th>Adresse</th>
-          <th>Déclaré le</th>
+          <th>Node</th>
+          <th>Address</th>
+          <th>Declared</th>
         </tr>
       </thead>
       <tbody id="nrl-tbody">
@@ -150,16 +155,17 @@
         {% endfor %}
       </tbody>
     </table>
+    </div>
     <div id="nrl-empty" class="p-3 text-muted small{% if nrl %} d-none{% endif %}">
-      <i class="bi bi-hourglass-split me-1"></i>Aucun nœud ne nous mandate encore.
+      <i class="bi bi-hourglass-split me-1"></i>No node references us yet.
     </div>
   </div>
 
   <div class="mt-1 text-muted small px-1">
     <i class="bi bi-info-circle me-1"></i>
-    Formule : <code>d = t/T + c + p + n ∈ [0 ; 5]</code> —
-    <em>t/T</em> ping normalisé, <em>c</em> charge de référence,
-    <em>p</em> même service (+1), <em>n</em> déjà référencé (+2).
-    Calculé via NCP <strong>CHECK_DISTANCE</strong> à chaque HIA reçu.
+    Formula: <code>d = t/T + c + p + n ∈ [0 ; 5]</code> —
+    <em>t/T</em> normalized ping, <em>c</em> reference load,
+    <em>p</em> same service (+1), <em>n</em> already referenced (+2).
+    Computed via NCP <strong>CHECK_DISTANCE</strong> on each HIA received.
   </div>
 </div>

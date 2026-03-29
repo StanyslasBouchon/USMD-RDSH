@@ -13,7 +13,13 @@ import logging
 import struct
 from typing import Optional
 
-from ..protocol.frame import NcpCommandId, NcpFrame
+from ..protocol.frame import (
+    NCP_LOG_ARROW_IN,
+    NCP_LOG_ARROW_OUT,
+    NcpCommandId,
+    NcpFrame,
+    format_ncp_cmd_for_log,
+)
 from ..protocol.versions import NcpVersion
 from ...utils.errors import Error, ErrorKind
 from ...utils.io import close_stream_writer
@@ -89,10 +95,11 @@ class NcpClient:
         raw_request = request_frame.to_bytes()
 
         logging.debug(
-            "[\x1b[38;5;51mUSMD\x1b[0m] NCP → %s:%d cmd=%s payload=%d bytes",
+            "[\x1b[38;5;51mUSMD\x1b[0m] NCP %s %s:%d cmd=%s payload=%d bytes",
+            NCP_LOG_ARROW_OUT,
             self.address,
             self.port,
-            command_id.name,
+            format_ncp_cmd_for_log(command_id),
             len(payload),
         )
 
@@ -156,9 +163,10 @@ class NcpClient:
             response_result = NcpFrame.from_bytes(header_bytes + payload_bytes)
             if response_result.is_ok():
                 logging.debug(
-                    "[\x1b[38;5;51mUSMD\x1b[0m] NCP ← %s cmd=%s payload=%d bytes",
+                    "[\x1b[38;5;51mUSMD\x1b[0m] NCP %s %s cmd=%s payload=%d bytes",
+                    NCP_LOG_ARROW_IN,
                     self.address,
-                    response_result.unwrap().command_id.name,
+                    format_ncp_cmd_for_log(response_result.unwrap().command_id),
                     len(payload_bytes),
                 )
             return response_result

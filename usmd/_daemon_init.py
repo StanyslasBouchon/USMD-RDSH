@@ -165,7 +165,7 @@ def _init_servers(
     )
 
     quorum: QuorumManager | None = None
-    if cfg.quorum_enabled:
+    if cfg.quorum.enabled:
         quorum = QuorumManager(
             node_address=address,
             ed_pub=core.ed_pub,
@@ -174,7 +174,7 @@ def _init_servers(
             nqt=core.nqt,
             cfg=cfg,
             options=QuorumOptions(
-                check_interval=cfg.quorum_check_interval,
+                check_interval=cfg.quorum.check_interval,
                 ncp_port=cfg.ncp_port,
                 ncp_timeout=cfg.ncp_timeout,
                 on_ncp_failure=on_ncp_failure,
@@ -206,7 +206,7 @@ def _init_servers(
                 usd=core.usd,
                 on_ncp_failure=on_ncp_failure,
             )
-            if cfg.web_enabled
+            if cfg.web.enabled
             else None
         ),
         nndp=NndpService(

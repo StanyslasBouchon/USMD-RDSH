@@ -19,7 +19,7 @@ capped at ``_MAX_ENTRIES`` to avoid unbounded growth.
 Examples:
     >>> nqt = NodeQuorumTable()
     >>> nqt.add(epoch=1, pub_key=b'k' * 32, address="10.0.0.1",
-    ...          reason="Élu", role_name="node_operator")
+    ...          reason="Elected", role_name="node_operator")
     >>> len(nqt)
     1
     >>> nqt.get_latest().address
@@ -87,7 +87,7 @@ class NqtEntry:
                   promoted_at, promoted_at_str, reason, role_name.
 
         Example:
-            >>> e = NqtEntry(1, b'k'*32, "1.2.3.4", 0.0, "Élu", "node_operator")
+            >>> e = NqtEntry(1, b'k'*32, "1.2.3.4", 0.0, "Elected", "node_operator")
             >>> e.to_dict()["epoch"]
             1
             >>> e.to_dict()["role_name"]
@@ -144,7 +144,7 @@ class NodeQuorumTable:
 
     Examples:
         >>> nqt = NodeQuorumTable()
-        >>> nqt.add(1, b'k'*32, "10.0.0.1", "Élu", "node_operator")
+        >>> nqt.add(1, b'k'*32, "10.0.0.1", "Elected", "node_operator")
         >>> nqt.get_latest().address
         '10.0.0.1'
         >>> nqt.merge_from_dicts([])
@@ -180,10 +180,10 @@ class NodeQuorumTable:
 
         Example:
             >>> nqt = NodeQuorumTable()
-            >>> nqt.add(1, b'k'*32, "10.0.0.1", "Élu", "usd_operator")
+            >>> nqt.add(1, b'k'*32, "10.0.0.1", "Elected", "usd_operator")
             >>> len(nqt)
             1
-            >>> nqt.add(1, b'k'*32, "10.0.0.1", "Élu", "usd_operator")  # duplicate
+            >>> nqt.add(1, b'k'*32, "10.0.0.1", "Elected", "usd_operator")  # duplicate
             >>> len(nqt)
             1
         """
@@ -268,7 +268,7 @@ class NodeQuorumTable:
 
         Example:
             >>> nqt = NodeQuorumTable()
-            >>> nqt.add(1, b'k'*32, "10.0.0.1", "Élu", "usd_operator")
+            >>> nqt.add(1, b'k'*32, "10.0.0.1", "Elected", "usd_operator")
             >>> nqt.get_latest_for_role("usd_operator").address
             '10.0.0.1'
             >>> nqt.get_latest_for_role("node_operator") is None
@@ -284,7 +284,7 @@ class NodeQuorumTable:
 
         Example:
             >>> nqt = NodeQuorumTable()
-            >>> nqt.add(1, b'k'*32, "10.0.0.1", "Élu", "node_operator")
+            >>> nqt.add(1, b'k'*32, "10.0.0.1", "Elected", "node_operator")
             >>> len(nqt.get_all_entries())
             1
         """
@@ -297,7 +297,7 @@ class NodeQuorumTable:
 
         Example:
             >>> nqt = NodeQuorumTable()
-            >>> nqt.add(1, b'k'*32, "10.0.0.1", "Élu", "usd_operator")
+            >>> nqt.add(1, b'k'*32, "10.0.0.1", "Elected", "usd_operator")
             >>> nqt.get_all_dicts()[0]["role_name"]
             'usd_operator'
         """

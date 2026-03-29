@@ -2,306 +2,306 @@
 
 **Unified System Management and Deployment for Relative and Dynamic Service Hosting**
 
-USMD-RDSH est un système distribué de gestion de nœuds auto-organisés. Chaque nœud du réseau s'identifie, se découvre via broadcast UDP et s'intègre ou crée un domaine de gestion (USD) à l'aide du protocole NCP. Le daemon est conçu pour fonctionner en arrière-plan sur des machines Linux, en démarrant automatiquement avec le système.
+USMD-RDSH is a distributed system for managing self-organizing nodes. Each node on the network identifies itself, discovers peers via UDP broadcast, and joins or creates a management domain (USD) using the NCP protocol. The daemon is designed to run in the background on Linux machines and start automatically with the system.
 
 ---
 
-## Table des matières
+## Table of contents
 
 - [Architecture](#architecture)
-- [Prérequis](#prérequis)
-- [Installation Linux (production)](#installation-linux-production)
-- [Désinstallation](#désinstallation)
-- [Lancer depuis les sources (développement)](#lancer-depuis-les-sources-développement)
+- [Prerequisites](#prerequisites)
+- [Linux installation (production)](#linux-installation-production)
+- [Uninstall](#uninstall)
+- [Running from source (development)](#running-from-source-development)
 - [Configuration](#configuration)
-- [Options de la ligne de commande](#options-de-la-ligne-de-commande)
-- [Rôles des nœuds](#rôles-des-nœuds)
-- [Tableau de bord web](#tableau-de-bord-web)
+- [Command-line options](#command-line-options)
+- [Node roles](#node-roles)
+- [Web dashboard](#web-dashboard)
 - [Tests](#tests)
 
 ---
 
 ## Architecture
 
-| Composant                                   | Rôle                                                                          |
+| Component                                   | Role                                                                          |
 | ------------------------------------------- | ----------------------------------------------------------------------------- |
-| **NCP** — Node Cohesion Protocol            | Communication inter-nœuds (TCP/5626) — 10 commandes                           |
-| **NNDP** — Node Neighbor Discovery Protocol | Découverte de voisins par broadcast UDP (src 5222 → dst 5221)                 |
-| **USD** — Unified System Domain             | Domaine de gestion regroupant un ensemble de nœuds                            |
-| **USC** — Unified System Cluster            | Grappe de domaines USD                                                        |
-| **NIT** — Node Identity Table               | Table d'identité et de clés publiques des nœuds                               |
-| **NAL** — Node Access List                  | Liste de contrôle d'accès des nœuds                                           |
-| **NEL** — Node Endorsement List             | Liste des endorsements Ed25519 émis et reçus                                  |
-| **CTL** — Control Socket                    | Socket Unix local pour introspection en direct (`python -m usmd status`)      |
-| **Web Dashboard**                           | Interface web Django (optionnelle) pour supervision multi-nœuds en temps réel |
+| **NCP** — Node Cohesion Protocol            | Inter-node communication (TCP/5626) — 10 commands                             |
+| **NNDP** — Node Neighbor Discovery Protocol | Neighbor discovery via UDP broadcast (src 5222 → dst 5221)                  |
+| **USD** — Unified System Domain             | Management domain grouping a set of nodes                                     |
+| **USC** — Unified System Cluster            | Cluster of USD domains                                                        |
+| **NIT** — Node Identity Table               | Identity and public-key table for nodes                                       |
+| **NAL** — Node Access List                  | Node access control list                                                      |
+| **NEL** — Node Endorsement List             | List of Ed25519 endorsements issued and received                              |
+| **CTL** — Control Socket                    | Local Unix socket for live introspection (`python -m usmd status`)          |
+| **Web Dashboard**                           | Optional Django UI for multi-node real-time supervision                       |
 
-Chaque nœud génère une paire de clés **Ed25519** (signature) et **X25519** (échange de clés) au premier démarrage. Ces clés sont persistées localement et constituent l'identité cryptographique du nœud.
+Each node generates an **Ed25519** (signing) and **X25519** (key exchange) key pair on first start. Keys are persisted locally and form the node’s cryptographic identity.
 
 ---
 
-## Prérequis
+## Prerequisites
 
 - Python **≥ 3.13**
-- Linux avec **systemd** (Ubuntu 20.04+, Debian 11+, RHEL 8+, Arch, …)
-- `python3-venv` installé (`apt install python3-venv` ou équivalent)
-- Accès **root** pour l'installation en service
+- Linux with **systemd** (Ubuntu 20.04+, Debian 11+, RHEL 8+, Arch, …)
+- `python3-venv` installed (`apt install python3-venv` or equivalent)
+- **root** access for service installation
 
 ---
 
-## Installation Linux (production)
+## Linux installation (production)
 
-L'installateur crée un utilisateur système dédié, un virtualenv Python isolé, et enregistre un service systemd qui démarre automatiquement avec la machine.
+The installer creates a dedicated system user, an isolated Python virtualenv, and registers a systemd service that starts automatically with the machine.
 
 ```bash
-# 1. Cloner le dépôt
+# 1. Clone the repository
 git clone https://github.com/StanyslasBouchon/USMD-RDSH.git
 cd USMD-RDSH
 
-# 2. Lancer l'installateur (nécessite root)
+# 2. Run the installer (requires root)
 sudo bash scripts/install.sh
 ```
 
-L'installateur effectue les opérations suivantes :
+The installer performs the following:
 
-- Crée l'utilisateur système `usmd` (sans shell, sans accès interactif)
-- Crée `/opt/usmd/venv` — virtualenv Python avec le package installé
-- Crée `/etc/usmd/usmd.yaml` — configuration par défaut (non écrasée si déjà présente)
-- Crée `/var/lib/usmd/` — répertoire de données (clés, état)
-- Installe et active `/etc/systemd/system/usmd.service`
+- Creates the `usmd` system user (no shell, no interactive login)
+- Creates `/opt/usmd/venv` — Python virtualenv with the package installed
+- Creates `/etc/usmd/usmd.yaml` — default configuration (not overwritten if already present)
+- Creates `/var/lib/usmd/` — data directory (keys, state)
+- Installs and enables `/etc/systemd/system/usmd.service`
 
-**Options de l'installateur :**
+**Installer options:**
 
 ```bash
-# Utiliser un répertoire source différent
-sudo bash scripts/install.sh --source /chemin/vers/USMD-RDSH
+# Use a different source directory
+sudo bash scripts/install.sh --source /path/to/USMD-RDSH
 
-# Installer sans démarrer le service immédiatement
+# Install without starting the service immediately
 sudo bash scripts/install.sh --no-start
 ```
 
-**Commandes utiles après installation :**
+**Useful commands after installation:**
 
 ```bash
-# État du service
+# Service status
 systemctl status usmd
 
-# Logs en direct
+# Live logs
 journalctl -u usmd -f
 
-# Redémarrer après modification de la config
+# Restart after config change
 systemctl restart usmd
 
-# Arrêter le service
+# Stop the service
 systemctl stop usmd
 
-# Désactiver le démarrage automatique
+# Disable auto-start
 systemctl disable usmd
 ```
 
-La configuration se trouve dans `/etc/usmd/usmd.yaml`. Après toute modification, relancez `systemctl restart usmd`.
+Configuration lives in `/etc/usmd/usmd.yaml`. After any change, run `systemctl restart usmd`.
 
 ---
 
-## Désinstallation
+## Uninstall
 
 ```bash
 sudo bash scripts/uninstall.sh
 ```
 
-Le script demande confirmation avant de supprimer le service, le virtualenv, la configuration et les données. Des options permettent de conserver certains éléments :
+The script asks for confirmation before removing the service, virtualenv, configuration, and data. Options let you keep some of that:
 
 ```bash
-# Conserver la configuration (/etc/usmd/usmd.yaml)
+# Keep configuration (/etc/usmd/usmd.yaml)
 sudo bash scripts/uninstall.sh --keep-config
 
-# Conserver les données et clés (/var/lib/usmd)
+# Keep data and keys (/var/lib/usmd)
 sudo bash scripts/uninstall.sh --keep-data
 
-# Désinstaller sans confirmation interactive
+# Uninstall without interactive confirmation
 sudo bash scripts/uninstall.sh --yes
 
-# Mettre à jour sans perdre config ni identité cryptographique
+# Upgrade without losing config or cryptographic identity
 sudo bash scripts/uninstall.sh --keep-config --keep-data --yes
 sudo bash scripts/install.sh
 ```
 
 ---
 
-## Lancer depuis les sources (développement)
+## Running from source (development)
 
 ```bash
-# 1. Cloner le dépôt
+# 1. Clone the repository
 git clone https://github.com/StanyslasBouchon/USMD-RDSH.git
 cd USMD-RDSH
 
-# 2. Créer et activer un virtualenv
+# 2. Create and activate a virtualenv
 python3 -m venv .venv
 source .venv/bin/activate       # Linux / macOS
 # .venv\Scripts\activate        # Windows
 
-# 3. Installer les dépendances
+# 3. Install dependencies
 pip install -e .
-pip install pytest pytest-asyncio pytest-cov tox pylint djlint # pour les tests
+pip install pytest pytest-asyncio pytest-cov tox pylint djlint  # for tests
 
-# 4a. Démarrer le premier nœud (bootstrap — crée un nouveau USD)
+# 4a. Start the first node (bootstrap — creates a new USD)
 python -m usmd --config usmd.yaml --bootstrap
 
-# 4b. Rejoindre un USD existant (sur un autre terminal / une autre machine)
+# 4b. Join an existing USD (on another terminal / machine)
 python -m usmd --config usmd.yaml
 
-# 4c. Remplacer role et adresse sans modifier le fichier de config
+# 4c. Override role and address without editing the config file
 python -m usmd --role usd_operator --address 192.168.1.5
 ```
 
-Les clés Ed25519/X25519 sont générées automatiquement au premier lancement et sauvegardées dans le fichier `keys_file` défini dans la configuration (défaut : `usmd_keys.json` dans le répertoire courant).
+Ed25519/X25519 keys are generated automatically on first run and saved to the `keys_file` from configuration (default: `usmd_keys.json` in the current directory).
 
 ---
 
 ## Configuration
 
-Le fichier de configuration est au format YAML. Toutes les clés sont optionnelles ; les valeurs non renseignées reviennent aux valeurs par défaut intégrées.
+The configuration file is YAML. All keys are optional; unset values fall back to built-in defaults.
 
 ```yaml
 # usmd.yaml
 
-# Identité réseau
+# Network identity
 node:
-  address: auto          # "auto" = détecte l'interface sortante ; ou "192.168.1.5"
+  address: auto          # "auto" = detect outbound interface; or "192.168.1.5"
   role: executor         # executor | operator | usd_operator | ucd_operator
 
-# Domaine USD
+# USD domain
 usd:
-  name: my-domain        # Nom du domaine (USDN)
-  cluster_name: ""       # USCN — laisser vide si pas de cluster
-  edb_address: null      # DNS/IP du Easy Deployment Base (optionnel)
+  name: my-domain        # Domain name (USDN)
+  cluster_name: ""       # USCN — leave empty if not in a cluster
+  edb_address: null      # Easy Deployment Base DNS/IP (optional)
   max_reference_nodes: 5
-  load_threshold: 0.8    # Charge normalisée au-delà de laquelle le nœud est "affaibli"
-  ping_tolerance_ms: 200 # Ping T max (ms) dans la formule de distance
+  load_threshold: 0.8    # Normalized load above which the node is "weakened"
+  ping_tolerance_ms: 200 # Max ping T (ms) in the distance formula
   load_check_interval: 30
   emergency_threshold: 0.9
 
-# Comportement au démarrage
-bootstrap: false         # true = créer un nouvel USD ; false = rejoindre
+# Startup behaviour
+bootstrap: false         # true = create a new USD; false = join existing
 keys_file: usmd_keys.json
-nndp_ttl: 30             # Secondes entre deux broadcasts Here-I-Am
+nndp_ttl: 30             # Seconds between Here-I-Am broadcasts
 
-# Ports (valeurs spec — modifier uniquement en cas de conflit)
+# Ports (spec defaults — change only on conflict)
 ports:
   ncp: 5626
   nndp_listen: 5221
   nndp_send: 5222
-  broadcast: auto        # "auto" = toutes les interfaces ; ou "192.168.1.255"
+  broadcast: auto        # "auto" = all interfaces; or "192.168.1.255"
 
-# Socket CTL (introspection locale)
-ctl_socket: usmd.sock    # chemin du socket Unix
+# CTL socket (local introspection)
+ctl_socket: usmd.sock    # Unix socket path
 
-# Tableau de bord web (optionnel)
+# Web dashboard (optional)
 web:
-  enabled: false         # true pour activer
+  enabled: false         # true to enable
   host: 0.0.0.0
   port: 8443
   username: admin
-  password: changeme     # À modifier !
-  ssl_cert: ""           # Chemin PEM ; vide = self-signed auto-généré
+  password: changeme     # Change this!
+  ssl_cert: ""           # PEM path; empty = auto-generated self-signed
   ssl_key:  ""
 ```
 
-En installation service, le fichier de configuration est `/etc/usmd/usmd.yaml` et le fichier de clés est `/var/lib/usmd/usmd_keys.json`.
+In a service install, the config file is `/etc/usmd/usmd.yaml` and keys are `/var/lib/usmd/usmd_keys.json`.
 
 ---
 
-## Options de la ligne de commande
+## Command-line options
 
 ```
-python -m usmd [OPTIONS]                  # Lancer le daemon
-python -m usmd status [OPTIONS]           # Interroger un daemon en cours
+python -m usmd [OPTIONS]                  # Run the daemon
+python -m usmd status [OPTIONS]         # Query a running daemon
 
-Daemon :
-  --config PATH         Fichier de configuration YAML (défaut : usmd.yaml)
-  --bootstrap           Créer un nouvel USD au lieu d'en rejoindre un
-  --role ROLE           Remplacer le rôle (executor|operator|usd_operator|ucd_operator)
-  --address IP          Remplacer l'adresse réseau du nœud
-  --log-level LEVEL     Verbosité des logs : DEBUG|INFO|WARNING|ERROR (défaut : INFO)
+Daemon:
+  --config PATH         YAML configuration file (default: usmd.yaml)
+  --bootstrap           Create a new USD instead of joining one
+  --role ROLE           Override role (executor|operator|usd_operator|ucd_operator)
+  --address IP          Override the node’s network address
+  --log-level LEVEL     Log verbosity: DEBUG|INFO|WARNING|ERROR (default: INFO)
 
-Sous-commande status :
-  --socket PATH         Chemin du socket CTL (défaut : ctl_socket de la config)
-  --config PATH         Fichier de configuration pour lire le chemin du socket
-  --json                Afficher le snapshot brut en JSON au lieu de l'affichage formaté
+status subcommand:
+  --socket PATH         CTL socket path (default: ctl_socket from config)
+  --config PATH         Config file to read the socket path from
+  --json                Print raw JSON snapshot instead of formatted output
 ```
 
-Les options CLI ont priorité sur le fichier de configuration.
+CLI options override the configuration file.
 
 ---
 
-## Rôles des nœuds
+## Node roles
 
-| Rôle           | Description                                       |
+| Role           | Description                                       |
 | -------------- | ------------------------------------------------- |
-| `executor`     | Nœud exécutant des services (rôle par défaut)     |
-| `operator`     | Nœud de gestion sans responsabilité de domaine    |
-| `usd_operator` | Nœud responsable de la gestion d'un USD           |
-| `ucd_operator` | Nœud responsable de la gestion d'un USC (cluster) |
+| `executor`     | Node running services (default role)              |
+| `operator`     | Management node without domain responsibility     |
+| `usd_operator` | Node responsible for managing a USD               |
+| `ucd_operator` | Node responsible for managing a USC (cluster)     |
 
 ---
 
-## Tableau de bord web
+## Web dashboard
 
-Le tableau de bord est un service Django optionnel qui s'exécute sur **chaque nœud** et offre une vue agrégée de l'ensemble du domaine USD en temps réel.
+The dashboard is an optional Django service that runs on **each node** and provides an aggregated real-time view of the whole USD.
 
-### Fonctionnalités
+### Features
 
-- Affichage de tous les nœuds connus (via NIT) avec état, rôle et ressources
-- Mise à jour automatique toutes les 5 secondes (Server-Sent Events)
-- Page de détail par nœud : NIT, NAL, NEL, USD, graphique historique CPU/RAM/Disque/Réseau
-- Authentification par identifiant/mot de passe (session cookie signée)
-- HTTPS par défaut — certificat auto-signé généré si aucun certificat n'est fourni (nécessite `openssl` dans le PATH) ; HTTP si openssl est absent
+- Lists all known nodes (via NIT) with state, role, and resources
+- Auto-refresh every 5 seconds (Server-Sent Events)
+- Per-node detail: NIT, NAL, NEL, USD, CPU/RAM/Disk/Network history chart
+- Username/password authentication (signed session cookie)
+- HTTPS by default — self-signed cert generated if none provided (needs `openssl` on PATH); HTTP if openssl is missing
 
-### Activation
+### Enabling
 
-Installez les dépendances supplémentaires :
+Install extra dependencies:
 
 ```bash
 pip install "django>=4.2" "uvicorn[standard]>=0.29"
 ```
 
-Puis activez dans la configuration (`usmd.yaml`) :
+Then enable in configuration (`usmd.yaml`):
 
 ```yaml
 web:
   enabled: true
   port: 8443
   username: admin
-  password: MonMotDePasse   # Changer obligatoirement !
+  password: YourPassword   # Change this!
 ```
 
-Le dashboard sera accessible sur `https://<adresse-du-nœud>:8443/`.
+The dashboard is available at `https://<node-address>:8443/`.
 
-### Architecture de collecte
+### Data collection
 
-Quand le tableau de bord d'un nœud A affiche un nœud B, il lui envoie la commande NCP **REQUEST_SNAPSHOT** (ID 9) sur le port 5626. Le nœud B répond avec son snapshot complet (NIT, NAL, NEL, ressources) encodé en JSON. Aucune base de données partagée n'est requise.
+When node A’s dashboard shows node B, it sends NCP **REQUEST_SNAPSHOT** (ID 9) to port 5626. Node B replies with its full snapshot (NIT, NAL, NEL, resources) as JSON. No shared database is required.
 
-### Sécurité
+### Security
 
-- Changez impérativement `web.password` avant toute mise en production.
-- En production, fournissez un certificat TLS signé par une CA reconnue via `web.ssl_cert` et `web.ssl_key`.
-- Le tableau de bord expose des données internes — limitez l'accès au réseau d'administration.
+- Change `web.password` before any production deployment.
+- In production, provide a TLS certificate from a trusted CA via `web.ssl_cert` and `web.ssl_key`.
+- The dashboard exposes internal data — restrict access to the admin network.
 
 ---
 
 ## Tests
 
 ```bash
-# Lancer tous les tests
+# Run all tests
 pytest tests/
 
-# Avec détail des sous-tests
+# Verbose subtests
 pytest tests/ -v
 
-# Via tox (teste sur plusieurs versions de Python)
+# tox (multiple Python versions)
 tox
 
 # Pylint
 pylint usmd/
 ```
 
-La suite de tests couvre les protocoles NCP et NNDP, la sérialisation des frames, le handler de commandes, le daemon et la cryptographie (283 tests collectés, 276 passés, 7 skipped, 29 sous-tests — répartis sur 19 fichiers de test).
+The test suite covers NCP and NNDP protocols, frame serialization, the command handler, the daemon, and cryptography (counts vary as the suite grows).

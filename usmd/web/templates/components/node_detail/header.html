@@ -3,11 +3,11 @@
   <div class="node-card p-3 flex-grow-1">
     <div class="d-flex align-items-center gap-2 mb-2">
       {% if n.state == "active" %}
-        <span class="badge badge-state-active fs-6"><i class="bi bi-check-circle-fill me-1"></i>ACTIF</span>
+        <span class="badge badge-state-active fs-6"><i class="bi bi-check-circle-fill me-1"></i>ACTIVE</span>
       {% elif "pending" in n.state %}
-        <span class="badge badge-state-pending fs-6"><i class="bi bi-hourglass-split me-1"></i>EN ATTENTE</span>
+        <span class="badge badge-state-pending fs-6"><i class="bi bi-hourglass-split me-1"></i>PENDING</span>
       {% elif "inactive" in n.state or "timeout" in n.state %}
-        <span class="badge badge-state-inactive fs-6"><i class="bi bi-dash-circle-fill me-1"></i>INACTIF</span>
+        <span class="badge badge-state-inactive fs-6"><i class="bi bi-dash-circle-fill me-1"></i>INACTIVE</span>
         {% if n.state_reason %}<span class="text-secondary small ms-1 align-self-center">— {{ n.state_reason }}</span>{% endif %}
       {% else %}
         <span class="badge badge-state-default fs-6">{{ n.state }}</span>
@@ -32,11 +32,11 @@
     </div>
     <div class="row g-3">
       <div class="col-sm-4">
-        <div class="text-muted small">Adresse IP</div>
+        <div class="text-muted small">IP address</div>
         <div class="text-light">{{ n.address }}</div>
       </div>
       <div class="col-sm-4">
-        <div class="text-muted small">Nom (node_name)</div>
+        <div class="text-muted small">Name (node_name)</div>
         <div class="text-light">#{{ n.name }}</div>
       </div>
       <div class="col-sm-4">

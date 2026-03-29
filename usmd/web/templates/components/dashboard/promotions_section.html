@@ -1,9 +1,9 @@
 {# Context: promotions #}
 <div class="d-flex align-items-center mt-5 mb-3">
   <h5 class="mb-0 fw-semibold text-light me-auto">
-    <i class="bi bi-shield-check me-2 text-warning"></i>Promotions par quorum
+    <i class="bi bi-shield-check me-2 text-warning"></i>Quorum promotions
   </h5>
-  <span class="badge bg-secondary" id="promo-count">{{ promotions|length }} entrée(s)</span>
+  <span class="badge bg-secondary" id="promo-count">{% if promotions|length == 1 %}1 entry{% else %}{{ promotions|length }} entries{% endif %}</span>
 </div>
 
 <div id="promo-section">
@@ -12,12 +12,12 @@
   <table class="table table-sm table-hover align-middle" id="promo-table">
     <thead>
       <tr>
-        <th>Époque</th>
-        <th>Rôle élu</th>
-        <th>Nœud promu</th>
-        <th>Clé publique</th>
-        <th>Horodatage</th>
-        <th>Cause</th>
+        <th>Epoch</th>
+        <th>Elected role</th>
+        <th>Promoted node</th>
+        <th>Public key</th>
+        <th>Timestamp</th>
+        <th>Reason</th>
       </tr>
     </thead>
     <tbody>
@@ -53,7 +53,7 @@
 </div>
 {% else %}
 <div class="alert alert-secondary text-muted small" id="promo-empty">
-  <i class="bi bi-info-circle me-2"></i>Aucune promotion par quorum enregistrée.
+  <i class="bi bi-info-circle me-2"></i>No quorum promotions recorded.
 </div>
 {% endif %}
 </div>

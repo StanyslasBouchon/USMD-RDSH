@@ -21,6 +21,7 @@ Large private methods are split into dedicated private modules:
 - :mod:`._daemon_nrt`       — NRT update and reference node selection.
 - :mod:`._daemon_join`      — bootstrap / join / NQT sync.
 - :mod:`._daemon_heartbeat` — heartbeat loop.
+- :mod:`._daemon_mutation_web` — dashboard mutation YAML + local lifecycle.
 
 Examples:
     >>> from usmd.config import NodeConfig
@@ -34,15 +35,25 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING
+import time
+from typing import TYPE_CHECKING, Literal
 
 from ._daemon_init import _init_core, _init_servers
+from ._daemon_mutation_hosting import refresh_mutation_hosting
+from ._daemon_mutation_web import local_mutation_apply_branch, parse_mutation_web_input
 from ._daemon_join import _bootstrap, _join, _store_endorsement, _sync_nqt_from, _try_join_via
 from ._daemon_nrt import _update_nrt_for_peer, _update_reference_nodes
 from ._daemon_peer import _mark_peer_inactive, _on_peer_discovered
 from ._daemon_run import _run
 from ._daemon_snapshot import _build_status_snapshot
 from .config import NodeConfig
+from .mutation.update_flow import ServiceUpdateOutcome
+from .ncp.client.tcp import NcpClient
+from .ncp.protocol.commands.send_mutation_properties import (
+    SendMutationPropertiesRequest,
+)
+from .ncp.protocol.commands.send_usd_properties import SendUsdPropertiesRequest
+from .ncp.protocol.frame import NcpCommandId
 from .nndp.protocol.here_i_am import HereIAmPacket
 from .node.state import NodeState
 from .security.crypto import Ed25519Pair
@@ -92,10 +103,15 @@ class NodeDaemon:
         self._joined = asyncio.Event()
         # Monotonic timestamps: peer name → when it entered reference_nodes (local stickiness)
         self._reference_since: dict[int, float] = {}
+        self._last_dependency_check_monotonic: float = 0.0
+        self._last_peer_status_monotonic: float = 0.0
 
         # Wire the rejoin callback so the NCP handler can trigger a re-join
         # when our endorser sends us a REVOKE_ENDORSEMENT on shutdown.
         self._handler.ctx.rejoin_fn = self._schedule_rejoin
+
+        if self._web is not None:
+            self._web.set_mutation_apply_fn(self.apply_mutation_from_web)
 
     # ------------------------------------------------------------------
     # Public snapshot (served via CTL socket and Web server)
@@ -118,6 +134,27 @@ class NodeDaemon:
     def reference_since(self) -> "dict[int, float]":
         """Monotonic timestamps: peer name → when it entered the reference set."""
         return self._reference_since
+
+    def consume_monotonic_gate(
+        self,
+        kind: Literal["dependency_check", "peer_status_poll"],
+        interval: float,
+        *,
+        force: bool = False,
+    ) -> bool:
+        """Rate-limit heartbeat work: dependency logging or peer GET_STATUS polling."""
+        now = time.monotonic()
+        if kind == "dependency_check":
+            if interval <= 0:
+                return False
+            if now - self._last_dependency_check_monotonic < interval:
+                return False
+            self._last_dependency_check_monotonic = now
+            return True
+        if force or now - self._last_peer_status_monotonic >= interval:
+            self._last_peer_status_monotonic = now
+            return True
+        return False
 
     @property
     def ed_pub(self) -> bytes:
@@ -206,6 +243,103 @@ class NodeDaemon:
         _mark_peer_inactive(self, address)
 
     # ------------------------------------------------------------------
+    # Mutation / transmutation (dashboard + NCP propagation)
+    # ------------------------------------------------------------------
+
+    async def apply_mutation_from_web(
+        self,
+        service_name: str,
+        yaml_text: str,
+        apply_locally: bool = False,
+    ) -> tuple[bool, str]:
+        """Parse YAML, optionally run lifecycle on this node, sync USD + catalogue.
+
+        Reserved for ``usd_operator`` — updates :attr:`usd.config.version` and
+        pushes ``SEND_USD_PROPERTIES`` + ``SEND_MUTATION_PROPERTIES`` to references
+        when the update succeeds (or when only the catalogue is updated with
+        ``apply_locally=False``).
+        """
+        prep = parse_mutation_web_input(self, service_name, yaml_text)
+        if isinstance(prep, str):
+            return False, prep
+        name, new_svc, existing, is_new = prep
+        new_ver = int(time.time())
+        new_svc.version = new_ver
+
+        local = local_mutation_apply_branch(
+            self, name, new_svc, existing, apply_locally
+        )
+        outcome: ServiceUpdateOutcome | None = None
+        if isinstance(local, tuple):
+            return local
+        if local is not None:
+            outcome = local
+
+        cat = self.usd.mutation_catalog
+        ms = self.usd.config.min_services
+        after_count = cat.count() + (1 if is_new else 0)
+        if ms > 0 and after_count < ms:
+            return (
+                False,
+                f"min_services={ms}: not enough service definitions "
+                f"in the domain (currently {after_count}).",
+            )
+
+        cat.register(new_svc, yaml_text)
+        self.usd.config.version = new_ver
+
+        await self._broadcast_usd_to_references()
+        await self._broadcast_mutation_to_references()
+
+        await refresh_mutation_hosting(self, poll_peers=True, force_peer_poll=True)
+
+        msg = "Mutation saved and pushed to reference nodes."
+        if apply_locally and outcome is not None:
+            msg += f" (local: {outcome.name})"
+        return True, msg
+
+    async def _broadcast_usd_to_references(self) -> None:
+        req = SendUsdPropertiesRequest.from_usd_config(self.usd.config)
+        payload = req.to_payload()
+        for peer_name in self.node.reference_nodes:
+            peer = self.usd.get_node(peer_name)
+            if peer is None or not peer.address:
+                continue
+            client = NcpClient(
+                peer.address, self.cfg.ncp_port, timeout=self.cfg.ncp_timeout
+            )
+            result = await client.send(NcpCommandId.SEND_USD_PROPERTIES, payload)
+            if result.is_err():
+                logger.warning(
+                    "[\x1b[38;5;51mUSMD\x1b[0m] SEND_USD_PROPERTIES → %s failed: %s",
+                    peer.address,
+                    result.unwrap_err(),
+                )
+
+    async def _broadcast_mutation_to_references(self) -> None:
+        summaries = self.usd.mutation_catalog.summaries_for_broadcast()
+        if not summaries:
+            return
+        payload = SendMutationPropertiesRequest(services=summaries).to_payload()
+        for peer_name in self.node.reference_nodes:
+            peer = self.usd.get_node(peer_name)
+            if peer is None or not peer.address:
+                continue
+            client = NcpClient(
+                peer.address, self.cfg.ncp_port, timeout=self.cfg.ncp_timeout
+            )
+            result = await client.send(
+                NcpCommandId.SEND_MUTATION_PROPERTIES, payload
+            )
+            if result.is_err():
+                logger.warning(
+                    "[\x1b[38;5;51mUSMD\x1b[0m] "
+                    "SEND_MUTATION_PROPERTIES → %s failed: %s",
+                    peer.address,
+                    result.unwrap_err(),
+                )
+
+    # ------------------------------------------------------------------
     # Rejoin after endorsement revocation
     # ------------------------------------------------------------------
 
@@ -230,8 +364,8 @@ class NodeDaemon:
             'pending_approval'
         """
         logger.info(
-            "[\x1b[38;5;51mUSMD\x1b[0m] Endossement révoqué par l'endosseur "
-            "— relance du processus d'adhésion pour le nœud %d.",
+            "[\x1b[38;5;51mUSMD\x1b[0m] Endorsement revoked by endorser "
+            "— restarting join for node %d.",
             self.node.name,
         )
         self.node.set_state(NodeState.PENDING_APPROVAL)
@@ -240,8 +374,8 @@ class NodeDaemon:
             loop.create_task(_join(self), name="rejoin-after-revocation")
         except RuntimeError:
             logger.warning(
-                "[\x1b[38;5;51mUSMD\x1b[0m] _schedule_rejoin : "
-                "impossible de planifier le rejoin — aucune boucle asyncio active."
+                "[\x1b[38;5;51mUSMD\x1b[0m] _schedule_rejoin: "
+                "cannot schedule rejoin — no active asyncio loop."
             )
 
     # ------------------------------------------------------------------

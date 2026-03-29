@@ -9,6 +9,7 @@ urlpatterns = [
     path("login/",         views.login_view,      name="login"),
     path("logout/",        views.logout_view,     name="logout"),
     path("dashboard/",     views.dashboard,       name="dashboard"),
+    path("mutation/",      views.mutation_publish, name="mutation_publish"),
     path("node/<str:address>/", views.node_detail, name="node_detail"),
     path("api/nodes/",     views.api_nodes,       name="api_nodes"),
     path(

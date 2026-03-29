@@ -17,7 +17,7 @@ Examples:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Callable, Optional
+from typing import TYPE_CHECKING, Awaitable, Callable, Optional
 
 if TYPE_CHECKING:
     from ..config import NodeConfig
@@ -33,10 +33,12 @@ class WebState:
         snapshot_fn: Zero-arg callable returning the local node's status dict.
         nit: Live NodeIdentityTable (read-only from views).
         ncp_port: NCP TCP port used to query remote nodes.
-        cfg: Full node configuration (contains web_username, web_password, etc.).
+        cfg: Full node configuration (e.g. ``cfg.web.username`` / ``cfg.web.password``).
         usd: Live UnifiedSystemDomain used to check per-node state before NCP polling.
         on_ncp_failure: Optional callback invoked with the peer's address when an
             outgoing NCP request fails (connection refused, timeout, etc.).
+        mutation_apply_fn: Optional async (service_name, yaml, apply_locally) →
+            (success, message) for the mutation dashboard.
     """
 
     snapshot_fn: Callable[[], dict]
@@ -45,6 +47,9 @@ class WebState:
     cfg: "NodeConfig"
     usd: "UnifiedSystemDomain"
     on_ncp_failure: Optional[Callable[[str], None]] = None
+    mutation_apply_fn: Optional[
+        Callable[[str, str, bool], Awaitable[tuple[bool, str]]]
+    ] = None
 
 
 class _StateHolder:

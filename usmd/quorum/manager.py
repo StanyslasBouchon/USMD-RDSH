@@ -241,7 +241,7 @@ class QuorumManager:
         Args:
             role: The operator role being contested.
         """
-        delay = random.uniform(_ELECTION_DELAY_MIN, self._cfg.quorum_election_timeout)
+        delay = random.uniform(_ELECTION_DELAY_MIN, self._cfg.quorum.election_timeout)
         logger.debug(
             "[USMD-QUORUM] [%s] Candidacy delay %.2fs before sending votes.",
             role.value,
@@ -295,8 +295,8 @@ class QuorumManager:
                 epoch,
             )
             reason = (
-                f"Élection — {yes_votes}/{len(peers)} vote(s) OUI "
-                f"(epoch {epoch}, aucun {role.value} détecté)"
+                f"Election — {yes_votes}/{len(peers)} YES vote(s) "
+                f"(epoch {epoch}, no {role.value} detected)"
             )
             self._promote_self(role=role, epoch=epoch, reason=reason)
             await self._announce_promotion(role=role, epoch=epoch, peers=peers)

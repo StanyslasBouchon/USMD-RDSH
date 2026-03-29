@@ -34,7 +34,7 @@ from ..protocol.commands.revoke_endorsement import (
     RevokeEndorsementRequest,
     RevokeEndorsementResponse,
 )
-from ..protocol.frame import NcpCommandId, NcpFrame
+from ..protocol.frame import NcpCommandId, NcpFrame, format_ncp_cmd_for_log
 from ..protocol.versions import NcpVersion
 from ...mutation.transmutation import DistanceCalculator
 from ...node.role import NodeRole
@@ -54,7 +54,7 @@ def _make_response(command_id: NcpCommandId, payload: bytes) -> NcpFrame:
 def _error_response(command_id: NcpCommandId, err: object) -> NcpFrame:
     logger.warning(
         "[\x1b[38;5;51mUSMD\x1b[0m] NCP cmd=%s error: %s",
-        command_id.name,
+        format_ncp_cmd_for_log(command_id),
         err,
     )
     return _make_response(command_id, b"")
@@ -131,8 +131,9 @@ def handle_request_approval(ctx: "HandlerContext", frame: NcpFrame) -> NcpFrame:
     )
     if sig_result.is_err():
         logger.warning(
-            "[\x1b[38;5;51mUSMD\x1b[0m] REQUEST_APPROVAL rejected "
+            "[\x1b[38;5;51mUSMD\x1b[0m] %s rejected "
             "(bad signature) for node %d",
+            format_ncp_cmd_for_log(NcpCommandId.REQUEST_APPROVAL),
             req.node_name,
         )
         return _make_response(
@@ -143,8 +144,9 @@ def handle_request_approval(ctx: "HandlerContext", frame: NcpFrame) -> NcpFrame:
     # Check name uniqueness
     if ctx.usd.get_node(req.node_name) is not None:
         logger.warning(
-            "[\x1b[38;5;51mUSMD\x1b[0m] REQUEST_APPROVAL rejected "
+            "[\x1b[38;5;51mUSMD\x1b[0m] %s rejected "
             "(name conflict) for node %d",
+            format_ncp_cmd_for_log(NcpCommandId.REQUEST_APPROVAL),
             req.node_name,
         )
         return _make_response(
@@ -191,7 +193,8 @@ def handle_request_approval(ctx: "HandlerContext", frame: NcpFrame) -> NcpFrame:
     endorsement_bytes = json.dumps(endorsement_doc).encode("utf-8")
 
     logger.info(
-        "[\x1b[38;5;51mUSMD\x1b[0m] REQUEST_APPROVAL approved for node %d",
+        "[\x1b[38;5;51mUSMD\x1b[0m] %s approved for node %d",
+        format_ncp_cmd_for_log(NcpCommandId.REQUEST_APPROVAL),
         req.node_name,
     )
     return _make_response(
@@ -228,7 +231,7 @@ def handle_inform_reference_node(ctx: "HandlerContext", frame: NcpFrame) -> NcpF
         if ctx.node.name in req.reference_names:
             ctx.nrl.add(req.sender_name, req.sender_address)
             logger.info(
-                "[\x1b[38;5;51mUSMD\x1b[0m] NRL: %s (#%d) nous mandate.",
+                "[\x1b[38;5;51mUSMD\x1b[0m] NRL: %s (#%d) selected us as reference.",
                 req.sender_address,
                 req.sender_name,
             )
@@ -236,13 +239,14 @@ def handle_inform_reference_node(ctx: "HandlerContext", frame: NcpFrame) -> NcpF
             if ctx.nrl.get(req.sender_name) is not None:
                 ctx.nrl.remove(req.sender_name)
                 logger.info(
-                    "[\x1b[38;5;51mUSMD\x1b[0m] NRL: %s (#%d) ne nous mandate plus.",
+                    "[\x1b[38;5;51mUSMD\x1b[0m] NRL: %s (#%d) no longer selects us as reference.",
                     req.sender_address,
                     req.sender_name,
                 )
     else:
         logger.debug(
-            "[\x1b[38;5;51mUSMD\x1b[0m] NCP INFORM_REFERENCE_NODE: refs=%s",
+            "[\x1b[38;5;51mUSMD\x1b[0m] NCP %s: refs=%s",
+            format_ncp_cmd_for_log(NcpCommandId.INFORM_REFERENCE_NODE),
             req.reference_names,
         )
     return _make_response(NcpCommandId.INFORM_REFERENCE_NODE, b"")
@@ -289,8 +293,9 @@ def handle_revoke_endorsement(ctx: "HandlerContext", frame: NcpFrame) -> NcpFram
     if received is not None and received.endorser_key == sender_key:
         ctx.nel.clear_received()
         logger.info(
-            "[\x1b[38;5;51mUSMD\x1b[0m] REVOKE_ENDORSEMENT: endorser %s "
+            "[\x1b[38;5;51mUSMD\x1b[0m] %s: endorser %s "
             "went offline — clearing received packet, requesting re-join.",
+            format_ncp_cmd_for_log(NcpCommandId.REVOKE_ENDORSEMENT),
             sender_key.hex()[:16] + "…",
         )
         if ctx.rejoin_fn is not None:
@@ -304,8 +309,9 @@ def handle_revoke_endorsement(ctx: "HandlerContext", frame: NcpFrame) -> NcpFram
     if ctx.nel.has_issued_to(sender_key):
         ctx.nel.revoke_issued(sender_key)
         logger.info(
-            "[\x1b[38;5;51mUSMD\x1b[0m] REVOKE_ENDORSEMENT: endorsed node %s "
+            "[\x1b[38;5;51mUSMD\x1b[0m] %s: endorsed node %s "
             "went offline — removed from NEL.",
+            format_ncp_cmd_for_log(NcpCommandId.REVOKE_ENDORSEMENT),
             sender_key.hex()[:16] + "…",
         )
         return _make_response(
@@ -315,8 +321,9 @@ def handle_revoke_endorsement(ctx: "HandlerContext", frame: NcpFrame) -> NcpFram
 
     # Neither relationship — permanently exclude the sender
     logger.warning(
-        "[\x1b[38;5;51mUSMD\x1b[0m] REVOKE_ENDORSEMENT from unknown sender %s "
+        "[\x1b[38;5;51mUSMD\x1b[0m] %s from unknown sender %s "
         "— permanently excluding.",
+        format_ncp_cmd_for_log(NcpCommandId.REVOKE_ENDORSEMENT),
         sender_key.hex()[:16] + "…",
     )
     ctx.nit.exclude(

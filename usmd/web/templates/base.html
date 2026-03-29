@@ -1,10 +1,10 @@
 <!doctype html>
-<html lang="fr" data-bs-theme="dark">
+<html lang="en" data-bs-theme="dark">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="USMD-RDSH — tableau de bord de supervision des nœuds distribués">
-  <meta name="keywords" content="USMD, RDSH, supervision, nœuds, dashboard, monitoring">
+  <meta name="description" content="USMD-RDSH — distributed node supervision dashboard">
+  <meta name="keywords" content="USMD, RDSH, supervision, nodes, dashboard, monitoring">
   <title>{% block title %}USMD-RDSH{% endblock title %}</title>
 
   <!-- Bootstrap 5.3 -->
@@ -195,7 +195,13 @@
     <li class="nav-item">
       <a class="nav-link {% if request.resolver_match.url_name == 'dashboard' %}active{% endif %}"
          href="{% url 'dashboard' %}">
-        <i class="bi bi-grid-1x2-fill"></i> Tableau de bord
+        <i class="bi bi-grid-1x2-fill"></i> Dashboard
+      </a>
+    </li>
+    <li class="nav-item">
+      <a class="nav-link {% if request.resolver_match.url_name == 'mutation_publish' %}active{% endif %}"
+         href="{% url 'mutation_publish' %}">
+        <i class="bi bi-diagram-3-fill"></i> Mutation
       </a>
     </li>
   </ul>
@@ -204,7 +210,7 @@
   <ul class="nav flex-column">
     <li class="nav-item">
       <a class="nav-link text-danger" href="{% url 'logout' %}">
-        <i class="bi bi-box-arrow-right"></i> Déconnexion
+        <i class="bi bi-box-arrow-right"></i> Log out
       </a>
     </li>
   </ul>
@@ -213,7 +219,7 @@
     <div>USMD-RDSH © {% now "Y" %}</div>
     <div class="mt-1">
       <span class="live-dot"></span>
-      <span class="ms-1">Temps réel</span>
+      <span class="ms-1">Live</span>
     </div>
   </footer>
 </nav>
@@ -223,7 +229,7 @@
   <div class="topbar d-flex align-items-center">
     <div class="me-auto">
       <span class="text-muted small">
-        {% block breadcrumb %}Tableau de bord{% endblock breadcrumb %}
+        {% block breadcrumb %}Dashboard{% endblock breadcrumb %}
       </span>
     </div>
     <div class="text-muted small" id="last-update">
@@ -242,7 +248,7 @@
 // ── Live clock ────────────────────────────────────────────────────
 function updateClock() {
   const el = document.querySelector('#last-update span');
-  if (el) el.textContent = new Date().toLocaleTimeString('fr-FR');
+  if (el) el.textContent = new Date().toLocaleTimeString('en-US');
 }
 setInterval(updateClock, 1000);
 updateClock();

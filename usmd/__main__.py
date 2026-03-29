@@ -196,7 +196,7 @@ def _run_daemon_unix(daemon: "NodeDaemon") -> None:
     main_task = loop.create_task(daemon.run())
 
     def _request_stop() -> None:
-        logging.info("[\x1b[38;5;51mUSMD\x1b[0m] Arrêt demandé (signal)…")
+        logging.info("[\x1b[38;5;51mUSMD\x1b[0m] Shutdown requested (signal)…")
         main_task.cancel()
 
     loop.add_signal_handler(signal.SIGINT, _request_stop)
@@ -220,11 +220,11 @@ def _run_daemon_unix(daemon: "NodeDaemon") -> None:
 def _run_daemon_windows(daemon: "NodeDaemon") -> None:
     """Run the daemon on Windows with proper Ctrl+C support.
 
-    ``new_event_loop()`` sur Windows instancie souvent un Proactor qui bloque
-    longtemps en I/O native et retarde ``KeyboardInterrupt``.  On force un
-    :class:`asyncio.SelectorEventLoop` (comme dans ``main()`` pour NNDP/UDP).
+    On Windows, ``new_event_loop()`` often yields a Proactor that spends a long
+    time in native I/O and delays ``KeyboardInterrupt``.  We force a
+    :class:`asyncio.SelectorEventLoop` (as in ``main()`` for NNDP/UDP).
 
-    Un réveil périodique (250 ms) laisse aussi l'interpréteur traiter Ctrl+C.
+    A periodic wakeup (250 ms) also lets the interpreter process Ctrl+C.
     """
     loop = asyncio.SelectorEventLoop()
     asyncio.set_event_loop(loop)
@@ -236,10 +236,10 @@ def _run_daemon_windows(daemon: "NodeDaemon") -> None:
     loop.call_soon(_wakeup)
     main_task = loop.create_task(daemon.run())
 
-    # Handler explicite : même avec uvicorn corrigé, certaines consoles Windows
-    # ne livrent pas KeyboardInterrupt pendant ``run_until_complete``.
+    # Explicit handler: even with uvicorn fixed, some Windows consoles never
+    # deliver KeyboardInterrupt during ``run_until_complete``.
     def _win_sigint(_signum: int, _frame: object | None) -> None:
-        logging.info("[\x1b[38;5;51mUSMD\x1b[0m] Arrêt demandé (Ctrl+C)…")
+        logging.info("[\x1b[38;5;51mUSMD\x1b[0m] Shutdown requested (Ctrl+C)…")
         if not main_task.done():
             loop.call_soon_threadsafe(main_task.cancel)
 
@@ -250,7 +250,7 @@ def _run_daemon_windows(daemon: "NodeDaemon") -> None:
     except asyncio.CancelledError:
         pass
     except KeyboardInterrupt:
-        logging.info("[\x1b[38;5;51mUSMD\x1b[0m] Arrêt demandé (Ctrl+C)…")
+        logging.info("[\x1b[38;5;51mUSMD\x1b[0m] Shutdown requested (Ctrl+C)…")
         if not main_task.done():
             main_task.cancel()
         try:

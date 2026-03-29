@@ -235,3 +235,65 @@ class ResourceUsage:
             False
         """
         return self.reference_load() >= threshold
+
+
+def dynamic_service_effective_reference_load(
+    base_reference_load: float,
+    data_bytes: float,
+    *,
+    nominal_capacity_bytes: float = 1e9,
+    transfer_bytes_per_sec: float = 0.0,
+    nominal_transfer_bps: float = 12.5e6,
+) -> float:
+    """Raise the advertised reference load for a weakened dynamic service host.
+
+    Combines how full local data is (vs a nominal capacity) and how far current
+    ingest throughput is from a nominal target. Both factors are clamped to
+    ``[0, 1]`` and averaged with the base CPU/RAM/disk/net reference load.
+
+    Args:
+        base_reference_load: ``ResourceUsage.reference_load()`` ∈ [0, 1].
+        data_bytes: Estimated quantity of data held for the dynamic service.
+        nominal_capacity_bytes: Scale for the data term (default 1 GiB).
+        transfer_bytes_per_sec: Observed transfer throughput (0 = ignore).
+        nominal_transfer_bps: Target throughput in bytes/s (default ~100 Mbit/s).
+
+    Returns:
+        float: Adjusted load ∈ [0, 1].
+
+    Example:
+        >>> round(dynamic_service_effective_reference_load(0.3, 800e6), 4)
+        0.7
+    """
+    cap = max(nominal_capacity_bytes, 1.0)
+    data_factor = min(1.0, max(0.0, data_bytes / cap))
+    xfer_term = 0.0
+    if transfer_bytes_per_sec > 0 and nominal_transfer_bps > 0:
+        ratio = min(1.0, transfer_bytes_per_sec / nominal_transfer_bps)
+        xfer_term = 1.0 - ratio
+    extra = 0.5 * data_factor + 0.5 * xfer_term
+    return min(1.0, max(base_reference_load, extra))
+
+
+def dynamic_transmutation_delay_scale(
+    data_bytes: float,
+    transfer_bytes_per_sec: float,
+    *,
+    nominal_capacity_bytes: float = 1e9,
+    nominal_transfer_bps: float = 12.5e6,
+) -> float:
+    """Scale transmutation timing: slower sync / fuller disk → closer to 1.0 (longer wait).
+
+    Returns a multiplier ≥ 1.0.
+
+    Example:
+        >>> dynamic_transmutation_delay_scale(0, 12.5e6)
+        1.0
+    """
+    cap = max(nominal_capacity_bytes, 1.0)
+    data_part = min(1.0, data_bytes / cap)
+    xfer_part = 0.0
+    if transfer_bytes_per_sec > 0 and nominal_transfer_bps > 0:
+        xfer_part = max(0.0, 1.0 - min(1.0, transfer_bytes_per_sec / nominal_transfer_bps))
+    stress = 0.5 * data_part + 0.5 * xfer_part
+    return 1.0 + stress

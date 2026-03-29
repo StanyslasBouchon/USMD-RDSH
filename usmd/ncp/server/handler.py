@@ -52,7 +52,7 @@ from ..protocol.commands.request_vote import (
 from ..protocol.commands.send_mutation_properties import SendMutationPropertiesRequest
 from ..protocol.commands.send_ucd_properties import SendUcdPropertiesRequest
 from ..protocol.commands.send_usd_properties import SendUsdPropertiesRequest
-from ..protocol.frame import NcpCommandId, NcpFrame
+from ..protocol.frame import NcpCommandId, NcpFrame, format_ncp_cmd_for_log
 from ..protocol.versions import NcpVersion
 from ...domain.usd import UnifiedSystemDomain
 from ...mutation.transmutation import ResourceUsage
@@ -119,7 +119,7 @@ def _error_response(command_id: NcpCommandId, err: Error) -> NcpFrame:
     """Build an empty-payload response when an error occurs (log + return empty)."""
     logger.warning(
         "[\x1b[38;5;51mUSMD\x1b[0m] NCP cmd=%s error: %s",
-        command_id.name,
+        format_ncp_cmd_for_log(command_id),
         err,
     )
     return _make_response(command_id, b"")
@@ -183,8 +183,8 @@ class NcpCommandHandler:
         handler_fn = self._dispatch.get(frame.command_id)
         if handler_fn is None:
             logger.warning(
-                "[\x1b[38;5;51mUSMD\x1b[0m] NCP unknown command %d",
-                frame.command_id,
+                "[\x1b[38;5;51mUSMD\x1b[0m] NCP unknown command %s",
+                format_ncp_cmd_for_log(frame.command_id),
             )
             return _make_response(frame.command_id, b"")
         return handler_fn(frame)
@@ -202,6 +202,8 @@ class NcpCommandHandler:
             network_percent=usage.network_percent,
             service_name=self.ctx.node.service_name,
             state=self.ctx.node.state,
+            hosting_static=list(self.ctx.node.hosting_static),
+            hosting_dynamic=list(self.ctx.node.hosting_dynamic),
         )
         _ = GetStatusRequest.from_payload(frame.payload)  # validate (empty)
         return _make_response(
@@ -232,7 +234,8 @@ class NcpCommandHandler:
         can_help = not usage.is_weakened(threshold) and self.ctx.node.is_reachable()
 
         logger.info(
-            "[\x1b[38;5;51mUSMD\x1b[0m] NCP REQUEST_EMERGENCY: can_help=%s",
+            "[\x1b[38;5;51mUSMD\x1b[0m] NCP %s: can_help=%s",
+            format_ncp_cmd_for_log(NcpCommandId.REQUEST_EMERGENCY),
             can_help,
         )
         return _make_response(
@@ -254,7 +257,9 @@ class NcpCommandHandler:
         can_help = not usage.is_weakened(threshold) and self.ctx.node.is_reachable()
 
         logger.info(
-            "[\x1b[38;5;51mUSMD\x1b[0m] NCP REQUEST_HELP: can_help=%s", can_help
+            "[\x1b[38;5;51mUSMD\x1b[0m] NCP %s: can_help=%s",
+            format_ncp_cmd_for_log(NcpCommandId.REQUEST_HELP),
+            can_help,
         )
         return _make_response(
             NcpCommandId.REQUEST_HELP,
@@ -280,7 +285,8 @@ class NcpCommandHandler:
             )
         req = parse_result.unwrap()
         logger.info(
-            "[\x1b[38;5;51mUSMD\x1b[0m] NCP SEND_UCD_PROPERTIES: v%d props=%s",
+            "[\x1b[38;5;51mUSMD\x1b[0m] NCP %s: v%d props=%s",
+            format_ncp_cmd_for_log(NcpCommandId.SEND_UCD_PROPERTIES),
             req.version,
             list(req.properties.keys()),
         )
@@ -301,7 +307,8 @@ class NcpCommandHandler:
         new_cfg = req.to_usd_config()
         self.ctx.usd.update_config(new_cfg)
         logger.info(
-            "[\x1b[38;5;51mUSMD\x1b[0m] NCP SEND_USD_PROPERTIES: domain=%s v%d",
+            "[\x1b[38;5;51mUSMD\x1b[0m] NCP %s: domain=%s v%d",
+            format_ncp_cmd_for_log(NcpCommandId.SEND_USD_PROPERTIES),
             req.name,
             req.config_version,
         )
@@ -318,8 +325,10 @@ class NcpCommandHandler:
                 NcpCommandId.SEND_MUTATION_PROPERTIES, parse_result.unwrap_err()
             )
         req = parse_result.unwrap()
+        self.ctx.usd.mutation_catalog.apply_remote_summaries(req.services)
         logger.info(
-            "[\x1b[38;5;51mUSMD\x1b[0m] NCP SEND_MUTATION_PROPERTIES: %d service(s)",
+            "[\x1b[38;5;51mUSMD\x1b[0m] NCP %s: %d service(s)",
+            format_ncp_cmd_for_log(NcpCommandId.SEND_MUTATION_PROPERTIES),
             len(req.services),
         )
         return _make_response(NcpCommandId.SEND_MUTATION_PROPERTIES, b"")
@@ -361,7 +370,8 @@ class NcpCommandHandler:
             granted = False
 
         logger.debug(
-            "[\x1b[38;5;51mUSMD\x1b[0m] NCP REQUEST_VOTE epoch=%d role=%s from=%s → %s",
+            "[\x1b[38;5;51mUSMD\x1b[0m] NCP %s epoch=%d role=%s from=%s → %s",
+            format_ncp_cmd_for_log(NcpCommandId.REQUEST_VOTE),
             req.epoch,
             req.role,
             req.candidate_address,
@@ -390,7 +400,8 @@ class NcpCommandHandler:
             )
 
         logger.info(
-            "[\x1b[38;5;51mUSMD\x1b[0m] NCP ANNOUNCE_PROMOTION epoch=%d role=%s addr=%s",
+            "[\x1b[38;5;51mUSMD\x1b[0m] NCP %s epoch=%d role=%s addr=%s",
+            format_ncp_cmd_for_log(NcpCommandId.ANNOUNCE_PROMOTION),
             req.epoch,
             req.role,
             req.address,
@@ -412,7 +423,8 @@ class NcpCommandHandler:
 
         entries = self.ctx.nqt.get_all_dicts() if self.ctx.nqt is not None else []
         logger.debug(
-            "[\x1b[38;5;51mUSMD\x1b[0m] NCP GET_NQT → %d entries",
+            "[\x1b[38;5;51mUSMD\x1b[0m] NCP %s → %d entries",
+            format_ncp_cmd_for_log(NcpCommandId.GET_NQT),
             len(entries),
         )
         return _make_response(

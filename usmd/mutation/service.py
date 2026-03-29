@@ -4,9 +4,13 @@ A service is the role a node plays when it is active. Services are described
 in YAML files and categorised as either static or dynamic.
 
 - **Static services**: All nodes hosting this service share the same
-  parameters, data AND commands.
+  parameters, data AND commands. Every node is expected to run **all** static
+  services from the domain catalogue.
 - **Dynamic services**: All nodes hosting this service share parameters and
   commands, but each holds its own distinct data (e.g. a database shard).
+  Assignment is **exclusive across reference peers**: a node claims dynamic
+  names not already hosted by its reference nodes (see
+  :mod:`usmd.mutation.assignment`).
 
 Examples:
     >>> svc = Service(
@@ -117,6 +121,7 @@ class Service:
         unbuild_commands: Commands executed to stop/remove the service.
         emergency_commands: Commands executed when the node is failing fast.
         health_check_commands: Commands used to verify the service is healthy.
+        update_commands: Commands run when an in-place service upgrade is applied.
         version: Timestamp of the last update pushed by the administrator.
 
     Examples:
@@ -140,6 +145,7 @@ class Service:
     unbuild_commands: list[str] = field(default_factory=list)
     emergency_commands: list[str] = field(default_factory=list)
     health_check_commands: list[str] = field(default_factory=list)
+    update_commands: list[str] = field(default_factory=list)
     version: int = 0
 
     def has_dependency(self, service_name: str) -> bool:

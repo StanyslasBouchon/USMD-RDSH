@@ -19,7 +19,12 @@ import logging
 import struct
 from typing import Optional
 
-from ..protocol.frame import NcpFrame
+from ..protocol.frame import (
+    NCP_LOG_ARROW_IN,
+    NCP_LOG_ARROW_OUT,
+    NcpFrame,
+    format_ncp_cmd_for_log,
+)
 from ...utils.io import close_stream_writer
 from .handler import NcpCommandHandler
 
@@ -114,6 +119,14 @@ class NcpServer:
             response = self._handler.handle(frame_result)
             writer.write(response.to_bytes())
             await writer.drain()
+            logger.debug(
+                "[\x1b[38;5;51mUSMD\x1b[0m] NCP %s %s:%d cmd=%s payload=%d bytes",
+                NCP_LOG_ARROW_OUT,
+                ip,
+                port,
+                format_ncp_cmd_for_log(response.command_id),
+                len(response.payload),
+            )
 
         except (ConnectionResetError, BrokenPipeError) as exc:
             logger.debug(
@@ -185,9 +198,10 @@ class NcpServer:
 
         frame = frame_result.unwrap()
         logger.debug(
-            "[\x1b[38;5;51mUSMD\x1b[0m] NCP ← %s cmd=%s payload=%d bytes",
+            "[\x1b[38;5;51mUSMD\x1b[0m] NCP %s %s cmd=%s payload=%d bytes",
+            NCP_LOG_ARROW_IN,
             peer_ip,
-            frame.command_id.name,
+            format_ncp_cmd_for_log(frame.command_id),
             len(frame.payload),
         )
         return frame

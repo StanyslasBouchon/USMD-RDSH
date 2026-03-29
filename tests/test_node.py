@@ -86,6 +86,20 @@ class TestNode(unittest.TestCase):
         node = Node(address="192.168.1.1", name=1)
         self.assertIn("192.168.1.1", repr(node))
 
+    def test_hosts_service_static_and_dynamic(self):
+        node = Node(address="10.0.0.1", name=1, state=NodeState.ACTIVE)
+        node.hosting_static = ["s1"]
+        node.hosting_dynamic = ["d1"]
+        self.assertTrue(node.hosts_service("s1"))
+        self.assertTrue(node.hosts_service("d1"))
+        self.assertFalse(node.hosts_service("other"))
+
+    def test_iter_hosted_service_names_order(self):
+        node = Node(address="10.0.0.1", name=1)
+        node.hosting_static = ["a"]
+        node.hosting_dynamic = ["b"]
+        self.assertEqual(list(node.iter_hosted_service_names()), ["a", "b"])
+
 
 class TestNodeInfo(unittest.TestCase):
 
@@ -106,6 +120,11 @@ class TestNodeInfo(unittest.TestCase):
     def test_default_service_name_none(self):
         info = NodeInfo(name=1, state=NodeState.PENDING_APPROVAL, address="1.2.3.4")
         self.assertIsNone(info.service_name)
+
+    def test_default_hosting_lists_empty(self):
+        info = NodeInfo(name=1, state=NodeState.ACTIVE, address="1.2.3.4")
+        self.assertEqual(info.hosting_static, [])
+        self.assertEqual(info.hosting_dynamic, [])
 
 
 if __name__ == "__main__":
