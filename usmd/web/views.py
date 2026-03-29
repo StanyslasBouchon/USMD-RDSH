@@ -84,6 +84,9 @@ async def _fetch_remote_snapshot(address: str, ncp_port: int) -> dict | None:
     )
     if result.is_err():
         logger.debug("REQUEST_SNAPSHOT to %s failed: %s", address, result.unwrap_err())
+        state = get_state()
+        if state.on_ncp_failure:
+            state.on_ncp_failure(address)
         return None
 
     resp = RequestSnapshotResponse.from_payload(result.unwrap().payload)

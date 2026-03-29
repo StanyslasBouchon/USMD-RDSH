@@ -42,7 +42,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class _Win32ProactorResetFilter(logging.Filter):  # pylint: disable=too-few-public-methods
+class _Win32ProactorResetFilter(
+    logging.Filter
+):  # pylint: disable=too-few-public-methods
     """Suppress harmless WinError 10054 from the asyncio proactor on Windows.
 
     When a browser closes a connection abruptly, the proactor transport logs a
@@ -75,6 +77,7 @@ class WebServer:  # pylint: disable=too-few-public-methods
         cfg: "NodeConfig",
         snapshot_fn: Callable[[], dict],
         nit: "NodeIdentityTable",
+        on_ncp_failure: Optional[Callable[[str], None]] = None,
     ) -> None:
         """Initialise the web server.
 
@@ -82,10 +85,13 @@ class WebServer:  # pylint: disable=too-few-public-methods
             cfg: Node configuration (web_* fields).
             snapshot_fn: Returns the local node's status snapshot dict.
             nit: Live NodeIdentityTable for peer discovery.
+            on_ncp_failure: Optional callback invoked with a peer's address when
+                an outgoing NCP REQUEST_SNAPSHOT to that peer fails.
         """
         self._cfg = cfg
         self._snapshot_fn = snapshot_fn
         self._nit = nit
+        self._on_ncp_failure = on_ncp_failure
         self._uvicorn_server: Optional[object] = None
         self._tmp_cert_dir: Optional[tempfile.TemporaryDirectory] = None  # type: ignore[type-arg]
 
@@ -202,6 +208,7 @@ class WebServer:  # pylint: disable=too-few-public-methods
                 nit=self._nit,
                 ncp_port=self._cfg.ncp_port,
                 cfg=self._cfg,
+                on_ncp_failure=self._on_ncp_failure,
             )
         )
 
@@ -234,9 +241,9 @@ class WebServer:  # pylint: disable=too-few-public-methods
             port=self._cfg.web_port,
             ssl_certfile=cert,
             ssl_keyfile=key,
-            log_config=None,   # Do not let uvicorn reconfigure the daemon's logging
+            log_config=None,  # Do not let uvicorn reconfigure the daemon's logging
             access_log=False,
-            loop="none",       # Use the running asyncio loop
+            loop="none",  # Use the running asyncio loop
         )
         self._uvicorn_server = uvicorn.Server(config)
 

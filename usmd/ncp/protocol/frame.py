@@ -55,6 +55,7 @@ class NcpCommandId(IntEnum):
         REQUEST_SNAPSHOT (9): Request a full JSON status snapshot (NIT, NAL, NEL, resources).
         REQUEST_VOTE (10): Quorum election — candidate solicits a vote from a peer.
         ANNOUNCE_PROMOTION (11): Quorum election — winner announces new operator role.
+        GET_NQT (12): Request the peer's full Node Quorum Table for synchronisation.
 
     Examples:
         >>> NcpCommandId.GET_STATUS.value
@@ -75,6 +76,7 @@ class NcpCommandId(IntEnum):
     REQUEST_SNAPSHOT = 9
     REQUEST_VOTE = 10
     ANNOUNCE_PROMOTION = 11
+    GET_NQT = 12
 
 
 @dataclass

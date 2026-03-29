@@ -25,11 +25,9 @@ from __future__ import annotations
 # pylint: disable=too-many-lines
 
 import asyncio
-import datetime
 import logging
 import random
-import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 from ..ncp.client.tcp import NcpClient
 from ..ncp.protocol.commands.announce_promotion import AnnouncePromotionRequest
@@ -40,6 +38,7 @@ from ..ncp.protocol.commands.request_vote import (
 from ..ncp.protocol.frame import NcpCommandId
 from ..node.nal import NodeAccessList
 from ..node.nit import NodeIdentityTable
+from ..node.nqt import NodeQuorumTable
 from ..node.role import NodeRole
 
 if TYPE_CHECKING:
@@ -48,7 +47,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _ELECTION_DELAY_MIN = 1.0  # seconds — minimum random candidacy delay
-_MAX_PROMOTIONS = 50  # maximum entries kept in the promotion history
 
 
 class QuorumManager:  # pylint: disable=too-many-instance-attributes
@@ -59,6 +57,7 @@ class QuorumManager:  # pylint: disable=too-many-instance-attributes
         _ed_pub: Ed25519 public key of this node (32 bytes).
         _nit: Shared Node Identity Table.
         _nal: Shared Node Access List.
+        _nqt: Shared Node Quorum Table (promotion history).
         _cfg: Node configuration (role updated on self-promotion).
         _check_interval: Seconds between operator liveness checks.
         _ncp_port: TCP port for outbound NCP connections.
@@ -70,12 +69,14 @@ class QuorumManager:  # pylint: disable=too-many-instance-attributes
     Examples:
         >>> from usmd.node.nit import NodeIdentityTable
         >>> from usmd.node.nal import NodeAccessList
+        >>> from usmd.node.nqt import NodeQuorumTable
         >>> from usmd.config import NodeConfig
         >>> qm = QuorumManager(
         ...     node_address="10.0.0.1",
         ...     ed_pub=b"k" * 32,
         ...     nit=NodeIdentityTable(),
         ...     nal=NodeAccessList(),
+        ...     nqt=NodeQuorumTable(),
         ...     cfg=NodeConfig(bootstrap=True),
         ... )
         >>> isinstance(qm, QuorumManager)
@@ -88,10 +89,12 @@ class QuorumManager:  # pylint: disable=too-many-instance-attributes
         ed_pub: bytes,
         nit: NodeIdentityTable,
         nal: NodeAccessList,
+        nqt: NodeQuorumTable,
         cfg: "NodeConfig",
         check_interval: float = 30.0,
         ncp_port: int = 5626,
         ncp_timeout: float = 5.0,
+        on_ncp_failure: Callable[[str], None] | None = None,
     ) -> None:
         """Initialise the QuorumManager.
 
@@ -100,24 +103,28 @@ class QuorumManager:  # pylint: disable=too-many-instance-attributes
             ed_pub: Ed25519 public key of this node (32 bytes).
             nit: Shared Node Identity Table.
             nal: Shared Node Access List.
+            nqt: Shared Node Quorum Table.
             cfg: Node configuration.
             check_interval: Seconds between operator liveness checks.
             ncp_port: TCP port for outbound NCP connections.
             ncp_timeout: Timeout in seconds for outbound NCP connections.
+            on_ncp_failure: Optional callback invoked with a peer's address when
+                an outgoing NCP request to that peer fails.
         """
         self._node_address = node_address
         self._ed_pub = ed_pub
         self._nit = nit
         self._nal = nal
+        self._nqt = nqt
         self._cfg = cfg
         self._check_interval = check_interval
         self._ncp_port = ncp_port
         self._ncp_timeout = ncp_timeout
+        self._on_ncp_failure = on_ncp_failure
 
         self._epoch: int = 0
         self._voted_epochs: set[int] = set()
         self._is_operator: bool = cfg.node_role == NodeRole.NODE_OPERATOR
-        self._promotions: list[dict] = []
 
     # ------------------------------------------------------------------
     # Public accessors
@@ -129,7 +136,7 @@ class QuorumManager:  # pylint: disable=too-many-instance-attributes
         return self._is_operator
 
     def get_promotions(self) -> list[dict]:
-        """Return a copy of the promotion history (most recent first).
+        """Return the promotion history from the shared NQT (most recent first).
 
         Each entry is a dict with keys:
         ``epoch``, ``address``, ``pub_key``, ``promoted_at``,
@@ -141,14 +148,15 @@ class QuorumManager:  # pylint: disable=too-many-instance-attributes
         Example:
             >>> from usmd.node.nit import NodeIdentityTable
             >>> from usmd.node.nal import NodeAccessList
+            >>> from usmd.node.nqt import NodeQuorumTable
             >>> from usmd.config import NodeConfig
             >>> qm = QuorumManager("10.0.0.1", b"k"*32,
             ...                    NodeIdentityTable(), NodeAccessList(),
-            ...                    NodeConfig())
+            ...                    NodeQuorumTable(), NodeConfig())
             >>> qm.get_promotions()
             []
         """
-        return list(self._promotions)
+        return self._nqt.get_all_dicts()
 
     # ------------------------------------------------------------------
     # Main monitoring loop
@@ -212,36 +220,6 @@ class QuorumManager:  # pylint: disable=too-many-instance-attributes
             if self._nal.has_role(pub_key, NodeRole.NODE_OPERATOR):
                 return True
         return False
-
-    # ------------------------------------------------------------------
-    # Promotion recorder
-    # ------------------------------------------------------------------
-
-    def _record_promotion(
-        self, epoch: int, pub_key: bytes, address: str, reason: str
-    ) -> None:
-        """Append a promotion event to the internal history.
-
-        Args:
-            epoch: Election epoch of the promotion.
-            pub_key: Ed25519 public key of the promoted node (32 bytes).
-            address: IP address of the promoted node.
-            reason: Human-readable explanation (French).
-        """
-        ts = time.time()
-        entry = {
-            "epoch": epoch,
-            "address": address,
-            "pub_key": pub_key.hex()[:20] + "…",
-            "promoted_at": ts,
-            "promoted_at_str": datetime.datetime.fromtimestamp(ts).strftime(
-                "%d/%m/%Y %H:%M:%S"
-            ),
-            "reason": reason,
-        }
-        self._promotions.insert(0, entry)
-        if len(self._promotions) > _MAX_PROMOTIONS:
-            self._promotions = self._promotions[:_MAX_PROMOTIONS]
 
     # ------------------------------------------------------------------
     # Election
@@ -342,6 +320,8 @@ class QuorumManager:  # pylint: disable=too-many-instance-attributes
                 address,
                 result.unwrap_err(),
             )
+            if self._on_ncp_failure:
+                self._on_ncp_failure(address)
             return False
 
         parse_result = RequestVoteResponse.from_payload(result.unwrap().payload)
@@ -364,7 +344,7 @@ class QuorumManager:  # pylint: disable=too-many-instance-attributes
         self._cfg.role = "operator"
         self._nal.grant(self._ed_pub, NodeRole.NODE_OPERATOR, permanent=False)
         self._is_operator = True
-        self._record_promotion(epoch, self._ed_pub, self._node_address, reason)
+        self._nqt.add(epoch, self._ed_pub, self._node_address, reason)
         logger.info(
             "[USMD-QUORUM] This node (%s) is now NODE_OPERATOR.",
             self._node_address,
@@ -396,6 +376,8 @@ class QuorumManager:  # pylint: disable=too-many-instance-attributes
                     address,
                     result.unwrap_err(),
                 )
+                if self._on_ncp_failure:
+                    self._on_ncp_failure(address)
             else:
                 logger.debug(
                     "[USMD-QUORUM] ANNOUNCE_PROMOTION acknowledged by %s.", address
@@ -470,6 +452,4 @@ class QuorumManager:  # pylint: disable=too-many-instance-attributes
         self._nal.grant(pub_key, NodeRole.NODE_OPERATOR, permanent=False)
         self._nit.register(address, pub_key, ttl=86400)
         self._voted_epochs.discard(epoch)
-        self._record_promotion(
-            epoch, pub_key, address, f"Annonce reçue d'un pair (epoch {epoch})"
-        )
+        self._nqt.add(epoch, pub_key, address, f"Annonce reçue d'un pair (epoch {epoch})")

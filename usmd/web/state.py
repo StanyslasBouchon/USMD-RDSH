@@ -33,12 +33,15 @@ class WebState:
         nit: Live NodeIdentityTable (read-only from views).
         ncp_port: NCP TCP port used to query remote nodes.
         cfg: Full node configuration (contains web_username, web_password, etc.).
+        on_ncp_failure: Optional callback invoked with the peer's address when an
+            outgoing NCP request fails (connection refused, timeout, etc.).
     """
 
     snapshot_fn: Callable[[], dict]
     nit: "NodeIdentityTable"
     ncp_port: int
     cfg: "NodeConfig"
+    on_ncp_failure: Optional[Callable[[str], None]] = None
 
 
 _STATE: Optional[WebState] = None

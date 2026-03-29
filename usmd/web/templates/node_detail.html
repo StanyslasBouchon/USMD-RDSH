@@ -6,13 +6,19 @@
   › {{ address }}
 {% endblock breadcrumb %}
 
+{% block extra_css %}
+<style>
+.table-meta-label { font-size: .7rem; text-transform: none; }
+</style>
+{% endblock extra_css %}
+
 {% block content %}
 
 {% if error %}
 <div class="alert alert-danger"><i class="bi bi-exclamation-triangle-fill me-2"></i>{{ error }}</div>
 {% else %}
 
-{% with n=node_data.node r=node_data.resources usd=node_data.usd nit=node_data.nit nal=node_data.nal nel=node_data.nel refs=node_data.reference_nodes %}
+{% with n=node_data.node r=node_data.resources usd=node_data.usd nit=node_data.nit nal=node_data.nal nel=node_data.nel refs=node_data.reference_nodes nrt=node_data.nrt nrl=node_data.nrl %}
 
 <!-- ─── Node header ────────────────────────────────────────────── -->
 <div class="d-flex align-items-start gap-3 mb-4">
@@ -306,7 +312,66 @@
 
   <!-- ─ Références ────────────────────────────────────────────── -->
   <div class="tab-pane fade" id="tab-refs">
-    <div class="node-card">
+
+    <!-- NRT : distances calculées vers tous les voisins -->
+    <h6 class="text-muted small text-uppercase mb-2">
+      <i class="bi bi-rulers me-1"></i>Table NRT — distances aux voisins
+      <span id="nrt-count" class="badge bg-secondary ms-1">{{ nrt|length }}</span>
+      <span id="nrt-last-update" class="text-muted fw-normal ms-2 table-meta-label"></span>
+    </h6>
+    <div class="node-card mb-3">
+      <table id="nrt-table" class="table table-sm table-striped mb-0{% if not nrt %} d-none{% endif %}">
+        <thead>
+          <tr>
+            <th>Adresse</th>
+            <th title="d = t/T + c + p + n ∈ [0 ; 5] — plus bas = meilleur">Distance <em>d</em></th>
+            <th>Ping A/R</th>
+            <th>Nœud de réf.</th>
+            <th>Mis à jour</th>
+          </tr>
+        </thead>
+        <tbody id="nrt-tbody">
+          {% for entry in nrt %}
+          <tr{% if entry.stale %} class="text-muted"{% endif %}>
+            <td class="text-light">{{ entry.address }}</td>
+            <td>
+              <!-- djlint:off H021 -->
+              <div class="d-flex align-items-center gap-2">
+                <div class="progress flex-grow-1" style="height:6px;min-width:60px">
+                  <div class="progress-bar{% if entry.distance >= 3 %} bg-danger{% elif entry.distance >= 1.5 %} bg-warning{% else %} bg-success{% endif %}"
+                       style="width:{% widthratio entry.distance 5 100 %}%"></div>
+                </div>
+                <span class="fw-semibold" style="min-width:2.5rem;text-align:right">{{ entry.distance }}</span>
+              </div>
+              <!-- djlint:on -->
+            </td>
+            <td class="text-muted">{{ entry.ping_ms|floatformat:1 }} ms</td>
+            <td>
+              {% for ref in refs %}
+                {% if ref.address == entry.address %}
+                  <span class="badge badge-state-active"><i class="bi bi-check-lg me-1"></i>Oui</span>
+                {% endif %}
+              {% endfor %}
+            </td>
+            <td class="text-muted small">
+              {{ entry.updated_at_str }}
+              {% if entry.stale %}<span class="badge badge-state-inactive ms-1">Périmé</span>{% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <div id="nrt-empty" class="p-3 text-muted small{% if nrt %} d-none{% endif %}">
+        <i class="bi bi-hourglass-split me-1"></i>NRT vide — en attente des réponses CHECK_DISTANCE.
+      </div>
+    </div>
+
+    <!-- Liste de référence déclarée -->
+    <h6 class="text-muted small text-uppercase mb-2">
+      <i class="bi bi-diagram-2-fill me-1"></i>Nœuds de référence déclarés
+      <span class="badge bg-secondary ms-1">{{ refs|length }}</span>
+    </h6>
+    <div class="node-card mb-2">
       {% if refs %}
       <table class="table table-sm table-striped mb-0">
         <thead>
@@ -315,7 +380,7 @@
             <th>Adresse</th>
             <th>État</th>
             <th>Service</th>
-            <th>Charge de référence (c)</th>
+            <th>Charge ref. (c)</th>
           </tr>
         </thead>
         <tbody>
@@ -337,15 +402,15 @@
             <td class="text-muted">{{ ref.service|default:"—" }}</td>
             <td>
               {% if ref.reference_load is not None %}
+              <!-- djlint:off H021 -->
               <div class="d-flex align-items-center gap-2">
-                <!-- djlint:off H021 -->
                 <div class="progress flex-grow-1" style="height:6px">
                   <div class="progress-bar{% if ref.reference_load >= 80 %} bg-danger{% elif ref.reference_load >= 50 %} bg-warning{% else %} bg-success{% endif %}"
                        style="width:{{ ref.reference_load }}%"></div>
                 </div>
-                <!-- djlint:on -->
                 <span class="text-light fw-semibold" style="min-width:3.5rem;text-align:right">{{ ref.reference_load|floatformat:1 }}%</span>
               </div>
+              <!-- djlint:on -->
               {% else %}
               <span class="text-muted">—</span>
               {% endif %}
@@ -355,14 +420,46 @@
         </tbody>
       </table>
       {% else %}
-      <div class="p-3 text-muted small"><i class="bi bi-info-circle me-1"></i>Aucun nœud de référence enregistré.</div>
+      <div class="p-3 text-muted small"><i class="bi bi-info-circle me-1"></i>Aucun nœud de référence déclaré.</div>
       {% endif %}
     </div>
-    <div class="mt-2 text-muted small px-1">
+
+    <!-- NRL : nœuds qui nous ont mandaté -->
+    <h6 class="text-muted small text-uppercase mb-2 mt-3">
+      <i class="bi bi-person-lines-fill me-1"></i>Table NRL — nœuds qui nous mandatent
+      <span id="nrl-count" class="badge bg-secondary ms-1">{{ nrl|length }}</span>
+      <span id="nrl-last-update" class="text-muted fw-normal ms-2 table-meta-label"></span>
+    </h6>
+    <div class="node-card mb-2">
+      <table id="nrl-table" class="table table-sm table-striped mb-0{% if not nrl %} d-none{% endif %}">
+        <thead>
+          <tr>
+            <th>Nœud</th>
+            <th>Adresse</th>
+            <th>Déclaré le</th>
+          </tr>
+        </thead>
+        <tbody id="nrl-tbody">
+          {% for entry in nrl %}
+          <tr>
+            <td class="text-light">#{{ entry.name }}</td>
+            <td class="text-light">{{ entry.address }}</td>
+            <td class="text-muted small">{{ entry.declared_at_str }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <div id="nrl-empty" class="p-3 text-muted small{% if nrl %} d-none{% endif %}">
+        <i class="bi bi-hourglass-split me-1"></i>Aucun nœud ne nous mandate encore.
+      </div>
+    </div>
+
+    <div class="mt-1 text-muted small px-1">
       <i class="bi bi-info-circle me-1"></i>
-      La <strong>charge de référence</strong> est la composante <em>c</em> de la formule de distance
-      <code>d = t/T + c + p + n</code>. Elle représente la charge maximale (CPU, RAM, disque, réseau)
-      du nœud de référence ∈ [0 ; 1].
+      Formule : <code>d = t/T + c + p + n ∈ [0 ; 5]</code> —
+      <em>t/T</em> ping normalisé, <em>c</em> charge de référence,
+      <em>p</em> même service (+1), <em>n</em> déjà référencé (+2).
+      Calculé via NCP <strong>CHECK_DISTANCE</strong> à chaque HIA reçu.
     </div>
   </div><!-- /tab-refs -->
 
@@ -393,10 +490,103 @@ if (uptimeEl) {
   setInterval(() => { uptimeSeconds++; uptimeEl.textContent = formatUptime(uptimeSeconds); }, 1000);
 }
 
+// ── NRT live helpers ──────────────────────────────────────────────
+const nrtTbody     = document.getElementById('nrt-tbody');
+const nrtTable     = document.getElementById('nrt-table');
+const nrtEmpty     = document.getElementById('nrt-empty');
+const nrtCountEl   = document.getElementById('nrt-count');
+const nrtLastUpd   = document.getElementById('nrt-last-update');
+
+function nrtBarColor(d) {
+  if (d >= 3)   return 'bg-danger';
+  if (d >= 1.5) return 'bg-warning';
+  return 'bg-success';
+}
+
+function renderNrt(entries, refAddrs) {
+  if (!nrtTbody) return;
+  const count = entries ? entries.length : 0;
+
+  if (nrtCountEl) nrtCountEl.textContent = count;
+
+  if (count === 0) {
+    if (nrtTable) nrtTable.classList.add('d-none');
+    if (nrtEmpty) nrtEmpty.classList.remove('d-none');
+    return;
+  }
+
+  if (nrtTable) nrtTable.classList.remove('d-none');
+  if (nrtEmpty) nrtEmpty.classList.add('d-none');
+
+  nrtTbody.innerHTML = entries.map(e => {
+    const pct  = Math.min(100, (e.distance / 5) * 100).toFixed(1);
+    const col  = nrtBarColor(e.distance);
+    const isRef = refAddrs && refAddrs.has(e.address);
+    const tr   = e.stale ? ' class="text-muted"' : '';
+    const staleTag = e.stale
+      ? ' <span class="badge badge-state-inactive ms-1">Périmé</span>'
+      : '';
+    const refTag = isRef
+      ? '<span class="badge badge-state-active"><i class="bi bi-check-lg me-1"></i>Oui</span>'
+      : '';
+    return `<tr${tr}>
+      <td class="text-light">${e.address}</td>
+      <td><div class="d-flex align-items-center gap-2">
+        <div class="progress flex-grow-1" style="height:6px;min-width:60px">
+          <div class="progress-bar ${col}" style="width:${pct}%"></div>
+        </div>
+        <span class="fw-semibold" style="min-width:2.5rem;text-align:right">${e.distance}</span>
+      </div></td>
+      <td class="text-muted">${(+e.ping_ms).toFixed(1)} ms</td>
+      <td>${refTag}</td>
+      <td class="text-muted small">${e.updated_at_str}${staleTag}</td>
+    </tr>`;
+  }).join('');
+
+  if (nrtLastUpd) {
+    nrtLastUpd.textContent = `— actualisé à ${new Date().toLocaleTimeString('fr-FR')}`;
+  }
+}
+
+// ── NRL live helpers ─────────────────────────────────────────────
+const nrlTbody   = document.getElementById('nrl-tbody');
+const nrlTable   = document.getElementById('nrl-table');
+const nrlEmpty   = document.getElementById('nrl-empty');
+const nrlCountEl = document.getElementById('nrl-count');
+const nrlLastUpd = document.getElementById('nrl-last-update');
+
+function renderNrl(entries) {
+  if (!nrlTbody) return;
+  const count = entries ? entries.length : 0;
+
+  if (nrlCountEl) nrlCountEl.textContent = count;
+
+  if (count === 0) {
+    if (nrlTable) nrlTable.classList.add('d-none');
+    if (nrlEmpty) nrlEmpty.classList.remove('d-none');
+    return;
+  }
+
+  if (nrlTable) nrlTable.classList.remove('d-none');
+  if (nrlEmpty) nrlEmpty.classList.add('d-none');
+
+  nrlTbody.innerHTML = entries.map(e => `<tr>
+    <td class="text-light">#${e.name}</td>
+    <td class="text-light">${e.address}</td>
+    <td class="text-muted small">${e.declared_at_str}</td>
+  </tr>`).join('');
+
+  if (nrlLastUpd) {
+    nrlLastUpd.textContent = `— actualisé à ${new Date().toLocaleTimeString('fr-FR')}`;
+  }
+}
+
 // ── Live resource chart ───────────────────────────────────────────
-const ctx = document.getElementById('resourceChart');
-if (ctx) {
-  const MAX_POINTS = 12;
+const chartCtx = document.getElementById('resourceChart');
+let chart = null;
+const MAX_POINTS = 12;
+
+if (chartCtx) {
   const labels = Array(MAX_POINTS).fill('');
   const makeDataset = (label, color) => ({
     label, borderColor: color, backgroundColor: color + '22',
@@ -404,7 +594,7 @@ if (ctx) {
     data: Array(MAX_POINTS).fill(null),
   });
 
-  const chart = new Chart(ctx, {
+  chart = new Chart(chartCtx, {
     type: 'line',
     data: {
       labels,
@@ -425,28 +615,46 @@ if (ctx) {
       plugins: { legend: { labels: { color: '#8b949e', boxWidth: 10, font: { size: 11 } } } },
     },
   });
+}
 
-  // Poll the API every 5 s for this node's data
-  const address = "{{ address }}";
-  async function refresh() {
-    try {
-      const resp = await fetch('/api/nodes/');
-      const data = await resp.json();
-      const node = data.nodes.find(n => n.node?.address === address);
-      if (!node) return;
-      // Resync uptime from server to avoid drift
-      if (node.node?.uptime_seconds != null) uptimeSeconds = Math.round(node.node.uptime_seconds);
+// ── Shared refresh (uptime + NRT + chart) — every 5 s ────────────
+const address = "{{ address }}";
+
+async function refresh() {
+  try {
+    const resp = await fetch('/api/nodes/');
+    const data = await resp.json();
+    const node = data.nodes.find(n => n.node?.address === address);
+    if (!node) return;
+
+    // Resync uptime
+    if (node.node?.uptime_seconds != null) {
+      uptimeSeconds = Math.round(node.node.uptime_seconds);
+    }
+
+    // Update NRT
+    const refAddrs = new Set(
+      (node.reference_nodes || []).map(r => r.address).filter(Boolean)
+    );
+    renderNrt(node.nrt || [], refAddrs);
+
+    // Update NRL
+    renderNrl(node.nrl || []);
+
+    // Update chart
+    if (chart) {
       const r = node.resources;
-      chart.data.datasets[0].data.push(+(r.cpu_percent    * 100).toFixed(1));
-      chart.data.datasets[1].data.push(+(r.ram_percent    * 100).toFixed(1));
-      chart.data.datasets[2].data.push(+(r.disk_percent   * 100).toFixed(1));
-      chart.data.datasets[3].data.push(+(r.network_percent* 100).toFixed(1));
+      chart.data.datasets[0].data.push(+(r.cpu_percent     * 100).toFixed(1));
+      chart.data.datasets[1].data.push(+(r.ram_percent     * 100).toFixed(1));
+      chart.data.datasets[2].data.push(+(r.disk_percent    * 100).toFixed(1));
+      chart.data.datasets[3].data.push(+(r.network_percent * 100).toFixed(1));
       chart.data.datasets.forEach(ds => { if (ds.data.length > MAX_POINTS) ds.data.shift(); });
       chart.update('none');
-    } catch(e) { /* ignore */ }
-  }
-  setInterval(refresh, 5000);
-  refresh();
+    }
+  } catch(e) { /* ignore */ }
 }
+
+setInterval(refresh, 5000);
+refresh();
 </script>
 {% endblock extra_js %}

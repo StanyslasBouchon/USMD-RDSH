@@ -39,6 +39,12 @@ from .mutation.transmutation import ResourceUsage
 from .ncp.client.tcp import NcpClient
 from .ncp.protocol.commands.request_approval import RequestApprovalRequest
 from .ncp.protocol.frame import NcpCommandId
+from .ncp.protocol.commands.check_distance import (
+    CheckDistanceRequest,
+    CheckDistanceResponse,
+)
+from .ncp.protocol.commands.get_nqt import GetNqtRequest, GetNqtResponse
+from .ncp.protocol.commands.inform_reference_node import InformReferenceNodeRequest
 from .ncp.server.handler import HandlerContext, NcpCommandHandler
 from .ncp.server.tcp import NcpServer
 from .nndp.lib import NndpService
@@ -47,6 +53,9 @@ from .node.nal import NodeAccessList
 from .node.nel import EndorsementPacket, NodeEndorsementList
 from .node.nit import NodeIdentityTable
 from .node.node import Node
+from .node.nqt import NodeQuorumTable
+from .node.nrl import NodeReferenceList
+from .node.nrt import NodeReferenceTable
 from .node.role import NodeRole
 from .node.state import NodeState
 from .ctl.server import CtlServer
@@ -227,6 +236,9 @@ class NodeDaemon:  # pylint: disable=too-many-instance-attributes
         self.nit = NodeIdentityTable()
         self.nal = NodeAccessList()
         self.nel = NodeEndorsementList()
+        self.nrt = NodeReferenceTable()
+        self.nqt = NodeQuorumTable()
+        self.nrl = NodeReferenceList()
 
         # Register ourselves in the NIT
         self.nit.register(address, self._ed_pub, ttl=86400)
@@ -260,6 +272,8 @@ class NodeDaemon:  # pylint: disable=too-many-instance-attributes
             resource_getter=_get_resource_usage,
             snapshot_fn=self._build_status_snapshot,
             ping_tolerance_ms=cfg.ping_tolerance_ms,
+            nqt=self.nqt,
+            nrl=self.nrl,
         )
 
         self._quorum: QuorumManager | None = None
@@ -269,10 +283,12 @@ class NodeDaemon:  # pylint: disable=too-many-instance-attributes
                 ed_pub=self._ed_pub,
                 nit=self.nit,
                 nal=self.nal,
+                nqt=self.nqt,
                 cfg=cfg,
                 check_interval=cfg.quorum_check_interval,
                 ncp_port=cfg.ncp_port,
                 ncp_timeout=cfg.ncp_timeout,
+                on_ncp_failure=self._mark_peer_inactive,
             )
             handler_ctx.quorum_manager = self._quorum
 
@@ -292,6 +308,7 @@ class NodeDaemon:  # pylint: disable=too-many-instance-attributes
                 cfg=cfg,
                 snapshot_fn=self._build_status_snapshot,
                 nit=self.nit,
+                on_ncp_failure=self._mark_peer_inactive,
             )
             if cfg.web_enabled
             else None
@@ -406,6 +423,8 @@ class NodeDaemon:  # pylint: disable=too-many-instance-attributes
                 "issued":   nel_issued,
             },
             "reference_nodes": ref_nodes_data,
+            "nrt": self.nrt.get_all(),
+            "nrl": self.nrl.get_all_dicts(),
             "resources": {
                 "cpu_percent":     usage.cpu_percent,
                 "ram_percent":     usage.ram_percent,
@@ -418,9 +437,7 @@ class NodeDaemon:  # pylint: disable=too-many-instance-attributes
                 "is_operator": (
                     self._quorum.is_operator if self._quorum else False
                 ),
-                "promotions": (
-                    self._quorum.get_promotions() if self._quorum else []
-                ),
+                "promotions": self.nqt.get_all_dicts(),
             },
         }
 
@@ -438,13 +455,169 @@ class NodeDaemon:  # pylint: disable=too-many-instance-attributes
             packet.sender_pub_key.hex()[:16] + "…",
         )
 
+        # Re-activate any USD node at this address that timed out
+        for peer_node in self.usd.nodes.values():
+            if (
+                peer_node.address == ip
+                and peer_node.state == NodeState.INACTIVE_TIMEOUT
+            ):
+                peer_node.set_state(NodeState.ACTIVE)
+                logger.info(
+                    "[\x1b[38;5;51mUSMD\x1b[0m] Nœud %d (%s) → ACTIVE "
+                    "(HIA reçu après timeout)",
+                    peer_node.name,
+                    ip,
+                )
+
         # If we haven't joined yet, queue this peer for the join attempt
         if not self._joined.is_set():
             self._pending_peers.append((packet, ip))
 
+        # Schedule an async CHECK_DISTANCE to refresh the NRT for this peer.
+        # We skip our own address to avoid self-measurement.
+        if ip != self.node.address:
+            try:
+                asyncio.get_running_loop().create_task(
+                    self._update_nrt_for_peer(ip),
+                    name=f"nrt-update-{ip}",
+                )
+            except RuntimeError:
+                pass  # No running loop (unit-test context)
+
     # ------------------------------------------------------------------
-    # Startup flow
+    # NRT update (async, fired on each HIA from a neighbour)
     # ------------------------------------------------------------------
+
+    async def _update_nrt_for_peer(self, address: str) -> None:
+        """Send CHECK_DISTANCE to *address* and record the result in the NRT."""
+        sent_at = time.time()
+        req = CheckDistanceRequest(sent_at_ms=int(sent_at * 1000))
+        client = NcpClient(
+            address=address,
+            port=self.cfg.ncp_port,
+            timeout=self.cfg.ncp_timeout,
+        )
+        result = await client.send(NcpCommandId.CHECK_DISTANCE, req.to_payload())
+        if result.is_err():
+            logger.debug(
+                "[\x1b[38;5;51mUSMD\x1b[0m] NRT: CHECK_DISTANCE to %s failed: %s",
+                address,
+                result.unwrap_err(),
+            )
+            return
+        ping_ms = (time.time() - sent_at) * 1000.0
+        parsed = CheckDistanceResponse.from_payload(result.unwrap().payload)
+        if parsed.is_ok():
+            self.nrt.update(address, parsed.unwrap().distance, ping_ms)
+            logger.debug(
+                "[\x1b[38;5;51mUSMD\x1b[0m] NRT: %s → d=%.4f ping=%.1fms",
+                address,
+                parsed.unwrap().distance,
+                ping_ms,
+            )
+            # Recompute reference node selection after every NRT change.
+            await self._update_reference_nodes()
+
+    # ------------------------------------------------------------------
+    # Reference node selection (triggered after each NRT update)
+    # ------------------------------------------------------------------
+
+    async def _update_reference_nodes(self) -> None:  # pylint: disable=too-many-locals
+        """Recompute reference nodes from the NRT and notify them via NCP.
+
+        Selects the ``cfg.max_reference_nodes`` closest peers from the NRT
+        (sorted by distance d).  If the selection changed since last call,
+        the new reference node names are stored in ``self.node.reference_nodes``
+        and each affected peer receives an ``INFORM_REFERENCE_NODE`` message.
+
+        Peers removed from the list also receive the updated (shorter) list
+        so they can drop this node from their own NRL.
+        """
+        max_refs: int = self.cfg.max_reference_nodes
+
+        # Build address → node-name map from USD (skip ourselves)
+        addr_to_name: dict[str, int] = {}
+        for peer in self.usd.nodes.values():
+            if peer.address != self.node.address and peer.address not in addr_to_name:
+                addr_to_name[peer.address] = peer.name
+
+        # Pick the top-N NRT entries (already sorted by distance asc)
+        new_ref_names: list[int] = []
+        new_ref_addresses: list[str] = []
+        for entry in self.nrt.get_all():
+            if len(new_ref_names) >= max_refs:
+                break
+            name = addr_to_name.get(entry["address"])
+            if name is not None:
+                new_ref_names.append(name)
+                new_ref_addresses.append(entry["address"])
+
+        old_ref_set = set(self.node.reference_nodes)
+        new_ref_set = set(new_ref_names)
+
+        if old_ref_set == new_ref_set:
+            return  # Nothing changed — no NCP messages needed
+
+        self.node.reference_nodes = new_ref_names
+        logger.info(
+            "[\x1b[38;5;51mUSMD\x1b[0m] Nœuds de référence mis à jour: %s",
+            new_ref_names,
+        )
+
+        # Determine all addresses to notify (new + removed references)
+        removed_names = old_ref_set - new_ref_set
+        notify_addresses: set[str] = set(new_ref_addresses)
+        for peer in self.usd.nodes.values():
+            if peer.name in removed_names:
+                notify_addresses.add(peer.address)
+
+        req = InformReferenceNodeRequest(
+            sender_name=self.node.name,
+            sender_address=self.node.address,
+            reference_names=new_ref_names,
+        )
+        payload = req.to_payload()
+
+        for addr in notify_addresses:
+            if addr == self.node.address:
+                continue
+            client = NcpClient(
+                address=addr,
+                port=self.cfg.ncp_port,
+                timeout=self.cfg.ncp_timeout,
+            )
+            result = await client.send(NcpCommandId.INFORM_REFERENCE_NODE, payload)
+            if result.is_err():
+                logger.debug(
+                    "[\x1b[38;5;51mUSMD\x1b[0m] INFORM_REFERENCE_NODE to %s failed: %s",
+                    addr,
+                    result.unwrap_err(),
+                )
+
+    # ------------------------------------------------------------------
+    # NCP failure handler (shared callback for quorum & web)
+    # ------------------------------------------------------------------
+    def _mark_peer_inactive(self, address: str) -> None:
+        """Mark all active USD nodes at *address* as INACTIVE_TIMEOUT.
+
+        Called whenever an outgoing NCP request to that address fails,
+        regardless of the failure reason (connection refused, timeout, etc.).
+        The local node is never affected.
+        """
+        for peer_node in self.usd.nodes.values():
+            if (
+                peer_node.address == address
+                and peer_node.address != self.node.address
+                and peer_node.state.is_active()
+            ):
+                peer_node.set_state(NodeState.INACTIVE_TIMEOUT)
+                logger.info(
+                    "[\x1b[38;5;51mUSMD\x1b[0m] Nœud %d (%s) → INACTIVE_TIMEOUT "
+                    "(échec requête NCP sortante)",
+                    peer_node.name,
+                    address,
+                )
+        self.nrt.remove(address)
 
     async def _bootstrap(self) -> None:
         """Bootstrap: this node IS the first node — it creates the USD."""
@@ -557,7 +730,60 @@ class NodeDaemon:  # pylint: disable=too-many-instance-attributes
             peer_ip,
             self.cfg.node_role.value,
         )
+
+        # Synchronise the NQT from the approving peer so we immediately know
+        # who the current operator is, even if the election happened before we joined.
+        await self._sync_nqt_from(peer_ip)
         return True
+
+    async def _sync_nqt_from(self, peer_ip: str) -> None:
+        """Request the NQT from *peer_ip* and merge it into the local table.
+
+        Called immediately after a successful join so the new node knows
+        who the current operator is (even if elected before we joined).
+        Also grants NODE_OPERATOR role in the local NAL for the most recent
+        promotion so that :meth:`~QuorumManager._has_live_operator` works
+        correctly straight away.
+        """
+        client = NcpClient(
+            address=peer_ip,
+            port=self.cfg.ncp_port,
+            timeout=self.cfg.ncp_timeout,
+        )
+        result = await client.send(
+            NcpCommandId.GET_NQT, GetNqtRequest().to_payload()
+        )
+        if result.is_err():
+            logger.debug(
+                "[\x1b[38;5;51mUSMD\x1b[0m] GET_NQT from %s failed: %s",
+                peer_ip,
+                result.unwrap_err(),
+            )
+            return
+
+        parsed = GetNqtResponse.from_payload(result.unwrap().payload)
+        if parsed.is_err():
+            logger.debug(
+                "[\x1b[38;5;51mUSMD\x1b[0m] GET_NQT parse error from %s: %s",
+                peer_ip,
+                parsed.unwrap_err(),
+            )
+            return
+
+        added = self.nqt.merge_from_dicts(parsed.unwrap().entries)
+        logger.info(
+            "[\x1b[38;5;51mUSMD\x1b[0m] NQT sync from %s: +%d entr%s",
+            peer_ip,
+            added,
+            "ie" if added == 1 else "ies",
+        )
+
+        # Grant NAL operator role for the most recent promotion so the
+        # quorum liveness check works immediately after joining.
+        latest = self.nqt.get_latest()
+        if latest is not None:
+            self.nal.grant(latest.pub_key, NodeRole.NODE_OPERATOR, permanent=False)
+            self.nit.register(latest.address, latest.pub_key, ttl=120)
 
     def _store_endorsement(self, endorsement_bytes: bytes, peer_ip: str) -> None:
         """Decode and store the endorsement packet from the approval response."""
@@ -594,6 +820,28 @@ class NodeDaemon:  # pylint: disable=too-many-instance-attributes
             try:
                 usage = _get_resource_usage()
                 self.node.reference_load = usage.reference_load()
+
+                # Mark USD nodes as INACTIVE_TIMEOUT when their NIT entry expires.
+                # The NIT TTL acts as the liveness signal: no HIA → no refresh → expired.
+                expired_addresses = {
+                    entry.address
+                    for entry in self.nit._entries.values()  # pylint: disable=protected-access
+                    if entry.is_expired()
+                }
+                for peer_node in self.usd.nodes.values():
+                    if (
+                        peer_node.address in expired_addresses
+                        and peer_node.address != self.node.address
+                        and peer_node.state.is_active()
+                    ):
+                        peer_node.set_state(NodeState.INACTIVE_TIMEOUT)
+                        self.nrt.remove(peer_node.address)
+                        logger.info(
+                            "[\x1b[38;5;51mUSMD\x1b[0m] Nœud %d (%s) → "
+                            "INACTIVE_TIMEOUT (entrée NIT expirée)",
+                            peer_node.name,
+                            peer_node.address,
+                        )
 
                 purged = self.nit.purge_expired()
                 if purged:

@@ -16,6 +16,7 @@ import time
 from dataclasses import dataclass
 from typing import Callable
 
+from ..protocol.commands.get_nqt import GetNqtRequest, GetNqtResponse
 from ..protocol.commands.check_distance import (
     CheckDistanceRequest,
     CheckDistanceResponse,
@@ -59,6 +60,8 @@ from ...node.nal import NodeAccessList
 from ...node.nel import NodeEndorsementList
 from ...node.nit import NodeIdentityTable
 from ...node.node import Node
+from ...node.nqt import NodeQuorumTable
+from ...node.nrl import NodeReferenceList
 from ...node.role import NodeRole
 from ...security.endorsement import EndorsementFactory
 from ...utils.errors import Error
@@ -99,6 +102,8 @@ class HandlerContext:  # pylint: disable=too-many-instance-attributes
     snapshot_fn: Callable[[], dict] = lambda: {}
     ping_tolerance_ms: int = 200
     quorum_manager: QuorumManager | None = None
+    nqt: NodeQuorumTable | None = None
+    nrl: NodeReferenceList | None = None
 
 
 def _make_response(command_id: NcpCommandId, payload: bytes) -> NcpFrame:
@@ -156,6 +161,7 @@ class NcpCommandHandler:  # pylint: disable=too-few-public-methods
             NcpCommandId.REQUEST_SNAPSHOT: self._handle_request_snapshot,
             NcpCommandId.REQUEST_VOTE: self._handle_request_vote,
             NcpCommandId.ANNOUNCE_PROMOTION: self._handle_announce_promotion,
+            NcpCommandId.GET_NQT: self._handle_get_nqt,
         }
 
     def handle(self, frame: NcpFrame) -> NcpFrame:
@@ -435,10 +441,29 @@ class NcpCommandHandler:  # pylint: disable=too-few-public-methods
                 NcpCommandId.INFORM_REFERENCE_NODE, parse_result.unwrap_err()
             )
         req = parse_result.unwrap()
-        logger.debug(
-            "[\x1b[38;5;51mUSMD\x1b[0m] NCP INFORM_REFERENCE_NODE: refs=%s",
-            req.reference_names,
-        )
+
+        # Update the NRL: track whether the sender has chosen us as a reference.
+        if self.ctx.nrl is not None and req.sender_name != 0:
+            if self.ctx.node.name in req.reference_names:
+                self.ctx.nrl.add(req.sender_name, req.sender_address)
+                logger.info(
+                    "[\x1b[38;5;51mUSMD\x1b[0m] NRL: %s (#%d) nous mandate.",
+                    req.sender_address,
+                    req.sender_name,
+                )
+            else:
+                if self.ctx.nrl.get(req.sender_name) is not None:
+                    self.ctx.nrl.remove(req.sender_name)
+                    logger.info(
+                        "[\x1b[38;5;51mUSMD\x1b[0m] NRL: %s (#%d) ne nous mandate plus.",
+                        req.sender_address,
+                        req.sender_name,
+                    )
+        else:
+            logger.debug(
+                "[\x1b[38;5;51mUSMD\x1b[0m] NCP INFORM_REFERENCE_NODE: refs=%s",
+                req.reference_names,
+            )
         return _make_response(NcpCommandId.INFORM_REFERENCE_NODE, b"")
 
     # ------------------------------------------------------------------
@@ -506,4 +531,24 @@ class NcpCommandHandler:  # pylint: disable=too-few-public-methods
         return _make_response(
             NcpCommandId.ANNOUNCE_PROMOTION,
             AnnouncePromotionResponse().to_payload(),
+        )
+
+    def _handle_get_nqt(self, frame: NcpFrame) -> NcpFrame:
+        """Return this node's full Node Quorum Table as a JSON response.
+
+        Used by newly-joined peers to synchronise their local NQT so they
+        immediately know who the current operator is.
+        """
+        parse_result = GetNqtRequest.from_payload(frame.payload)
+        if parse_result.is_err():
+            return _error_response(NcpCommandId.GET_NQT, parse_result.unwrap_err())
+
+        entries = self.ctx.nqt.get_all_dicts() if self.ctx.nqt is not None else []
+        logger.debug(
+            "[\x1b[38;5;51mUSMD\x1b[0m] NCP GET_NQT → %d entries",
+            len(entries),
+        )
+        return _make_response(
+            NcpCommandId.GET_NQT,
+            GetNqtResponse(entries=entries).to_payload(),
         )
