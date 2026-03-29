@@ -1,0 +1,59 @@
+{# Context: promotions #}
+<div class="d-flex align-items-center mt-5 mb-3">
+  <h5 class="mb-0 fw-semibold text-light me-auto">
+    <i class="bi bi-shield-check me-2 text-warning"></i>Promotions par quorum
+  </h5>
+  <span class="badge bg-secondary" id="promo-count">{{ promotions|length }} entrée(s)</span>
+</div>
+
+<div id="promo-section">
+{% if promotions %}
+<div class="table-responsive">
+  <table class="table table-sm table-hover align-middle" id="promo-table">
+    <thead>
+      <tr>
+        <th>Époque</th>
+        <th>Rôle élu</th>
+        <th>Nœud promu</th>
+        <th>Clé publique</th>
+        <th>Horodatage</th>
+        <th>Cause</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for p in promotions %}
+      <tr>
+        <td><span class="badge bg-secondary">#{{ p.epoch }}</span></td>
+        <td>
+          {% if p.role_name == "node_operator" %}
+            <span class="badge bg-warning text-dark">node_operator</span>
+          {% elif p.role_name == "usd_operator" %}
+            <span class="badge bg-info text-dark">usd_operator</span>
+          {% elif p.role_name == "ucd_operator" %}
+            <span class="badge bg-primary">ucd_operator</span>
+          {% else %}
+            <span class="badge bg-secondary">{{ p.role_name }}</span>
+          {% endif %}
+        </td>
+        <td>
+          <i class="bi bi-hdd-network me-1 text-warning"></i>
+          <a href="{% url 'node_detail' p.address %}" class="text-warning text-decoration-none fw-semibold">{{ p.address }}</a>
+        </td>
+        <td>
+          <a href="{% url 'node_detail' p.address %}" class="text-decoration-none">
+            <code class="code-key-sm text-muted">{{ p.pub_key }}</code>
+          </a>
+        </td>
+        <td class="text-muted small">{{ p.promoted_at_str }}</td>
+        <td class="small">{{ p.reason }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div class="alert alert-secondary text-muted small" id="promo-empty">
+  <i class="bi bi-info-circle me-2"></i>Aucune promotion par quorum enregistrée.
+</div>
+{% endif %}
+</div>

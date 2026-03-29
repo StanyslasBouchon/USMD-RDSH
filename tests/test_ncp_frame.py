@@ -11,13 +11,14 @@ V1 = NcpVersion(1, 0, 0, 0)
 
 class TestNcpCommandId(unittest.TestCase):
 
-    def test_all_thirteen_commands_exist(self):
+    def test_all_fourteen_commands_exist(self):
         expected = {
             "GET_STATUS", "CHECK_DISTANCE", "REQUEST_EMERGENCY",
             "REQUEST_HELP", "REQUEST_APPROVAL", "SEND_UCD_PROPERTIES",
             "SEND_USD_PROPERTIES", "SEND_MUTATION_PROPERTIES",
             "INFORM_REFERENCE_NODE", "REQUEST_SNAPSHOT",
             "REQUEST_VOTE", "ANNOUNCE_PROMOTION", "GET_NQT",
+            "REVOKE_ENDORSEMENT",
         }
         names = {cmd.name for cmd in NcpCommandId}
         self.assertEqual(names, expected)
@@ -28,8 +29,11 @@ class TestNcpCommandId(unittest.TestCase):
     def test_inform_reference_node_value_eight(self):
         self.assertEqual(NcpCommandId.INFORM_REFERENCE_NODE.value, 8)
 
+    def test_revoke_endorsement_value_thirteen(self):
+        self.assertEqual(NcpCommandId.REVOKE_ENDORSEMENT.value, 13)
+
     def test_round_trip_from_int(self):
-        for i in range(12):
+        for i in range(14):
             cmd = NcpCommandId(i)
             self.assertEqual(cmd.value, i)
 
@@ -111,8 +115,4 @@ class TestNcpVersion(unittest.TestCase):
 
     def test_current_returns_version(self):
         ver = NcpVersion.current()
-        self.assertIsInstance(ver, NcpVersion)
-
-
-if __name__ == "__main__":
-    unittest.main()
+        self.assertIsInstance

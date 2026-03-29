@@ -67,12 +67,7 @@ class InformReferenceNodeRequest:
         """Serialise to UTF-8 JSON bytes.
 
         Returns:
-            bytes: JSON object with sender_name, sender_address, reference_names.
-
-        Example:
-            >>> req = InformReferenceNodeRequest(1, "10.0.0.1", [2])
-            >>> import json; json.loads(req.to_payload())["sender_name"]
-            1
+            bytes: UTF-8 JSON payload.
         """
         return json.dumps(
             {
@@ -84,73 +79,35 @@ class InformReferenceNodeRequest:
         ).encode("utf-8")
 
     @staticmethod
-    def from_payload(
-        payload: bytes,
-    ) -> "Result[InformReferenceNodeRequest, Error]":
-        """Deserialise from JSON bytes.
-
-        Accepts both the new object format and the legacy array-only format
-        (array → sender_name=0, sender_address='', reference_names=array).
+    def from_payload(payload: bytes) -> "Result[InformReferenceNodeRequest, Error]":
+        """Deserialise an Inform_reference_node request.
 
         Args:
-            payload: UTF-8 JSON bytes.
+            payload: Raw bytes from the network.
 
         Returns:
             Result[InformReferenceNodeRequest, Error]: Ok or Err.
 
-        Example:
-            >>> req = InformReferenceNodeRequest(99, "1.2.3.4", [5, 6])
+        Examples:
+            >>> req = InformReferenceNodeRequest("1.2.3.4", [1, 2])
             >>> InformReferenceNodeRequest.from_payload(req.to_payload()).is_ok()
             True
         """
         try:
             data = json.loads(payload.decode("utf-8"))
-        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-            return Result.Err(
-                Error.new(
-                    ErrorKind.PROTOCOL_ERROR,
-                    f"InformReferenceNode parse error: {exc}",
-                )
-            )
-
-        # Legacy format: plain JSON array of names
-        if isinstance(data, list):
-            try:
-                return Result.Ok(
-                    InformReferenceNodeRequest(
-                        sender_name=0,
-                        sender_address="",
-                        reference_names=list(map(int, data)),
-                    )
-                )
-            except (TypeError, ValueError) as exc:
-                return Result.Err(
-                    Error.new(
-                        ErrorKind.PROTOCOL_ERROR,
-                        f"InformReferenceNode legacy parse: {exc}",
-                    )
-                )
-
-        # Current format: JSON object
-        if not isinstance(data, dict):
-            return Result.Err(
-                Error.new(
-                    ErrorKind.PROTOCOL_ERROR,
-                    "InformReferenceNode: expected JSON object or array",
-                )
-            )
-        try:
             return Result.Ok(
                 InformReferenceNodeRequest(
                     sender_name=int(data.get("sender_name", 0)),
                     sender_address=str(data.get("sender_address", "")),
-                    reference_names=list(map(int, data.get("reference_names", []))),
+                    reference_names=[
+                        int(n) for n in data.get("reference_names", [])
+                    ],
                 )
             )
-        except (TypeError, ValueError) as exc:
+        except (json.JSONDecodeError, UnicodeDecodeError, ValueError, KeyError) as exc:
             return Result.Err(
                 Error.new(
                     ErrorKind.PROTOCOL_ERROR,
-                    f"InformReferenceNode object parse: {exc}",
+                    f"InformReferenceNodeRequest parse error: {exc}",
                 )
             )

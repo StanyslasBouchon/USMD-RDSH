@@ -84,19 +84,16 @@ class TestHeartbeatLoop:
     async def test_marks_expired_peer_inactive(self):
         """An active peer whose NIT entry is expired should become INACTIVE_NNDP_NO_HIA."""
         import time
-        daemon = _make_daemon(active_peer=True, expired_peer=False)
+        daemon = _make_daemon(active_peer=False)  # no peer yet
 
-        # Manually expire the peer entry
         _, peer_pub = Ed25519Pair.generate()
-        daemon.nit.register("10.0.0.2", peer_pub, ttl=1)
+        daemon.nit.register("10.0.0.2", peer_pub, ttl=86400)
         peer_node = Node(address="10.0.0.2", name=2, state=NodeState.ACTIVE)
         daemon.usd.add_node(peer_node)
 
-        # Force the NIT entry to expire by back-dating registered_at
-        for entry in daemon.nit._entries.values():
-            if entry.address == "10.0.0.2":
-                entry.registered_at = time.time() - 9999
-                break
+        # Expire the entry we just added (keyed by public_key bytes)
+        # TTL=86400, so set registered_at far enough back to be expired
+        daemon.nit._entries[peer_pub].registered_at = time.time() - 86401
 
         async def _run():
             task = asyncio.create_task(_heartbeat_loop(daemon))
@@ -123,9 +120,10 @@ class TestHeartbeatLoop:
         daemon = _make_daemon(active_peer=False)
 
         # Expire the local node's NIT entry
+        local_pub = daemon.node.state  # not the pub key — find it properly
         for entry in daemon.nit._entries.values():
             if entry.address == "10.0.0.1":
-                entry.registered_at = time.time() - 9999
+                entry.registered_at = time.time() - 86401
                 break
 
         async def _run():
@@ -151,13 +149,15 @@ class TestHeartbeatLoop:
     async def test_purges_expired_nit_entries(self):
         """Expired NIT entries should be purged after marking nodes inactive."""
         import time
-        daemon = _make_daemon(active_peer=True)
+        daemon = _make_daemon(active_peer=False)
 
-        # Expire the peer entry
-        for entry in daemon.nit._entries.values():
-            if entry.address == "10.0.0.2":
-                entry.registered_at = time.time() - 9999
-                break
+        _, peer_pub = Ed25519Pair.generate()
+        daemon.nit.register("10.0.0.2", peer_pub, ttl=86400)
+        peer_node = Node(address="10.0.0.2", name=2, state=NodeState.ACTIVE)
+        daemon.usd.add_node(peer_node)
+
+        # Expire the specific entry keyed by public_key
+        daemon.nit._entries[peer_pub].registered_at = time.time() - 86401
 
         async def _run():
             task = asyncio.create_task(_heartbeat_loop(daemon))
@@ -218,13 +218,16 @@ class TestHeartbeatLoop:
     async def test_nrt_entry_removed_on_expiry(self):
         """NRT entry for the expired peer should be removed."""
         import time
-        daemon = _make_daemon(active_peer=True)
+        daemon = _make_daemon(active_peer=False)
+
+        _, peer_pub = Ed25519Pair.generate()
+        daemon.nit.register("10.0.0.2", peer_pub, ttl=86400)
+        peer_node = Node(address="10.0.0.2", name=2, state=NodeState.ACTIVE)
+        daemon.usd.add_node(peer_node)
         daemon.nrt.update("10.0.0.2", 0.5, 10.0)
 
-        for entry in daemon.nit._entries.values():
-            if entry.address == "10.0.0.2":
-                entry.registered_at = time.time() - 9999
-                break
+        # Expire the specific entry keyed by public_key
+        daemon.nit._entries[peer_pub].registered_at = time.time() - 86401
 
         async def _run():
             task = asyncio.create_task(_heartbeat_loop(daemon))

@@ -1,0 +1,12 @@
+{# Context: nodes #}
+<div class="row g-3" id="node-grid">
+{% for node in nodes %}
+  {% include "components/dashboard/node_card.html" with node=node %}
+{% empty %}
+<div class="col-12">
+  <div class="alert alert-secondary">
+    <i class="bi bi-info-circle me-2"></i>Aucun nœud détecté.
+  </div>
+</div>
+{% endfor %}
+</div>

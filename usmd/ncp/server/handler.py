@@ -17,12 +17,13 @@ Examples:
 
 import logging
 from dataclasses import dataclass
-from typing import Callable
+from typing import Callable, Optional
 
 from ._handler_node_ops import (
     handle_check_distance,
     handle_inform_reference_node,
     handle_request_approval,
+    handle_revoke_endorsement,
 )
 
 from ..protocol.commands.get_nqt import GetNqtRequest, GetNqtResponse
@@ -102,6 +103,7 @@ class HandlerContext:
     quorum_manager: QuorumManager | None = None
     nqt: NodeQuorumTable | None = None
     nrl: NodeReferenceList | None = None
+    rejoin_fn: Optional[Callable[[], None]] = None
 
 
 def _make_response(command_id: NcpCommandId, payload: bytes) -> NcpFrame:
@@ -160,6 +162,7 @@ class NcpCommandHandler:
             NcpCommandId.REQUEST_VOTE: self._handle_request_vote,
             NcpCommandId.ANNOUNCE_PROMOTION: self._handle_announce_promotion,
             NcpCommandId.GET_NQT: self._handle_get_nqt,
+            NcpCommandId.REVOKE_ENDORSEMENT: self._handle_revoke_endorsement,
         }
 
     def handle(self, frame: NcpFrame) -> NcpFrame:
@@ -416,3 +419,20 @@ class NcpCommandHandler:
             NcpCommandId.GET_NQT,
             GetNqtResponse(entries=entries).to_payload(),
         )
+
+    # ------------------------------------------------------------------
+    # Command 13: Revoke_endorsement
+    # ------------------------------------------------------------------
+
+    def _handle_revoke_endorsement(self, frame: NcpFrame) -> NcpFrame:
+        """Handle a REVOKE_ENDORSEMENT from a departing peer.
+
+        Delegates to :func:`._handler_node_ops.handle_revoke_endorsement`.
+
+        Args:
+            frame: Incoming NCP frame carrying the REVOKE_ENDORSEMENT payload.
+
+        Returns:
+            NcpFrame: Empty acknowledgement, or empty response on exclusion.
+        """
+        return handle_revoke_endorsement(self.ctx, frame)

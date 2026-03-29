@@ -12,9 +12,19 @@ import time
 from typing import TYPE_CHECKING
 
 from ._daemon_helpers import _get_resource_usage
+from ._daemon_nrt import _usd_addr_to_peer_name
 
 if TYPE_CHECKING:
     from .node_daemon import NodeDaemon
+
+
+def _nrt_rows_for_snapshot(daemon: "NodeDaemon") -> list[dict]:
+    """NRT rows plus ``node_name`` so UIs can match references by name, not only IP."""
+    addr_to_name = _usd_addr_to_peer_name(daemon)
+    rows = daemon.nrt.get_all()
+    for row in rows:
+        row["node_name"] = addr_to_name.get(row["address"])
+    return rows
 
 
 def _build_status_snapshot(daemon: "NodeDaemon") -> dict:
@@ -31,6 +41,13 @@ def _build_status_snapshot(daemon: "NodeDaemon") -> dict:
     """
     now = time.time()
 
+    # First NIT address seen per public key (for linking NAL / NEL to /node/<ip>/)
+    pub_hex_to_address: dict[str, str] = {}
+    for entry in daemon.nit.iter_all_entries():
+        hx = entry.public_key.hex()
+        if hx not in pub_hex_to_address:
+            pub_hex_to_address[hx] = entry.address
+
     # NIT
     nit_data = []
     for entry in daemon.nit.iter_all_entries():
@@ -45,35 +62,42 @@ def _build_status_snapshot(daemon: "NodeDaemon") -> dict:
     # NAL
     nal_data = []
     for pub_key, roles in daemon.nal.iter_all_entries():
+        hx = pub_key.hex()
         nal_data.append({
-            "pub_key":   pub_key.hex(),
+            "pub_key":   hx,
             "roles":     [r.value for r in roles],
             "permanent": daemon.nal.is_permanent(pub_key),
+            "address":   pub_hex_to_address.get(hx),
         })
 
     # NEL — received
     nel_received = None
     recv = daemon.nel.get_received()
     if recv:
+        ek = recv.endorser_key.hex()
         nel_received = {
-            "endorser_key": recv.endorser_key.hex(),
-            "node_name":    recv.node_name,
-            "roles":        [r.value for r in recv.roles],
-            "expiration":   recv.expiration,
-            "expired":      recv.is_expired(),
+            "endorser_key":       ek,
+            "endorser_address":   pub_hex_to_address.get(ek),
+            "node_name":          recv.node_name,
+            "roles":              [r.value for r in recv.roles],
+            "expiration":         recv.expiration,
+            "expired":            recv.is_expired(),
         }
 
     # NEL — issued
-    nel_issued = [
-        {
-            "node_pub_key": pkt.node_pub_key.hex(),
+    nel_issued = []
+    for pkt in daemon.nel.all_issued():
+        npk = pkt.node_pub_key.hex()
+        peer = daemon.usd.get_node(pkt.node_name)
+        node_addr = peer.address if peer else pub_hex_to_address.get(npk)
+        nel_issued.append({
+            "node_pub_key": npk,
             "node_name":    pkt.node_name,
+            "node_address": node_addr,
             "roles":        [r.value for r in pkt.roles],
             "expiration":   pkt.expiration,
             "expired":      pkt.is_expired(),
-        }
-        for pkt in daemon.nel.all_issued()
-    ]
+        })
 
     # Reference nodes
     ref_nodes_data = []
@@ -112,7 +136,8 @@ def _build_status_snapshot(daemon: "NodeDaemon") -> dict:
             "issued":   nel_issued,
         },
         "reference_nodes": ref_nodes_data,
-        "nrt": daemon.nrt.get_all(),
+        # Même carte adresse → nom que la sélection des références (_usd_addr_to_peer_name)
+        "nrt": _nrt_rows_for_snapshot(daemon),
         "nrl": daemon.nrl.get_all_dicts(),
         "resources": {
             "cpu_percent":     usage.cpu_percent,

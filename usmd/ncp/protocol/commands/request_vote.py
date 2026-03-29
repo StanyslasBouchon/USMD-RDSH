@@ -114,46 +114,41 @@ class RequestVoteRequest:
                 Error.new(
                     ErrorKind.PROTOCOL_ERROR,
                     f"RequestVoteRequest too short: {len(payload)} bytes",
-                )
+                  )
             )
-        try:
-            epoch = struct.unpack("!I", payload[:_LEGACY_EPOCH_SIZE])[0]
-            address = payload[_LEGACY_EPOCH_SIZE:].decode("utf-8")
-            return Result.Ok(
-                RequestVoteRequest(epoch=epoch, candidate_address=address,
-                                   role="node_operator")
+        epoch = struct.unpack("!I", payload[:_LEGACY_EPOCH_SIZE])[0]
+        address = payload[_LEGACY_EPOCH_SIZE:].decode("utf-8", errors="replace")
+        return Result.Ok(
+            RequestVoteRequest(
+                epoch=epoch,
+                role="node_operator",
+                candidate_address=address,
             )
-        except (struct.error, UnicodeDecodeError) as exc:
-            return Result.Err(
-                Error.new(
-                    ErrorKind.PROTOCOL_ERROR,
-                    f"RequestVoteRequest decode error: {exc}",
-                )
-            )
+        )
 
 
 class RequestVoteResponse:
-    """NCP command 10 response — peer's vote (YES or NO).
+    """NCP command 10 response.
 
     Attributes:
-        granted: True if the peer votes YES for the candidate.
+        granted: True if the peer grants the vote (YES), False otherwise (NO).
 
     Examples:
         >>> resp = RequestVoteResponse(granted=True)
         >>> resp.to_payload()
-        b'\\x01'
-        >>> RequestVoteResponse.from_payload(b'\\x00').unwrap().granted
-        False
+        b'\x01'
+        >>> RequestVoteResponse.from_payload(b"\x01").unwrap().granted
+        True
     """
 
     def __init__(self, granted: bool) -> None:
         self.granted = granted
 
     def to_payload(self) -> bytes:
-        """Serialise the vote to a single byte.
+        """Serialise the vote.
 
         Returns:
-            bytes: b'\\x01' for YES, b'\\x00' for NO.
+            bytes: ``b"\x01"`` for YES, ``b"\x00"`` for NO.
         """
         return b"\x01" if self.granted else b"\x00"
 
@@ -162,17 +157,24 @@ class RequestVoteResponse:
         """Deserialise a Request_vote response.
 
         Args:
-            payload: Expected to be a single byte.
+            payload: Raw bytes (at least 1 byte).
 
         Returns:
-            Result[RequestVoteResponse, Error]: Ok with parsed response, or Err.
+            Result[RequestVoteResponse, Error]: Ok or Err.
 
         Examples:
-            >>> RequestVoteResponse.from_payload(b'\\x01').unwrap().granted
+            >>> RequestVoteResponse.from_payload(b"\x01").unwrap().granted
+            True
+            >>> RequestVoteResponse.from_payload(b"\x00").unwrap().granted
+            False
+            >>> RequestVoteResponse.from_payload(b"").is_err()
             True
         """
         if len(payload) < 1:
             return Result.Err(
-                Error.new(ErrorKind.PROTOCOL_ERROR, "RequestVoteResponse: empty payload")
+                Error.new(
+                    ErrorKind.PROTOCOL_ERROR,
+                    "RequestVoteResponse payload is empty",
+                )
             )
         return Result.Ok(RequestVoteResponse(granted=payload[0] == 0x01))

@@ -120,7 +120,7 @@ class AnnouncePromotionRequest:
                 try:
                     pub_key = bytes.fromhex(data.get("pub_key_hex", ""))
                 except ValueError:
-                    pub_key = b"\x00" * 32
+                    pub_key = b""
                 return Result.Ok(
                     AnnouncePromotionRequest(
                         epoch=int(data.get("epoch", 0)),
@@ -132,55 +132,51 @@ class AnnouncePromotionRequest:
         except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
             pass
 
-        # Legacy binary format: [epoch uint32] [pub_key 32 B] [address UTF-8]
-        if len(payload) < _LEGACY_HEADER_SIZE:
+        # Legacy binary: [epoch uint32 BE][pub_key 32 bytes][address UTF-8]
+        if len(payload) < 36:
             return Result.Err(
                 Error.new(
                     ErrorKind.PROTOCOL_ERROR,
                     f"AnnouncePromotionRequest too short: {len(payload)} bytes",
                 )
             )
-        epoch = struct.unpack("!I", payload[:_LEGACY_EPOCH_SIZE])[0]
-        pub_key = payload[_LEGACY_EPOCH_SIZE:_LEGACY_HEADER_SIZE]
-        try:
-            address = payload[_LEGACY_HEADER_SIZE:].decode("utf-8")
-        except UnicodeDecodeError as exc:
-            return Result.Err(
-                Error.new(
-                    ErrorKind.PROTOCOL_ERROR,
-                    f"AnnouncePromotionRequest address decode: {exc}",
-                )
-            )
+        epoch = struct.unpack("!I", payload[:4])[0]
+        pub_key = payload[4:36]
+        address = payload[36:].decode("utf-8", errors="replace")
         return Result.Ok(
             AnnouncePromotionRequest(
-                epoch=epoch, role="node_operator", pub_key=pub_key, address=address
+                epoch=epoch,
+                role="node_operator",
+                pub_key=pub_key,
+                address=address,
             )
         )
 
 
 class AnnouncePromotionResponse:
-    """NCP command 11 response — empty acknowledgement.
+    """NCP command 11 response acknowledgement.
 
     Examples:
-        >>> resp = AnnouncePromotionResponse()
-        >>> resp.to_payload()
+        >>> AnnouncePromotionResponse().to_payload()
         b''
+        >>> AnnouncePromotionResponse.from_payload(b"").is_ok()
+        True
     """
 
     def to_payload(self) -> bytes:
-        """Serialise the response (always empty).
+        """Return an empty payload (acknowledgement only).
 
         Returns:
-            bytes: Empty bytes.
+            bytes: Always b"".
         """
         return b""
 
     @staticmethod
     def from_payload(_payload: bytes) -> "Result[AnnouncePromotionResponse, Error]":
-        """Deserialise an Announce_promotion response.
+        """Deserialise the response (always succeeds).
 
         Args:
-            _payload: Ignored (expected empty).
+            _payload: Ignored.
 
         Returns:
             Result[AnnouncePromotionResponse, Error]: Always Ok.

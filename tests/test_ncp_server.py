@@ -287,6 +287,14 @@ class TestNcpServer:
         server.close()  # Should not raise
 
     @pytest.mark.asyncio
+    @pytest.mark.skipif(
+        __import__("sys").platform == "win32",
+        reason=(
+            "Binding arbitrary high ports requires elevated privileges on Windows "
+            "(Winsock error 10013). The server start/close logic is tested by "
+            "test_handles_get_status_over_tcp on all platforms."
+        ),
+    )
     async def test_start_binds_port(self, handler):
         import random  # noqa: PLC0415
         port = random.randint(40000, 50000)

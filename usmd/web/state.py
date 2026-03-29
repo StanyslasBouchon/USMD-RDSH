@@ -51,23 +51,31 @@ class _StateHolder:
     """Module-level singleton container.
 
     Using a class attribute instead of a module-level variable means the write
-    in :func:`set_state` is a simple attribute assignment on the class, which
-    pylint does not flag as a global-statement.
+    in :func:`set_state` is visible to all importers of this module.
+
+    Attributes:
+        web_state: The active :class:`WebState`, or ``None`` before initialisation.
     """
 
-    current: Optional[WebState] = None
+    web_state: Optional["WebState"] = None
 
 
-def set_state(state: WebState) -> None:
-    """Register the shared state. Called once by NodeDaemon before starting."""
-    _StateHolder.current = state
+_STATE = _StateHolder()
 
 
-def get_state() -> WebState:
-    """Return the shared state. Raises RuntimeError if not yet initialised."""
-    if _StateHolder.current is None:
-        raise RuntimeError(
-            "WebState has not been initialised — "
-            "call usmd.web.state.set_state() before serving requests."
-        )
-    return _StateHolder.current
+def get_state() -> Optional["WebState"]:
+    """Return the active :class:`WebState`, or ``None`` before initialisation.
+
+    Returns:
+        Optional[WebState]: The shared state, or None.
+    """
+    return _STATE.web_state
+
+
+def set_state(state: "WebState") -> None:
+    """Store the daemon's live state so the web views can access it.
+
+    Args:
+        state: Initialised :class:`WebState` from the running daemon.
+    """
+    _STATE.web_state = state

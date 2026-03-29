@@ -220,12 +220,13 @@ def _run_daemon_unix(daemon: "NodeDaemon") -> None:
 def _run_daemon_windows(daemon: "NodeDaemon") -> None:
     """Run the daemon on Windows with proper Ctrl+C support.
 
-    On Windows the event loop can block indefinitely in native I/O waits
-    (IocpProactor), preventing Python's signal handler from running and making
-    Ctrl+C appear to hang.  A lightweight periodic wakeup callback (every
-    250 ms) gives the interpreter a chance to process pending signals.
+    ``new_event_loop()`` sur Windows instancie souvent un Proactor qui bloque
+    longtemps en I/O native et retarde ``KeyboardInterrupt``.  On force un
+    :class:`asyncio.SelectorEventLoop` (comme dans ``main()`` pour NNDP/UDP).
+
+    Un réveil périodique (250 ms) laisse aussi l'interpréteur traiter Ctrl+C.
     """
-    loop = asyncio.new_event_loop()
+    loop = asyncio.SelectorEventLoop()
     asyncio.set_event_loop(loop)
 
     def _wakeup() -> None:
@@ -235,19 +236,34 @@ def _run_daemon_windows(daemon: "NodeDaemon") -> None:
     loop.call_soon(_wakeup)
     main_task = loop.create_task(daemon.run())
 
+    # Handler explicite : même avec uvicorn corrigé, certaines consoles Windows
+    # ne livrent pas KeyboardInterrupt pendant ``run_until_complete``.
+    def _win_sigint(_signum: int, _frame: object | None) -> None:
+        logging.info("[\x1b[38;5;51mUSMD\x1b[0m] Arrêt demandé (Ctrl+C)…")
+        if not main_task.done():
+            loop.call_soon_threadsafe(main_task.cancel)
+
+    prev_sigint = signal.signal(signal.SIGINT, _win_sigint)
+
     try:
         loop.run_until_complete(main_task)
+    except asyncio.CancelledError:
+        pass
     except KeyboardInterrupt:
         logging.info("[\x1b[38;5;51mUSMD\x1b[0m] Arrêt demandé (Ctrl+C)…")
-        main_task.cancel()
+        if not main_task.done():
+            main_task.cancel()
         try:
             loop.run_until_complete(main_task)
         except asyncio.CancelledError:
             pass
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-except
         logging.critical("[\x1b[38;5;51mUSMD\x1b[0m] Fatal error: %s", exc)
     finally:
-        # Cancel any remaining tasks (e.g. web dashboard, heartbeat)
+        try:
+            signal.signal(signal.SIGINT, prev_sigint)
+        except (OSError, ValueError):
+            pass
         pending = asyncio.all_tasks(loop)
         for task in pending:
             task.cancel()

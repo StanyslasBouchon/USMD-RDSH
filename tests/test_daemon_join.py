@@ -26,7 +26,16 @@ from usmd.node.role import NodeRole
 from usmd.node.state import NodeState
 from usmd.security.crypto import Ed25519Pair
 from usmd.security.endorsement import EndorsementFactory
-from usmd.utils.result import Ok, Err
+from usmd.utils.result import Result
+from usmd.utils.errors import Error, ErrorKind
+
+
+def _err():
+    return Result.Err(Error.new(ErrorKind.CONNECTION_ERROR, "mocked failure"))
+
+
+def _ok(frame):
+    return Result.Ok(frame)
 
 
 # ---------------------------------------------------------------------------
@@ -79,7 +88,7 @@ def _make_endorsement_payload(ed_priv, ed_pub):
         node_name=1,
         node_pub_key=ed_pub,
         node_session_key=b"\xbb" * 32,
-        roles=[NodeRole.EXECUTOR],
+        roles=[NodeRole.NODE_EXECUTOR],
         ttl_seconds=3600,
     )
     return json.dumps({
@@ -179,7 +188,7 @@ class TestTryJoinVia:
         daemon, _, _ = _make_daemon()
         with patch("usmd._daemon_join.NcpClient") as MockClient:
             mock_client = AsyncMock()
-            mock_client.send = AsyncMock(return_value=Err(Exception("conn refused")))
+            mock_client.send = AsyncMock(return_value=_err())
             MockClient.return_value = mock_client
             result = await _try_join_via(daemon, "10.0.0.2")
         assert result is False
@@ -191,7 +200,7 @@ class TestTryJoinVia:
             mock_frame = MagicMock()
             mock_frame.payload = b""
             mock_client = AsyncMock()
-            mock_client.send = AsyncMock(return_value=Ok(mock_frame))
+            mock_client.send = AsyncMock(return_value=_ok(mock_frame))
             MockClient.return_value = mock_client
             result = await _try_join_via(daemon, "10.0.0.2")
         assert result is False
@@ -203,7 +212,7 @@ class TestTryJoinVia:
             mock_frame = MagicMock()
             mock_frame.payload = bytes([0x00])  # 0x00 = rejected
             mock_client = AsyncMock()
-            mock_client.send = AsyncMock(return_value=Ok(mock_frame))
+            mock_client.send = AsyncMock(return_value=_ok(mock_frame))
             MockClient.return_value = mock_client
             result = await _try_join_via(daemon, "10.0.0.2")
         assert result is False
@@ -216,7 +225,7 @@ class TestTryJoinVia:
                 mock_frame = MagicMock()
                 mock_frame.payload = bytes([0x01])  # approved, no endorsement
                 mock_client = AsyncMock()
-                mock_client.send = AsyncMock(return_value=Ok(mock_frame))
+                mock_client.send = AsyncMock(return_value=_ok(mock_frame))
                 MockClient.return_value = mock_client
                 result = await _try_join_via(daemon, "10.0.0.2")
         assert result is True
@@ -233,7 +242,7 @@ class TestTryJoinVia:
                 mock_frame = MagicMock()
                 mock_frame.payload = payload
                 mock_client = AsyncMock()
-                mock_client.send = AsyncMock(return_value=Ok(mock_frame))
+                mock_client.send = AsyncMock(return_value=_ok(mock_frame))
                 MockClient.return_value = mock_client
                 result = await _try_join_via(daemon, "10.0.0.2")
         assert result is True
@@ -249,7 +258,7 @@ class TestSyncNqtFrom:
         daemon, _, _ = _make_daemon()
         with patch("usmd._daemon_join.NcpClient") as MockClient:
             mock_client = AsyncMock()
-            mock_client.send = AsyncMock(return_value=Err(Exception("timeout")))
+            mock_client.send = AsyncMock(return_value=_err())
             MockClient.return_value = mock_client
             await _sync_nqt_from(daemon, "10.0.0.2")
 
@@ -275,7 +284,7 @@ class TestSyncNqtFrom:
             mock_frame = MagicMock()
             mock_frame.payload = resp.to_payload()
             mock_client = AsyncMock()
-            mock_client.send = AsyncMock(return_value=Ok(mock_frame))
+            mock_client.send = AsyncMock(return_value=_ok(mock_frame))
             MockClient.return_value = mock_client
             await _sync_nqt_from(daemon, "10.0.0.2")
 

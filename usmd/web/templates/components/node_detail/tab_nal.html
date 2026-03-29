@@ -1,0 +1,45 @@
+{# Context: nal #}
+<div class="tab-pane fade" id="tab-nal">
+  <div class="node-card">
+    {% if nal %}
+    <table class="table table-sm table-striped mb-0">
+      <thead>
+        <tr>
+          <th>Clé publique</th>
+          <th>Rôles</th>
+          <th>Permanent</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for entry in nal %}
+        <tr>
+          <td>
+            {% if entry.address %}
+            <a href="{% url 'node_detail' entry.address %}" class="text-decoration-none">
+              <code class="text-info code-key">{{ entry.pub_key }}</code>
+            </a>
+            {% else %}
+            <code class="text-info code-key">{{ entry.pub_key }}</code>
+            {% endif %}
+          </td>
+          <td>
+            {% for role in entry.roles %}
+              <span class="badge badge-role me-1">{{ role }}</span>
+            {% endfor %}
+          </td>
+          <td>
+            {% if entry.permanent %}
+              <i class="bi bi-patch-check-fill text-success"></i>
+            {% else %}
+              <i class="bi bi-dash text-muted"></i>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="p-3 text-muted small">NAL vide.</div>
+    {% endif %}
+  </div>
+</div>

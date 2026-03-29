@@ -1,0 +1,64 @@
+{# Context: r #}
+<div class="tab-pane fade show active" id="tab-resources">
+  <div class="row g-3 mb-3">
+    <div class="col-md-6">
+      <div class="node-card p-3">
+        <div class="mb-3">
+          <div class="d-flex justify-content-between mb-1">
+            <span class="res-label"><i class="bi bi-cpu-fill me-1 icon-cpu"></i>CPU</span>
+            <span class="text-light fw-semibold">{{ r.cpu_percent|floatformat:1 }}%</span>
+          </div>
+          <!-- djlint:off H021 -->
+          <div class="progress progress-lg">
+            <div class="progress-bar cpu" style="width:{% widthratio r.cpu_percent 1 100 %}%"></div>
+          </div>
+          <!-- djlint:on -->
+        </div>
+        <div class="mb-3">
+          <div class="d-flex justify-content-between mb-1">
+            <span class="res-label"><i class="bi bi-memory me-1 icon-ram"></i>RAM</span>
+            <span class="text-light fw-semibold">{{ r.ram_percent|floatformat:1 }}%</span>
+          </div>
+          <!-- djlint:off H021 -->
+          <div class="progress progress-lg">
+            <div class="progress-bar ram" style="width:{% widthratio r.ram_percent 1 100 %}%"></div>
+          </div>
+          <!-- djlint:on -->
+        </div>
+        <div class="mb-3">
+          <div class="d-flex justify-content-between mb-1">
+            <span class="res-label"><i class="bi bi-device-hdd me-1 icon-disk"></i>Disque</span>
+            <span class="text-light fw-semibold">{{ r.disk_percent|floatformat:1 }}%</span>
+          </div>
+          <!-- djlint:off H021 -->
+          <div class="progress progress-lg">
+            <div class="progress-bar disk" style="width:{% widthratio r.disk_percent 1 100 %}%"></div>
+          </div>
+          <!-- djlint:on -->
+        </div>
+        <div>
+          <div class="d-flex justify-content-between mb-1">
+            <span class="res-label"><i class="bi bi-arrow-left-right me-1 icon-net"></i>Réseau</span>
+            <span class="text-light fw-semibold">{{ r.network_percent|floatformat:1 }}%</span>
+          </div>
+          <!-- djlint:off H021 -->
+          <div class="progress progress-lg">
+            <div class="progress-bar net" style="width:{% widthratio r.network_percent 1 100 %}%"></div>
+          </div>
+          <!-- djlint:on -->
+        </div>
+      </div>
+    </div>
+    <div class="col-md-6">
+      <div class="node-card p-3 detail-card-full">
+        <div class="text-muted small mb-2"><i class="bi bi-graph-up me-1"></i>Historique (60 dernières secondes)</div>
+        <canvas id="resourceChart" class="detail-chart"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <div class="node-card p-3">
+    <div class="text-muted small mb-1">Charge de référence</div>
+    <div class="text-light fw-semibold">{{ r.reference_load|floatformat:1 }}%</div>
+  </div>
+</div>

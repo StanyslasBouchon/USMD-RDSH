@@ -15,11 +15,102 @@ from typing import TYPE_CHECKING
 
 from ._daemon_heartbeat import _heartbeat_loop
 from ._daemon_join import _bootstrap, _join
+from .ncp.client.tcp import NcpClient
+from .ncp.protocol.commands.revoke_endorsement import RevokeEndorsementRequest
+from .ncp.protocol.frame import NcpCommandId
 
 if TYPE_CHECKING:
     from .node_daemon import NodeDaemon
 
 logger = logging.getLogger(__name__)
+
+
+async def _revoke_endorsements_on_shutdown(daemon: "NodeDaemon") -> None:
+    """Notify all endorsement peers before this node shuts down.
+
+    Two complementary flows are handled:
+
+    1. **As endorser**: for every node recorded in ``NEL._issued``, look up
+       its address in the NIT and send a :data:`REVOKE_ENDORSEMENT` so it
+       can clear its received packet and restart the join process.
+
+    2. **As endorsed node**: if a received endorsement is stored in
+       ``NEL._received``, look up the endorser's address in the NIT and
+       send a :data:`REVOKE_ENDORSEMENT` so the endorser can remove this
+       node from its ``NEL._issued`` list.
+
+    Both operations are best-effort: failures are logged at WARNING level
+    but never raise, so the shutdown sequence always completes.
+
+    Args:
+        daemon: The running :class:`~usmd.node_daemon.NodeDaemon` instance.
+
+    Examples:
+        >>> # Called automatically by _run() in the finally block.
+        >>> # No direct usage needed.
+    """
+    payload = RevokeEndorsementRequest(daemon.ed_pub).to_payload()
+
+    # ------------------------------------------------------------------ #
+    # Case 1 — notify every node this node has endorsed                   #
+    # ------------------------------------------------------------------ #
+    for packet in daemon.nel.all_issued():
+        addr = daemon.nit.get_address(packet.node_pub_key)
+        if addr is None:
+            logger.warning(
+                "[\x1b[38;5;51mUSMD\x1b[0m] REVOKE: adresse NIT introuvable "
+                "pour le nœud endossé %s — impossible de notifier.",
+                packet.node_pub_key.hex()[:16] + "…",
+            )
+            continue
+        client = NcpClient(
+            address=addr,
+            port=daemon.cfg.ncp_port,
+            timeout=daemon.cfg.ncp_timeout,
+        )
+        result = await client.send(NcpCommandId.REVOKE_ENDORSEMENT, payload)
+        if result.is_err():
+            logger.warning(
+                "[\x1b[38;5;51mUSMD\x1b[0m] REVOKE → nœud endossé %s : échec : %s",
+                addr,
+                result.unwrap_err(),
+            )
+        else:
+            logger.info(
+                "[\x1b[38;5;51mUSMD\x1b[0m] REVOKE → nœud endossé %s notifié.",
+                addr,
+            )
+
+    # ------------------------------------------------------------------ #
+    # Case 2 — notify our own endorser                                    #
+    # ------------------------------------------------------------------ #
+    received = daemon.nel.get_received()
+    if received is not None:
+        addr = daemon.nit.get_address(received.endorser_key)
+        if addr is None:
+            logger.warning(
+                "[\x1b[38;5;51mUSMD\x1b[0m] REVOKE: adresse NIT introuvable "
+                "pour l'endosseur %s — impossible de notifier.",
+                received.endorser_key.hex()[:16] + "…",
+            )
+        else:
+            client = NcpClient(
+                address=addr,
+                port=daemon.cfg.ncp_port,
+                timeout=daemon.cfg.ncp_timeout,
+            )
+            result = await client.send(NcpCommandId.REVOKE_ENDORSEMENT, payload)
+            if result.is_err():
+                logger.warning(
+                    "[\x1b[38;5;51mUSMD\x1b[0m] REVOKE → endosseur %s : échec : %s",
+                    addr,
+                    result.unwrap_err(),
+                )
+            else:
+                logger.info(
+                    "[\x1b[38;5;51mUSMD\x1b[0m] REVOKE → endosseur %s notifié.",
+                    addr,
+                )
 
 
 async def _run(daemon: "NodeDaemon") -> None:
@@ -97,6 +188,9 @@ async def _run(daemon: "NodeDaemon") -> None:
     except asyncio.CancelledError:
         pass
     finally:
+        # Notify endorsement peers before closing (outgoing TCP still works).
+        await _revoke_endorsements_on_shutdown(daemon)
+
         broadcast_task.cancel()
         heartbeat_task.cancel()
         if quorum_task is not None:

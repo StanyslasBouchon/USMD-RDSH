@@ -1,0 +1,255 @@
+{# Context: node_data, address #}
+<script>
+const uptimeEl = document.getElementById('uptime-display');
+let uptimeSeconds = parseInt('{{ node_data.node.uptime_seconds|floatformat:0 }}', 10) || 0;
+
+function formatUptime(s) {
+  const d = Math.floor(s / 86400);
+  const h = Math.floor((s % 86400) / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  if (d > 0) return `${d}j ${h}h ${String(m).padStart(2,'0')}m ${String(sec).padStart(2,'0')}s`;
+  if (h > 0) return `${h}h ${String(m).padStart(2,'0')}m ${String(sec).padStart(2,'0')}s`;
+  if (m > 0) return `${m}m ${String(sec).padStart(2,'0')}s`;
+  return `${sec}s`;
+}
+
+if (uptimeEl) {
+  uptimeEl.textContent = formatUptime(uptimeSeconds);
+  setInterval(() => { uptimeSeconds++; uptimeEl.textContent = formatUptime(uptimeSeconds); }, 1000);
+}
+
+const nitTbody     = document.getElementById('nit-tbody');
+const nitTable     = document.getElementById('nit-table');
+const nitEmpty     = document.getElementById('nit-empty');
+const nitTabCount  = document.getElementById('nit-tab-count');
+const nitLastUpd   = document.getElementById('nit-last-update');
+
+function renderNit(entries) {
+  if (!nitTbody) return;
+  const list = entries || [];
+  const count = list.length;
+
+  if (nitTabCount) nitTabCount.textContent = String(count);
+
+  if (count === 0) {
+    if (nitTable) nitTable.classList.add('d-none');
+    if (nitEmpty) nitEmpty.classList.remove('d-none');
+    if (nitLastUpd) nitLastUpd.textContent = '';
+    return;
+  }
+
+  if (nitTable) nitTable.classList.remove('d-none');
+  if (nitEmpty) nitEmpty.classList.add('d-none');
+
+  nitTbody.innerHTML = list.map(entry => {
+    const ttl = entry.ttl_remaining ?? 0;
+    const expired = !!entry.expired;
+    const ttlClass = expired ? 'text-danger' : ttl < 30 ? 'text-warning' : 'text-success';
+    const stateBadge = expired
+      ? '<span class="badge badge-state-inactive">Expiré</span>'
+      : '<span class="badge badge-state-active">Valide</span>';
+    const rowClass = expired ? ' class="table-danger"' : '';
+    const addr = entry.address || '';
+    const pk = entry.pub_key || '';
+    return `<tr${rowClass}>
+      <td class="text-light"><a href="/node/${addr}" class="text-info text-decoration-none">` +
+      `<i class="bi bi-hdd-network me-1"></i>${addr}</a></td>
+      <td><a href="/node/${addr}" class="text-decoration-none"><code class="text-info code-key">${pk}</code></a></td>
+      <td><span class="${ttlClass}">${ttl}s</span></td>
+      <td>${stateBadge}</td>
+    </tr>`;
+  }).join('');
+
+  if (nitLastUpd) {
+    nitLastUpd.textContent = `— actualisé à ${new Date().toLocaleTimeString('fr-FR')}`;
+  }
+}
+
+const nrtTbody     = document.getElementById('nrt-tbody');
+const nrtTable     = document.getElementById('nrt-table');
+const nrtEmpty     = document.getElementById('nrt-empty');
+const nrtCountEl   = document.getElementById('nrt-count');
+const nrtLastUpd   = document.getElementById('nrt-last-update');
+
+function nrtBarColor(d) {
+  if (d >= 3)   return 'bg-danger';
+  if (d >= 1.5) return 'bg-warning';
+  return 'bg-success';
+}
+
+/** True si la ligne NRT correspond à un nœud listé dans reference_nodes. */
+function nrtRowIsReference(entry, refs) {
+  const addr = entry.address != null ? String(entry.address).trim() : '';
+  const nm = entry.node_name;
+  for (const r of (refs || [])) {
+    const ra = r.address != null ? String(r.address).trim() : '';
+    if (ra && addr && ra === addr) return true;
+    if (nm != null && r.name != null && r.name !== '') {
+      const en = Number(nm);
+      const rn = Number(r.name);
+      if (!Number.isNaN(en) && !Number.isNaN(rn) && en === rn) return true;
+    }
+  }
+  return false;
+}
+
+function renderNrt(entries, refs) {
+  if (!nrtTbody) return;
+  const list = entries ? [...entries] : [];
+  list.sort((a, b) => String(a.address || '').localeCompare(String(b.address || '')));
+  const count = list.length;
+
+  if (nrtCountEl) nrtCountEl.textContent = count;
+
+  if (count === 0) {
+    if (nrtTable) nrtTable.classList.add('d-none');
+    if (nrtEmpty) nrtEmpty.classList.remove('d-none');
+    return;
+  }
+
+  if (nrtTable) nrtTable.classList.remove('d-none');
+  if (nrtEmpty) nrtEmpty.classList.add('d-none');
+
+  nrtTbody.innerHTML = list.map(e => {
+    const pct  = Math.min(100, (e.distance / 5) * 100).toFixed(1);
+    const col  = nrtBarColor(e.distance);
+    const isRef = nrtRowIsReference(e, refs);
+    const tr   = e.stale ? ' class="text-muted"' : '';
+    const staleTag = e.stale
+      ? ' <span class="badge badge-state-inactive ms-1">Périmé</span>'
+      : '';
+    const refTag = isRef
+      ? '<span class="badge badge-state-active"><i class="bi bi-check-lg me-1"></i>Oui</span>'
+      : '';
+    const addrCell = `<a href="/node/${e.address}" class="text-info text-decoration-none">` +
+      `<i class="bi bi-hdd-network me-1"></i>${e.address}</a>`;
+    return `<tr${tr}>
+      <td class="text-light">${addrCell}</td>
+      <td><div class="d-flex align-items-center gap-2">
+        <div class="progress flex-grow-1" style="height:6px;min-width:60px">
+          <div class="progress-bar ${col}" style="width:${pct}%"></div>
+        </div>
+        <span class="fw-semibold" style="min-width:2.5rem;text-align:right">${e.distance}</span>
+      </div></td>
+      <td class="text-muted">${(+e.ping_ms).toFixed(1)} ms</td>
+      <td>${refTag}</td>
+      <td class="text-muted small">${e.updated_at_str}${staleTag}</td>
+    </tr>`;
+  }).join('');
+
+  if (nrtLastUpd) {
+    nrtLastUpd.textContent = `— actualisé à ${new Date().toLocaleTimeString('fr-FR')}`;
+  }
+}
+
+const nrlTbody   = document.getElementById('nrl-tbody');
+const nrlTable   = document.getElementById('nrl-table');
+const nrlEmpty   = document.getElementById('nrl-empty');
+const nrlCountEl = document.getElementById('nrl-count');
+const nrlLastUpd = document.getElementById('nrl-last-update');
+
+function renderNrl(entries) {
+  if (!nrlTbody) return;
+  const count = entries ? entries.length : 0;
+
+  if (nrlCountEl) nrlCountEl.textContent = count;
+
+  if (count === 0) {
+    if (nrlTable) nrlTable.classList.add('d-none');
+    if (nrlEmpty) nrlEmpty.classList.remove('d-none');
+    return;
+  }
+
+  if (nrlTable) nrlTable.classList.remove('d-none');
+  if (nrlEmpty) nrlEmpty.classList.add('d-none');
+
+  nrlTbody.innerHTML = entries.map(e => {
+    const addr = e.address || '';
+    const addrCell = addr
+      ? `<a href="/node/${addr}" class="text-info text-decoration-none">` +
+        `<i class="bi bi-hdd-network me-1"></i>${addr}</a>`
+      : '—';
+    return `<tr>
+    <td class="text-light">#${e.name}</td>
+    <td class="text-light">${addrCell}</td>
+    <td class="text-muted small">${e.declared_at_str}</td>
+  </tr>`;
+  }).join('');
+
+  if (nrlLastUpd) {
+    nrlLastUpd.textContent = `— actualisé à ${new Date().toLocaleTimeString('fr-FR')}`;
+  }
+}
+
+const chartCtx = document.getElementById('resourceChart');
+let chart = null;
+const MAX_POINTS = 12;
+
+if (chartCtx) {
+  const labels = Array(MAX_POINTS).fill('');
+  const makeDataset = (label, color) => ({
+    label, borderColor: color, backgroundColor: color + '22',
+    borderWidth: 1.5, pointRadius: 2, tension: 0.4,
+    data: Array(MAX_POINTS).fill(null),
+  });
+
+  chart = new Chart(chartCtx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        makeDataset('CPU',    '#58a6ff'),
+        makeDataset('RAM',    '#3fb950'),
+        makeDataset('Disque', '#d29922'),
+        makeDataset('Réseau', '#bc8cff'),
+      ],
+    },
+    options: {
+      responsive: true,
+      animation: false,
+      scales: {
+        y: { min: 0, max: 100, grid: { color: '#1e2938' }, ticks: { color: '#8b949e', callback: v => v + '%' } },
+        x: { grid: { display: false }, ticks: { display: false } },
+      },
+      plugins: { legend: { labels: { color: '#8b949e', boxWidth: 10, font: { size: 11 } } } },
+    },
+  });
+}
+
+const address = "{{ address }}";
+const snapshotRefreshUrl = "{% url 'api_node_snapshot' address %}";
+
+async function refresh() {
+  try {
+    const resp = await fetch(snapshotRefreshUrl, { credentials: 'same-origin' });
+    const data = await resp.json();
+    if (data.error || !data.node) return;
+
+    const node = data.node;
+
+    if (node.node?.uptime_seconds != null) {
+      uptimeSeconds = Math.round(node.node.uptime_seconds);
+    }
+
+    renderNit(node.nit || []);
+
+    renderNrt(node.nrt || [], node.reference_nodes || []);
+
+    renderNrl(node.nrl || []);
+
+    if (chart) {
+      const r = node.resources;
+      chart.data.datasets[0].data.push(+(r.cpu_percent     * 100).toFixed(1));
+      chart.data.datasets[1].data.push(+(r.ram_percent     * 100).toFixed(1));
+      chart.data.datasets[2].data.push(+(r.disk_percent    * 100).toFixed(1));
+      chart.data.datasets[3].data.push(+(r.network_percent * 100).toFixed(1));
+      chart.data.datasets.forEach(ds => { if (ds.data.length > MAX_POINTS) ds.data.shift(); });
+      chart.update('none');
+    }
+  } catch(e) { /* ignore */ }
+}
+
+setInterval(refresh, 5000);
+refresh();
+</script>

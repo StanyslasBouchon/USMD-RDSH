@@ -24,7 +24,7 @@ Examples:
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Iterator, Optional
+from typing import Optional
 
 from ..utils.errors import Error, ErrorKind
 from ..utils.result import Result
@@ -86,10 +86,56 @@ class NodeIdentityTable:
 
     def __init__(self) -> None:
         self._entries: dict[bytes, NitEntry] = {}
+        self._excluded: set[bytes] = set()  # permanently banned public keys
 
     # ------------------------------------------------------------------
     # Mutation
     # ------------------------------------------------------------------
+
+    # ------------------------------------------------------------------
+    # Exclusion
+    # ------------------------------------------------------------------
+
+    def exclude(self, public_key: bytes, reason: str = "") -> None:
+        """Permanently ban a public key from this node.
+
+        The excluded key is also removed from the active entries table.
+        Any future :meth:`validate` call for this key will return
+        :attr:`~usmd.utils.errors.ErrorKind.NODE_EXCLUDED`.
+
+        Args:
+            public_key: Ed25519 public key to ban.
+            reason: Optional human-readable justification (logged at WARNING).
+
+        Example:
+            >>> nit = NodeIdentityTable()
+            >>> nit.exclude(b"x" * 32, "invalid revocation")
+            >>> nit.is_excluded(b"x" * 32)
+            True
+        """
+        self._excluded.add(public_key)
+        self._entries.pop(public_key, None)
+        logging.warning(
+            "[\x1b[38;5;51mUSMD\x1b[0m] NIT exclude: %s%s",
+            public_key.hex()[:16] + "…",
+            f" — {reason}" if reason else "",
+        )
+
+    def is_excluded(self, public_key: bytes) -> bool:
+        """Return True if this public key has been permanently excluded.
+
+        Args:
+            public_key: Ed25519 public key to check.
+
+        Returns:
+            bool: True if the key is on the exclusion list.
+
+        Example:
+            >>> nit = NodeIdentityTable()
+            >>> nit.is_excluded(b"x" * 32)
+            False
+        """
+        return public_key in self._excluded
 
     def register(self, address: str, public_key: bytes, ttl: int = 3600) -> None:
         """Add or refresh an entry in the NIT.
@@ -173,6 +219,13 @@ class NodeIdentityTable:
             >>> nit.validate("10.0.0.9", key).is_err()
             True
         """
+        if public_key in self._excluded:
+            return Result.Err(
+                Error.new(
+                    ErrorKind.NODE_EXCLUDED,
+                    f"Key {public_key.hex()[:16]}… is permanently excluded",
+                )
+            )
         entry = self._entries.get(public_key)
         if entry is None:
             return Result.Err(
@@ -241,16 +294,20 @@ class NodeIdentityTable:
     def __repr__(self) -> str:
         return f"NodeIdentityTable({len(self)} entries)"
 
-    def iter_all_entries(self) -> Iterator[NitEntry]:
-        """Iterate over all registered NIT entries (including expired ones).
+    def iter_all_entries(self):
+        """Iterate over all active NIT entries (expired or not).
 
-        Returns:
-            Iterator[NitEntry]: All current entries in insertion order.
+        Callers that need only live entries should filter with
+        :meth:`NitEntry.is_expired`.
+
+        Yields:
+            NitEntry: Each entry currently in the table.
 
         Example:
             >>> nit = NodeIdentityTable()
-            >>> nit.register("10.0.0.1", b"k" * 32)
-            >>> list(nit.iter_all_entries())[0].address
-            '10.0.0.1'
+            >>> nit.register("10.0.0.1", b"k" * 32, ttl=3600)
+            >>> entries = list(nit.iter_all_entries())
+            >>> len(entries)
+            1
         """
-        return iter(self._entries.values())
+        yield from self._entries.values()

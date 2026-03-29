@@ -18,7 +18,7 @@ Examples:
 """
 
 import logging
-from typing import Iterator, Optional
+from typing import Optional
 
 from ..utils.errors import Error, ErrorKind
 from ..utils.result import Result
@@ -206,17 +206,18 @@ class NodeAccessList:
     def __repr__(self) -> str:
         return f"NodeAccessList(entries={len(self._entries)}, permanent={len(self._permanent)})"
 
-    def iter_all_entries(self) -> Iterator[tuple[bytes, set[NodeRole]]]:
-        """Iterate over all (public_key, roles) pairs in the NAL.
+    def iter_all_entries(self):
+        """Iterate over all NAL entries as (public_key, roles) pairs.
 
-        Returns:
-            Iterator[tuple[bytes, set[NodeRole]]]: All (key, roles) pairs.
+        Yields:
+            tuple[bytes, set[NodeRole]]: Public key and its associated roles.
 
         Example:
             >>> nal = NodeAccessList()
             >>> nal.grant(b"k" * 32, NodeRole.NODE_EXECUTOR)
-            >>> key, roles = next(nal.iter_all_entries())
-            >>> NodeRole.NODE_EXECUTOR in roles
-            True
+            >>> pairs = list(nal.iter_all_entries())
+            >>> len(pairs)
+            1
         """
-        return iter(self._entries.items())
+        for pub_key, roles in self._entries.items():
+            yield pub_key, set(roles)

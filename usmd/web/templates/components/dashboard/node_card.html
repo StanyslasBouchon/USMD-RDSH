@@ -1,0 +1,96 @@
+{# Context: node (snapshot dict with .node, .resources, .is_local) #}
+{% with n=node.node r=node.resources %}
+<div class="col-xl-4 col-lg-6" data-address="{{ n.address }}">
+  <div class="node-card">
+    <div class="card-header d-flex align-items-center gap-2">
+
+      {% if n.state == "active" %}
+        <span class="badge badge-state-active node-state-badge" data-state="{{ n.state }}"><i class="bi bi-check-circle-fill me-1"></i>ACTIF</span>
+      {% elif "pending" in n.state %}
+        <span class="badge badge-state-pending node-state-badge" data-state="{{ n.state }}"><i class="bi bi-hourglass-split me-1"></i>EN ATTENTE</span>
+      {% elif "exclu" in n.state or "excluded" in n.state %}
+        <span class="badge badge-state-excluded node-state-badge" data-state="{{ n.state }}"><i class="bi bi-x-circle-fill me-1"></i>EXCLU</span>
+      {% elif "inactive" in n.state or "timeout" in n.state %}
+        <div>
+          <span class="badge badge-state-inactive node-state-badge" data-state="{{ n.state }}"><i class="bi bi-dash-circle-fill me-1"></i>INACTIF</span>
+          {% if n.state_reason %}<div class="inactive-reason node-state-reason">{{ n.state_reason }}</div>{% endif %}
+        </div>
+      {% else %}
+        <span class="badge badge-state-default node-state-badge" data-state="{{ n.state }}">{{ n.state }}</span>
+      {% endif %}
+
+      <span class="badge badge-role">{{ n.role }}</span>
+
+      {% if node.is_local %}<span class="badge bg-secondary ms-auto">local</span>{% endif %}
+
+      <a href="{% url 'node_detail' n.address %}"
+         class="btn btn-sm btn-outline-secondary ms-auto py-0 px-2 detail-link-btn">
+        <i class="bi bi-arrow-right"></i>
+      </a>
+    </div>
+
+    <div class="card-body">
+
+      <div class="mb-2">
+        <div class="text-light fw-semibold node-addr">
+          <i class="bi bi-hdd-network me-1 text-info"></i>
+          <a href="{% url 'node_detail' n.address %}" class="text-info text-decoration-none">{{ n.address }}</a>
+        </div>
+        <div class="text-muted small">
+          <i class="bi bi-tag me-1"></i>#{{ n.name }} · <i class="bi bi-clock me-1"></i>uptime {{ n.uptime_seconds|floatformat:0 }}s
+        </div>
+      </div>
+
+      <div class="res-bar mb-1">
+        <div class="d-flex justify-content-between res-label">
+          <span><i class="bi bi-cpu-fill me-1 icon-cpu"></i>CPU</span>
+          <span class="res-val-cpu">{{ r.cpu_percent|floatformat:1|stringformat:"s" }}%</span>
+        </div>
+        <!-- djlint:off H021 -->
+        <div class="progress">
+          <div class="progress-bar cpu res-bar-cpu"
+               style="width:{% widthratio r.cpu_percent 1 100 %}%"></div>
+        </div>
+        <!-- djlint:on -->
+      </div>
+      <div class="res-bar mb-1">
+        <div class="d-flex justify-content-between res-label">
+          <span><i class="bi bi-memory me-1 icon-ram"></i>RAM</span>
+          <span class="res-val-ram">{{ r.ram_percent|floatformat:1|stringformat:"s" }}%</span>
+        </div>
+        <!-- djlint:off H021 -->
+        <div class="progress">
+          <div class="progress-bar ram res-bar-ram"
+               style="width:{% widthratio r.ram_percent 1 100 %}%"></div>
+        </div>
+        <!-- djlint:on -->
+      </div>
+      <div class="res-bar mb-1">
+        <div class="d-flex justify-content-between res-label">
+          <span><i class="bi bi-device-hdd me-1 icon-disk"></i>Disque</span>
+          <span class="res-val-disk">{{ r.disk_percent|floatformat:1|stringformat:"s" }}%</span>
+        </div>
+        <!-- djlint:off H021 -->
+        <div class="progress">
+          <div class="progress-bar disk res-bar-disk"
+               style="width:{% widthratio r.disk_percent 1 100 %}%"></div>
+        </div>
+        <!-- djlint:on -->
+      </div>
+      <div class="res-bar">
+        <div class="d-flex justify-content-between res-label">
+          <span><i class="bi bi-arrow-left-right me-1 icon-net"></i>Réseau</span>
+          <span class="res-val-net">{{ r.network_percent|floatformat:1|stringformat:"s" }}%</span>
+        </div>
+        <!-- djlint:off H021 -->
+        <div class="progress">
+          <div class="progress-bar net res-bar-net"
+               style="width:{% widthratio r.network_percent 1 100 %}%"></div>
+        </div>
+        <!-- djlint:on -->
+      </div>
+
+    </div>
+  </div>
+</div>
+{% endwith %}

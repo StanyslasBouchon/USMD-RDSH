@@ -309,18 +309,17 @@ class NndpService:
                             bcast,
                             self._listen_port,
                             len(raw),
-                            state.value,
+                            self._state_getter().value,
                         )
-                    except OSError as exc:
-                        logging.warning(
-                            "[\x1b[38;5;51mUSMD\x1b[0m] NNDP broadcast error "
-                            "on %s: %s",
-                            bcast,
-                            exc,
+                    except Exception as exc:  # pylint: disable=broad-except
+                        logging.debug(
+                            "[\x1b[38;5;51mUSMD\x1b[0m] NNDP send error: %s", exc
                         )
-
                 await asyncio.sleep(self.ttl)
         except asyncio.CancelledError:
-            logging.debug("[\x1b[38;5;51mUSMD\x1b[0m] NNDP broadcast loop cancelled")
-        finally:
-            sock.close()
+            pass
+        except Exception as exc:  # pylint: disable=broad-except
+            logging.warning(
+                "[\x1b[38;5;51mUSMD\x1b[0m] NNDP broadcast loop error: %s", exc
+            )
+            await asyncio.sleep(self.ttl)

@@ -150,7 +150,8 @@ class NodeReferenceTable:
 
         Returns:
             list[dict]: Each dict has keys address, distance, ping_ms,
-                updated_at, updated_at_str, stale.
+                updated_at, updated_at_str, stale, node_name (``None`` until
+                the snapshot layer resolves it from the USD).
 
         Example:
             >>> nrt = NodeReferenceTable()
@@ -170,9 +171,10 @@ class NodeReferenceTable:
                         e.updated_at
                     ).strftime("%d/%m/%Y %H:%M:%S"),
                     "stale": e.is_stale(),
+                    "node_name": None,
                 }
             )
-        rows.sort(key=lambda r: r["distance"])
+        rows.sort(key=lambda r: (r["distance"], r["address"]))
         return rows
 
     # ------------------------------------------------------------------

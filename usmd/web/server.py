@@ -30,7 +30,6 @@ import logging
 import os
 import secrets
 import subprocess
-import sys
 import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Optional
@@ -212,54 +211,37 @@ class WebServer:
         # 4. Resolve TLS — subprocess.run() is blocking; run it in a thread
         loop = asyncio.get_running_loop()
         cert, key = await loop.run_in_executor(None, self._resolve_ssl)
-        scheme = "https" if cert else "http"
 
         # 5. Build ASGI app
         from django.core.asgi import (
             get_asgi_application,
-        )
-
-        asgi_app = get_asgi_application()
-
-        # Silence uvicorn's own loggers — they would otherwise propagate to the
-        # daemon's root logger now that LOGGING_CONFIG=None is set in Django settings.
-        for _uvicorn_logger in ("uvicorn", "uvicorn.error", "uvicorn.access"):
-            logging.getLogger(_uvicorn_logger).setLevel(logging.WARNING)
-
-        # On Windows, abrupt client disconnections cause the asyncio proactor to log a
-        # harmless ConnectionResetError (WinError 10054) at ERROR level. Suppress it.
-        if sys.platform == "win32":
-            logging.getLogger("asyncio").addFilter(_Win32ProactorResetFilter())
-
-        # 6. Start uvicorn
+           )
+        app = get_asgi_application()
         config = uvicorn.Config(
-            app=asgi_app,
+            app=app,
             host=self._cfg.web_host,
             port=self._cfg.web_port,
             ssl_certfile=cert,
             ssl_keyfile=key,
-            log_config=None,  # Do not let uvicorn reconfigure the daemon's logging
-            access_log=False,
-            loop="none",  # Use the running asyncio loop
+            log_level="warning",
         )
-        self._uvicorn_server = uvicorn.Server(config)
 
-        # In uvicorn 0.42+, signal handling moved from Config to Server.capture_signals().
-        # Override it with a no-op so the daemon's own handlers (SIGINT/SIGTERM) remain active.
-        self._uvicorn_server.capture_signals = contextlib.nullcontext  # type: ignore[method-assign]
+        # Uvicorn récent enveloppe ``serve()`` avec ``capture_signals()`` qui
+        # fait ``signal.signal(SIGINT, handle_exit)`` : Ctrl+C n'atteint plus
+        # ``KeyboardInterrupt`` ni la tâche ``daemon.run()`` du parent.
+        # Les versions plus anciennes utilisent ``install_signal_handlers``.
+        class _EmbeddedUvicornServer(uvicorn.Server):
+            @contextlib.contextmanager
+            def capture_signals(self):  # type: ignore[override]
+                yield
 
-        logger.info(
-            "[\x1b[38;5;51mUSMD\x1b[0m] Web dashboard: %s://%s:%d  (user: %s)",
-            scheme,
-            self._cfg.web_host if self._cfg.web_host != "0.0.0.0" else "localhost",
-            self._cfg.web_port,
-            self._cfg.web_username,
-        )
+        self._uvicorn_server = _EmbeddedUvicornServer(config)
+        if hasattr(self._uvicorn_server, "install_signal_handlers"):
+            self._uvicorn_server.install_signal_handlers = lambda: None  # noqa: E731
 
         await self._uvicorn_server.serve()
 
     def close(self) -> None:
-        """Signal uvicorn to stop gracefully and release the TLS temp directory."""
+        """Signal the uvicorn server to stop."""
         if self._uvicorn_server is not None:
-            self._uvicorn_server.should_exit = True  # type: ignore[attr-defined]
-        self._cleanup.close()
+            self._uvicorn_server.should_exit = True

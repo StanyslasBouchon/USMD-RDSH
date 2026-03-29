@@ -13,6 +13,7 @@ Example usmd.yaml::
       cluster_name: ""
       edb_address: null
       max_reference_nodes: 5
+      reference_hold_seconds: 300  # stabilité des nœuds de référence (s), sauf préemption
       load_threshold: 0.8
       ping_tolerance_ms: 200
       load_check_interval: 30
@@ -52,6 +53,8 @@ class NodeConfig:
         cluster_name: USCN of the cluster this USD belongs to (may be empty).
         edb_address: Optional DNS/IP of the Easy Deployment Base.
         max_reference_nodes: Max reference peers per node.
+        reference_hold_seconds: Minimum time (s) a chosen reference peer stays in the
+            set unless a strictly closer peer forces preemption. Default 300 (5 min).
         load_threshold: Normalised load above which node is considered weakened.
         ping_tolerance_ms: Max tolerated ping T (ms) for distance formula.
         load_check_interval: Seconds between resource usage checks.
@@ -90,6 +93,7 @@ class NodeConfig:
     cluster_name: str = ""
     edb_address: Optional[str] = None
     max_reference_nodes: int = 5
+    reference_hold_seconds: float = 300.0
     load_threshold: float = 0.8
     ping_tolerance_ms: int = 200
     load_check_interval: int = 30
@@ -235,6 +239,9 @@ class NodeConfig:
         cfg.edb_address = usd_sec.get("edb_address", cfg.edb_address)
         cfg.max_reference_nodes = int(
             usd_sec.get("max_reference_nodes", cfg.max_reference_nodes)
+        )
+        cfg.reference_hold_seconds = float(
+            usd_sec.get("reference_hold_seconds", cfg.reference_hold_seconds)
         )
         cfg.load_threshold = float(usd_sec.get("load_threshold", cfg.load_threshold))
         cfg.ping_tolerance_ms = int(

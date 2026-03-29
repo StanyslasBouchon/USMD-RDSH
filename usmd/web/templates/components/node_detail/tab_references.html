@@ -1,0 +1,165 @@
+{# Context: nrt, nrl, refs #}
+<div class="tab-pane fade" id="tab-refs">
+
+  <h6 class="text-muted small text-uppercase mb-2">
+    <i class="bi bi-rulers me-1"></i>Table NRT — distances aux voisins
+    <span id="nrt-count" class="badge bg-secondary ms-1">{{ nrt|length }}</span>
+    <span id="nrt-last-update" class="text-muted fw-normal ms-2 table-meta-label"></span>
+  </h6>
+  <div class="node-card mb-3">
+    <table id="nrt-table" class="table table-sm table-striped mb-0{% if not nrt %} d-none{% endif %}">
+      <thead>
+        <tr>
+          <th>Adresse</th>
+          <th title="d = t/T + c + p + n ∈ [0 ; 5] — plus bas = meilleur">Distance <em>d</em></th>
+          <th>Ping A/R</th>
+          <th>Nœud de réf.</th>
+          <th>Mis à jour</th>
+        </tr>
+      </thead>
+      <tbody id="nrt-tbody">
+        {% for entry in nrt|dictsort:"address" %}
+        <tr{% if entry.stale %} class="text-muted"{% endif %}>
+          <td class="text-light">
+            <a href="{% url 'node_detail' entry.address %}" class="text-info text-decoration-none">
+              <i class="bi bi-hdd-network me-1"></i>{{ entry.address }}
+            </a>
+          </td>
+          <td>
+            <!-- djlint:off H021 -->
+            <div class="d-flex align-items-center gap-2">
+              <div class="progress flex-grow-1" style="height:6px;min-width:60px">
+                <div class="progress-bar{% if entry.distance >= 3 %} bg-danger{% elif entry.distance >= 1.5 %} bg-warning{% else %} bg-success{% endif %}"
+                     style="width:{% widthratio entry.distance 5 100 %}%"></div>
+              </div>
+              <span class="fw-semibold" style="min-width:2.5rem;text-align:right">{{ entry.distance }}</span>
+            </div>
+            <!-- djlint:on -->
+          </td>
+          <td class="text-muted">{{ entry.ping_ms|floatformat:1 }} ms</td>
+          <td>
+            {% for ref in refs %}
+              {% if ref.address == entry.address or ref.name == entry.node_name %}
+                <span class="badge badge-state-active"><i class="bi bi-check-lg me-1"></i>Oui</span>
+              {% endif %}
+            {% endfor %}
+          </td>
+          <td class="text-muted small">
+            {{ entry.updated_at_str }}
+            {% if entry.stale %}<span class="badge badge-state-inactive ms-1">Périmé</span>{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <div id="nrt-empty" class="p-3 text-muted small{% if nrt %} d-none{% endif %}">
+      <i class="bi bi-hourglass-split me-1"></i>NRT vide — en attente des réponses CHECK_DISTANCE.
+    </div>
+  </div>
+
+  <h6 class="text-muted small text-uppercase mb-2">
+    <i class="bi bi-diagram-2-fill me-1"></i>Nœuds de référence déclarés
+    <span class="badge bg-secondary ms-1">{{ refs|length }}</span>
+  </h6>
+  <div class="node-card mb-2">
+    {% if refs %}
+    <table class="table table-sm table-striped mb-0">
+      <thead>
+        <tr>
+          <th>Nœud</th>
+          <th>Adresse</th>
+          <th>État</th>
+          <th>Service</th>
+          <th>Charge ref. (c)</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for ref in refs %}
+        <tr>
+          <td class="text-light">#{{ ref.name }}</td>
+          <td class="text-light">
+            {% if ref.address %}
+            <a href="{% url 'node_detail' ref.address %}" class="text-info text-decoration-none">
+              <i class="bi bi-hdd-network me-1"></i>{{ ref.address }}
+            </a>
+            {% else %}
+            —
+            {% endif %}
+          </td>
+          <td>
+            {% if ref.state == "active" %}
+              <span class="badge badge-state-active">Actif</span>
+            {% elif "pending" in ref.state %}
+              <span class="badge badge-state-pending">En attente</span>
+            {% elif "inactive" in ref.state or "timeout" in ref.state or ref.state == "unknown" %}
+              <span class="badge badge-state-inactive">Inactif</span>
+            {% else %}
+              <span class="badge badge-state-default">{{ ref.state }}</span>
+            {% endif %}
+          </td>
+          <td class="text-muted">{{ ref.service|default:"—" }}</td>
+          <td>
+            {% if ref.reference_load is not None %}
+            <!-- djlint:off H021 -->
+            <div class="d-flex align-items-center gap-2">
+              <div class="progress flex-grow-1" style="height:6px">
+                <div class="progress-bar{% if ref.reference_load >= 80 %} bg-danger{% elif ref.reference_load >= 50 %} bg-warning{% else %} bg-success{% endif %}"
+                     style="width:{{ ref.reference_load }}%"></div>
+              </div>
+              <span class="text-light fw-semibold" style="min-width:3.5rem;text-align:right">{{ ref.reference_load|floatformat:1 }}%</span>
+            </div>
+            <!-- djlint:on -->
+            {% else %}
+            <span class="text-muted">—</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="p-3 text-muted small"><i class="bi bi-info-circle me-1"></i>Aucun nœud de référence déclaré.</div>
+    {% endif %}
+  </div>
+
+  <h6 class="text-muted small text-uppercase mb-2 mt-3">
+    <i class="bi bi-person-lines-fill me-1"></i>Table NRL — nœuds qui nous mandatent
+    <span id="nrl-count" class="badge bg-secondary ms-1">{{ nrl|length }}</span>
+    <span id="nrl-last-update" class="text-muted fw-normal ms-2 table-meta-label"></span>
+  </h6>
+  <div class="node-card mb-2">
+    <table id="nrl-table" class="table table-sm table-striped mb-0{% if not nrl %} d-none{% endif %}">
+      <thead>
+        <tr>
+          <th>Nœud</th>
+          <th>Adresse</th>
+          <th>Déclaré le</th>
+        </tr>
+      </thead>
+      <tbody id="nrl-tbody">
+        {% for entry in nrl %}
+        <tr>
+          <td class="text-light">#{{ entry.name }}</td>
+          <td class="text-light">
+            <a href="{% url 'node_detail' entry.address %}" class="text-info text-decoration-none">
+              <i class="bi bi-hdd-network me-1"></i>{{ entry.address }}
+            </a>
+          </td>
+          <td class="text-muted small">{{ entry.declared_at_str }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <div id="nrl-empty" class="p-3 text-muted small{% if nrl %} d-none{% endif %}">
+      <i class="bi bi-hourglass-split me-1"></i>Aucun nœud ne nous mandate encore.
+    </div>
+  </div>
+
+  <div class="mt-1 text-muted small px-1">
+    <i class="bi bi-info-circle me-1"></i>
+    Formule : <code>d = t/T + c + p + n ∈ [0 ; 5]</code> —
+    <em>t/T</em> ping normalisé, <em>c</em> charge de référence,
+    <em>p</em> même service (+1), <em>n</em> déjà référencé (+2).
+    Calculé via NCP <strong>CHECK_DISTANCE</strong> à chaque HIA reçu.
+  </div>
+</div>

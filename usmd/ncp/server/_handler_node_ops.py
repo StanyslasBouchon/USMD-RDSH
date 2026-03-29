@@ -1,11 +1,12 @@
 """Internal module — node-operation NCP command handlers.
 
-Provides three handler functions extracted from :class:`NcpCommandHandler` to
+Provides four handler functions extracted from :class:`NcpCommandHandler` to
 keep ``handler.py`` under the 450-line limit:
 
 - :func:`handle_check_distance`   — computes the distance metric for the sender.
 - :func:`handle_request_approval` — validates and approves a joining node.
 - :func:`handle_inform_reference_node` — updates the NRL from the sender's list.
+- :func:`handle_revoke_endorsement` — processes departing-peer revocation.
 
 Each function receives the shared :class:`HandlerContext` and the raw
 :class:`NcpFrame`, and returns a response :class:`NcpFrame`.
@@ -28,6 +29,10 @@ from ..protocol.commands.inform_reference_node import InformReferenceNodeRequest
 from ..protocol.commands.request_approval import (
     RequestApprovalRequest,
     RequestApprovalResponse,
+)
+from ..protocol.commands.revoke_endorsement import (
+    RevokeEndorsementRequest,
+    RevokeEndorsementResponse,
 )
 from ..protocol.frame import NcpCommandId, NcpFrame
 from ..protocol.versions import NcpVersion
@@ -241,3 +246,81 @@ def handle_inform_reference_node(ctx: "HandlerContext", frame: NcpFrame) -> NcpF
             req.reference_names,
         )
     return _make_response(NcpCommandId.INFORM_REFERENCE_NODE, b"")
+
+
+# ---------------------------------------------------------------------------
+# Command 13: Revoke_endorsement
+# ---------------------------------------------------------------------------
+
+
+def handle_revoke_endorsement(ctx: "HandlerContext", frame: NcpFrame) -> NcpFrame:
+    """Handle a REVOKE_ENDORSEMENT from a departing peer.
+
+    Two cases are handled:
+
+    1. **Sender is our endorser** (their key matches our
+       ``NEL._received.endorser_key``): clear the received packet and
+       trigger a re-join via the ``rejoin_fn`` callback.
+
+    2. **Sender was endorsed by us** (their key is in
+       ``NEL._issued``): revoke their entry from our NEL.
+
+    If neither relationship exists the sender has no legitimate reason
+    to send this command — permanently exclude them.
+
+    Args:
+        ctx: Shared handler context.
+        frame: Incoming NCP frame carrying the REVOKE_ENDORSEMENT payload.
+
+    Returns:
+        NcpFrame: Empty acknowledgement, or empty response on exclusion.
+    """
+    parse_result = RevokeEndorsementRequest.from_payload(frame.payload)
+    if parse_result.is_err():
+        return _error_response(
+            NcpCommandId.REVOKE_ENDORSEMENT, parse_result.unwrap_err()
+        )
+
+    req = parse_result.unwrap()
+    sender_key = req.sender_pub_key
+
+    # Case 1 — the sender endorsed us (they are shutting down as our endorser)
+    received = ctx.nel.get_received()
+    if received is not None and received.endorser_key == sender_key:
+        ctx.nel.clear_received()
+        logger.info(
+            "[\x1b[38;5;51mUSMD\x1b[0m] REVOKE_ENDORSEMENT: endorser %s "
+            "went offline — clearing received packet, requesting re-join.",
+            sender_key.hex()[:16] + "…",
+        )
+        if ctx.rejoin_fn is not None:
+            ctx.rejoin_fn()
+        return _make_response(
+            NcpCommandId.REVOKE_ENDORSEMENT,
+            RevokeEndorsementResponse().to_payload(),
+        )
+
+    # Case 2 — we endorsed the sender (they are shutting down as an endorsed node)
+    if ctx.nel.has_issued_to(sender_key):
+        ctx.nel.revoke_issued(sender_key)
+        logger.info(
+            "[\x1b[38;5;51mUSMD\x1b[0m] REVOKE_ENDORSEMENT: endorsed node %s "
+            "went offline — removed from NEL.",
+            sender_key.hex()[:16] + "…",
+        )
+        return _make_response(
+            NcpCommandId.REVOKE_ENDORSEMENT,
+            RevokeEndorsementResponse().to_payload(),
+        )
+
+    # Neither relationship — permanently exclude the sender
+    logger.warning(
+        "[\x1b[38;5;51mUSMD\x1b[0m] REVOKE_ENDORSEMENT from unknown sender %s "
+        "— permanently excluding.",
+        sender_key.hex()[:16] + "…",
+    )
+    ctx.nit.exclude(
+        sender_key,
+        "sent REVOKE_ENDORSEMENT without a valid endorsement relationship",
+    )
+    return _make_response(NcpCommandId.REVOKE_ENDORSEMENT, b"")

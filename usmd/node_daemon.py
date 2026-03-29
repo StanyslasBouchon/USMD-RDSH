@@ -44,6 +44,7 @@ from ._daemon_run import _run
 from ._daemon_snapshot import _build_status_snapshot
 from .config import NodeConfig
 from .nndp.protocol.here_i_am import HereIAmPacket
+from .node.state import NodeState
 from .security.crypto import Ed25519Pair
 
 if TYPE_CHECKING:
@@ -89,6 +90,12 @@ class NodeDaemon:
 
         self._pending_peers: list[tuple[HereIAmPacket, str]] = []
         self._joined = asyncio.Event()
+        # Monotonic timestamps: peer name → when it entered reference_nodes (local stickiness)
+        self._reference_since: dict[int, float] = {}
+
+        # Wire the rejoin callback so the NCP handler can trigger a re-join
+        # when our endorser sends us a REVOKE_ENDORSEMENT on shutdown.
+        self._handler.ctx.rejoin_fn = self._schedule_rejoin
 
     # ------------------------------------------------------------------
     # Public snapshot (served via CTL socket and Web server)
@@ -106,6 +113,11 @@ class NodeDaemon:
     def start_time(self) -> float:
         """UNIX timestamp of daemon startup."""
         return self._start_time
+
+    @property
+    def reference_since(self) -> "dict[int, float]":
+        """Monotonic timestamps: peer name → when it entered the reference set."""
+        return self._reference_since
 
     @property
     def ed_pub(self) -> bytes:
@@ -192,6 +204,45 @@ class NodeDaemon:
 
     def _mark_peer_inactive(self, address: str) -> None:
         _mark_peer_inactive(self, address)
+
+    # ------------------------------------------------------------------
+    # Rejoin after endorsement revocation
+    # ------------------------------------------------------------------
+
+    def _schedule_rejoin(self) -> None:
+        """Schedule a re-join after our endorser has revoked our endorsement.
+
+        Called by :meth:`~usmd.ncp.server.handler.NcpCommandHandler._handle_revoke_endorsement`
+        (via :attr:`~usmd.ncp.server.handler.HandlerContext.rejoin_fn`) when the
+        node that originally endorsed us sends a ``REVOKE_ENDORSEMENT`` on shutdown.
+
+        The node's state is set back to ``PENDING_APPROVAL`` and a new
+        :func:`~usmd._daemon_join._join` task is scheduled on the running event loop.
+        If the loop is not reachable (e.g. called outside an asyncio context during
+        testing), a WARNING is emitted and no task is created.
+
+        Examples:
+            >>> from usmd.config import NodeConfig
+            >>> cfg = NodeConfig(bootstrap=True, usd_name="test-domain")
+            >>> daemon = NodeDaemon(cfg)
+            >>> daemon._schedule_rejoin()  # sets state to PENDING_APPROVAL
+            >>> daemon.node.state.value
+            'pending_approval'
+        """
+        logger.info(
+            "[\x1b[38;5;51mUSMD\x1b[0m] Endossement révoqué par l'endosseur "
+            "— relance du processus d'adhésion pour le nœud %d.",
+            self.node.name,
+        )
+        self.node.set_state(NodeState.PENDING_APPROVAL)
+        try:
+            loop = asyncio.get_event_loop()
+            loop.create_task(_join(self), name="rejoin-after-revocation")
+        except RuntimeError:
+            logger.warning(
+                "[\x1b[38;5;51mUSMD\x1b[0m] _schedule_rejoin : "
+                "impossible de planifier le rejoin — aucune boucle asyncio active."
+            )
 
     # ------------------------------------------------------------------
     # Delegated private methods (implementations in _daemon_* modules)

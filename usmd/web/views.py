@@ -11,11 +11,12 @@ querying each address found in the local NIT.
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import logging
 import time
 from functools import wraps
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Iterable
 
 from django.conf import settings
 from django.http import (
@@ -93,6 +94,39 @@ def _get_state_reason(state_value: str) -> str:
     return _STATE_REASONS.get(state_value, "")
 
 
+def _normalize_nrt_rows(snap: dict, usd_nodes: Iterable | None = None) -> None:
+    """Ensure each NRT row exposes ``node_name`` for templates / JSON clients.
+
+    - Rows are **shallow-copied** into a new list so we never mutate lists that
+      may still be referenced from the snapshot cache.
+    - If the key ``node_name`` is **absent** (vieux daemons), it is dérivée de
+      l'USD du nœud qui héberge le dashboard (meilleur effort).
+    - Si la clé est présente avec la valeur ``None`` (JSON ``null``), elle est
+      **laissée telle quelle** : c'est la vérité du nœud source, à ne pas
+      remplacer par l'USD local (sinon la colonne « référence » ment).
+    """
+    nrt = snap.get("nrt")
+    if not nrt:
+        return
+    addr_to_name: dict[str, int] = {}
+    if usd_nodes is not None:
+        for n in usd_nodes:
+            a = getattr(n, "address", None)
+            if a and a not in addr_to_name:
+                addr_to_name[a] = n.name
+    out: list = []
+    for row in nrt:
+        if not isinstance(row, dict):
+            out.append(row)
+            continue
+        r = dict(row)
+        if "node_name" not in r:
+            addr = r.get("address")
+            r["node_name"] = addr_to_name.get(addr) if addr else None
+        out.append(r)
+    snap["nrt"] = out
+
+
 def _invalidate_snapshot_cache(address: str) -> None:
     """Remove any cached snapshot for *address* (e.g. after a node goes inactive)."""
     _SNAPSHOT_CACHE.pop(address, None)
@@ -137,7 +171,9 @@ async def _fetch_remote_snapshot(address: str, ncp_port: int) -> dict | None:
     now = time.time()
     cached, ts = _SNAPSHOT_CACHE.get(address, ({}, 0.0))
     if cached and now - ts < _CACHE_TTL:
-        return cached
+        # Copie profonde : les vues ne doivent jamais muter l'objet en cache
+        # (sinon NRT / normalisation « collent » entre requêtes et TTL).
+        return copy.deepcopy(cached)
 
     client = NcpClient(address=address, port=ncp_port, timeout=3.0)
     result = await client.send(
@@ -158,7 +194,7 @@ async def _fetch_remote_snapshot(address: str, ncp_port: int) -> dict | None:
 
     data = resp.unwrap().snapshot
     _SNAPSHOT_CACHE[address] = (data, now)
-    return data
+    return copy.deepcopy(data)
 
 
 async def _collect_all_nodes() -> list[dict]:
@@ -209,13 +245,15 @@ async def _collect_all_nodes() -> list[dict]:
             snap["is_local"] = False
             nodes.append(snap)
 
-    # Enrich every snapshot with a human-readable state reason
+    usd_node_list = list(state.usd.nodes.values())
+    # Enrich every snapshot with a human-readable state reason + NRT node_name
     for node_snap in nodes:
         node_info = node_snap.get("node")
         if isinstance(node_info, dict):
             node_info.setdefault(
                 "state_reason", _get_state_reason(node_info.get("state", ""))
             )
+        _normalize_nrt_rows(node_snap, usd_node_list)
 
     return nodes
 
@@ -297,16 +335,19 @@ async def dashboard(request: HttpRequest) -> HttpResponse:
     )
 
 
-@login_required
-async def node_detail(request: HttpRequest, address: str) -> HttpResponse:
-    """Detail page for a single node: NIT, NAL, NEL, resources."""
+async def _resolve_node_snapshot(address: str) -> tuple[dict | None, str | None]:
+    """Load the status snapshot for *address* (local shortcut, stub, or NCP).
+
+    Returns:
+        ``(snapshot, None)`` on success, or ``(None, error_message)`` if the
+        active remote peer is unreachable.
+    """
     state = get_state()
     local_addr = state.snapshot_fn().get("node", {}).get("address", "")
     if address in (local_addr, "local"):
         snap = state.snapshot_fn()
         snap["is_local"] = True
     else:
-        # Check USD state before attempting any NCP poll
         usd_node = next(
             (n for n in state.usd.nodes.values() if n.address == address),
             None,
@@ -316,14 +357,7 @@ async def node_detail(request: HttpRequest, address: str) -> HttpResponse:
         else:
             snap = await _fetch_remote_snapshot(address, state.ncp_port)
             if not snap:
-                return render(
-                    request,
-                    "node_detail.html",
-                    {
-                        "error": f"Nœud {address} injoignable.",
-                        "address": address,
-                    },
-                )
+                return None, f"Nœud {address} injoignable."
             snap["is_local"] = False
             node_info = snap.get("node")
             if isinstance(node_info, dict):
@@ -331,9 +365,39 @@ async def node_detail(request: HttpRequest, address: str) -> HttpResponse:
                     "state_reason", _get_state_reason(node_info.get("state", ""))
                 )
 
+    _normalize_nrt_rows(snap, list(state.usd.nodes.values()))
+    return snap, None
+
+
+@login_required
+async def node_detail(request: HttpRequest, address: str) -> HttpResponse:
+    """Detail page for a single node: NIT, NAL, NEL, resources."""
+    snap, err = await _resolve_node_snapshot(address)
+    if err:
+        return render(
+            request,
+            "node_detail.html",
+            {"error": err, "address": address},
+        )
+
     return render(
-        request, "node_detail.html", {"node_data": snap, "address": address, "error": None}
+        request,
+        "node_detail.html",
+        {"node_data": snap, "address": address, "error": None},
     )
+
+
+@login_required
+async def api_node_snapshot(_request: HttpRequest, address: str) -> JsonResponse:
+    """JSON snapshot for a single node — used by the fiche nœud (polling).
+
+    Avoids ``/api/nodes/`` + ``find()`` : même adresse ou types JSON différents
+    ne peuvent plus mélanger deux nœuds ni fausser la colonne « référence » NRT.
+    """
+    snap, err = await _resolve_node_snapshot(address)
+    if err or snap is None:
+        return JsonResponse({"error": err or "inconnu"}, status=503)
+    return JsonResponse({"node": snap, "ts": time.time()})
 
 
 @login_required

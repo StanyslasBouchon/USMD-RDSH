@@ -1,0 +1,33 @@
+{# Context: nit, nal, refs #}
+<ul class="nav nav-tabs mb-3" id="detailTabs">
+  <li class="nav-item">
+    <a class="nav-link active" data-bs-toggle="tab" href="#tab-resources">
+      <i class="bi bi-bar-chart-fill me-1"></i>Ressources
+    </a>
+  </li>
+  <li class="nav-item">
+    <a class="nav-link" data-bs-toggle="tab" href="#tab-usd">
+      <i class="bi bi-diagram-3-fill me-1"></i>USD
+    </a>
+  </li>
+  <li class="nav-item">
+    <a class="nav-link" data-bs-toggle="tab" href="#tab-nit">
+      <i class="bi bi-people-fill me-1"></i>NIT <span id="nit-tab-count" class="badge bg-secondary ms-1">{{ nit|length }}</span>
+    </a>
+  </li>
+  <li class="nav-item">
+    <a class="nav-link" data-bs-toggle="tab" href="#tab-nal">
+      <i class="bi bi-shield-fill me-1"></i>NAL <span class="badge bg-secondary ms-1">{{ nal|length }}</span>
+    </a>
+  </li>
+  <li class="nav-item">
+    <a class="nav-link" data-bs-toggle="tab" href="#tab-nel">
+      <i class="bi bi-patch-check-fill me-1"></i>NEL
+    </a>
+  </li>
+  <li class="nav-item">
+    <a class="nav-link" data-bs-toggle="tab" href="#tab-refs">
+      <i class="bi bi-diagram-2-fill me-1"></i>Références <span class="badge bg-secondary ms-1">{{ refs|length }}</span>
+    </a>
+  </li>
+</ul>

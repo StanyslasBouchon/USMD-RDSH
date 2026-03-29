@@ -175,8 +175,10 @@ def _print_nrt(nrt: list, thin: str) -> None:
 
 def _print_nqt(promotions: list, thin: str) -> None:
     count = len(promotions)
-    print(f"\n  NQT  —  {count} promotion{'s' if count != 1 else ''} enregistrée{'s' if count != 1 else ''}")
+    plural = "s" if count != 1 else ""
+    print(f"\n  NQT  —  {count} promotion{plural} enregistrée{plural}")
     if promotions:
+        print(f"  {thin[:54]}")
         for p in promotions:
             role = p.get("role_name", "?")
             role_col = (
@@ -286,67 +288,20 @@ def print_status(data: dict) -> None:
         for entry in nal:
             perm  = "  \033[36m[permanent]\033[0m" if entry.get("permanent") else ""
             roles = ", ".join(entry.get("roles", []))
-            print(f"  {entry.get('pub_key', '?'):<26} [{roles}]{perm}")
-    else:
-        print("  (vide)")
+            print(f"  {entry.get('pub_key', '?'):<26} {roles}{perm}")
 
     # ------------------------------------------------------------------ #
     # NEL                                                                 #
     # ------------------------------------------------------------------ #
     nel = data.get("nel", {})
-    print("\n  NEL  —  Endorsements")
-    recv = nel.get("received")
-    if recv:
-        exp_str = _format_expiry(recv.get("expiration", 0))
-        flag    = "  \033[31m[EXPIRÉ]\033[0m" if recv.get("expired") else ""
-        roles   = ", ".join(recv.get("roles", []))
-        _row("Reçu de",   recv.get("endorser_key", "?"))
-        _row("  rôles",   roles)
-        _row("  expire",  f"{exp_str}{flag}")
+    issued  = nel.get("issued", [])
+    received = nel.get("received")
+    print(f"\n  NEL  —  {len(issued)} endossement{'s' if len(issued) != 1 else ''} émis")
+    if issued:
+        for ep in issued:
+            print(f"  → {ep.get('node_pub_key', '?')} (serial {ep.get('serial', '?')})")
+    if received is None:
+        print("  Endossement reçu : (aucun — nœud bootstrap ou en attente de réadhésion)")
     else:
-        _row("Reçu", "(aucun — nœud bootstrap)")
-
-    issued = nel.get("issued", [])
-    _row("Émis", f"{len(issued)} endorsement(s)")
-    for pkt in issued:
-        roles   = ", ".join(pkt.get("roles", []))
-        exp_str = _format_expiry(pkt.get("expiration", 0))
-        flag    = "  \033[31m[EXPIRÉ]\033[0m" if pkt.get("expired") else ""
-        print(
-            f"    → nœud {pkt.get('node_name'):<12} "
-            f"clé {pkt.get('node_pub_key', '?')}"
-        )
-        print(f"      rôles : {roles}  —  expire : {exp_str}{flag}")
-
-    # ------------------------------------------------------------------ #
-    # NRT                                                                 #
-    # ------------------------------------------------------------------ #
-    _print_nrt(data.get("nrt", []), thin)
-
-    # ------------------------------------------------------------------ #
-    # NQT                                                                 #
-    # ------------------------------------------------------------------ #
-    _print_nqt(data.get("quorum", {}).get("promotions", []), thin)
-
-    # ------------------------------------------------------------------ #
-    # NRL                                                                 #
-    # ------------------------------------------------------------------ #
-    _print_nrl(data.get("nrl", []))
-
-    # ------------------------------------------------------------------ #
-    # Resources                                                           #
-    # ------------------------------------------------------------------ #
-    res = data.get("resources", {})
-    print("\n  Ressources système")
-    for label, key in [
-        ("CPU",     "cpu_percent"),
-        ("RAM",     "ram_percent"),
-        ("Disque",  "disk_percent"),
-        ("Réseau",  "network_percent"),
-    ]:
-        val = res.get(key, 0.0)
-        _row(label, f"{_bar(val)} {val * 100:5.1f} %")
-    ref = res.get("reference_load", 0.0)
-    _row("Charge de référence", f"{ref * 100:.1f} %")
-
-    print(f"\n{sep}\n")
+        endorser = received.get("endorser_key", "?")
+        print(f"  Endossement reçu : de {endorser}")

@@ -6,7 +6,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from usmd._daemon_nrt import _log_ref_change, _update_nrt_for_peer, _update_reference_nodes
+from usmd._daemon_nrt import (
+    _compute_reference_names,
+    _log_ref_change,
+    _update_nrt_for_peer,
+    _update_reference_nodes,
+)
 from usmd._daemon_peer import _mark_peer_inactive, _on_peer_discovered
 from usmd.config import NodeConfig
 from usmd.domain.usd import USDConfig, UnifiedSystemDomain
@@ -15,19 +20,34 @@ from usmd.node.node import Node
 from usmd.node.nrl import NodeReferenceList
 from usmd.node.nrt import NodeReferenceTable
 from usmd.node.state import NodeState
-from usmd.nndp.protocol.here_i_am import HereIAmPacket, HereIAmData
+from usmd.nndp.protocol.here_i_am import HereIAmPacket
 from usmd.security.crypto import Ed25519Pair
-from usmd.utils.result import Ok, Err
+from usmd.utils.result import Result
+from usmd.utils.errors import Error, ErrorKind
+
+
+def _err():
+    return Result.Err(Error.new(ErrorKind.CONNECTION_ERROR, "mocked failure"))
+
+
+def _ok(frame):
+    return Result.Ok(frame)
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_nrt_daemon(*, peer_address="10.0.0.2"):
     ed_priv, ed_pub = Ed25519Pair.generate()
-    cfg = NodeConfig(bootstrap=True, usd_name="test", ncp_port=5626, ncp_timeout=2.0,
-                     max_reference_nodes=2)
+    cfg = NodeConfig(
+        bootstrap=True,
+        usd_name="test",
+        ncp_port=5626,
+        ncp_timeout=2.0,
+        max_reference_nodes=2,
+    )
     local_node = Node(address="10.0.0.1", name=1, state=NodeState.ACTIVE)
     local_node.reference_nodes = []
 
@@ -54,16 +74,21 @@ def _make_nrt_daemon(*, peer_address="10.0.0.2"):
     daemon.nit = nit
     daemon.nrt = nrt
     daemon.nrl = nrl
+    daemon.reference_since = {}
     return daemon
 
 
 def _make_hia_packet(name: int, pub_key: bytes) -> HereIAmPacket:
-    data = HereIAmData(ttl=30)
-    return HereIAmPacket(
+    from usmd.security.crypto import Ed25519Pair as _Pair
+    from usmd.node.state import NodeState as _NS
+
+    priv, _ = _Pair.generate()
+    return HereIAmPacket.build(
         sender_name=name,
         sender_pub_key=pub_key,
-        data=data,
-        signature=b"\x00" * 64,
+        sender_priv_key=priv,
+        ttl=30,
+        state=NodeState.ACTIVE,
     )
 
 
@@ -71,21 +96,24 @@ def _make_hia_packet(name: int, pub_key: bytes) -> HereIAmPacket:
 # _daemon_nrt tests
 # ===========================================================================
 
+
 class TestUpdateNrtForPeer:
     @pytest.mark.asyncio
     async def test_updates_nrt_on_success(self):
         """A successful CHECK_DISTANCE response should update the NRT."""
         daemon = _make_nrt_daemon()
         from usmd.ncp.protocol.commands.check_distance import CheckDistanceResponse
-        resp = CheckDistanceResponse(distance=0.3, reference_load=0.1, ping_ms=15.0,
-                                     reference_names=[])
+
+        resp = CheckDistanceResponse(distance=0.3)
         mock_frame = MagicMock()
         mock_frame.payload = resp.to_payload()
 
         with patch("usmd._daemon_nrt.NcpClient") as MockClient:
-            with patch("usmd._daemon_nrt._update_reference_nodes", new_callable=AsyncMock):
+            with patch(
+                "usmd._daemon_nrt._update_reference_nodes", new_callable=AsyncMock
+            ):
                 mock_client = AsyncMock()
-                mock_client.send = AsyncMock(return_value=Ok(mock_frame))
+                mock_client.send = AsyncMock(return_value=_ok(mock_frame))
                 MockClient.return_value = mock_client
                 await _update_nrt_for_peer(daemon, "10.0.0.2")
 
@@ -101,7 +129,7 @@ class TestUpdateNrtForPeer:
 
         with patch("usmd._daemon_nrt.NcpClient") as MockClient:
             mock_client = AsyncMock()
-            mock_client.send = AsyncMock(return_value=Err(Exception("timeout")))
+            mock_client.send = AsyncMock(return_value=_err())
             MockClient.return_value = mock_client
             await _update_nrt_for_peer(daemon, "10.0.0.2")
 
@@ -112,16 +140,17 @@ class TestUpdateNrtForPeer:
         """Successful NRT update should trigger _update_reference_nodes."""
         daemon = _make_nrt_daemon()
         from usmd.ncp.protocol.commands.check_distance import CheckDistanceResponse
-        resp = CheckDistanceResponse(distance=0.2, reference_load=0.1, ping_ms=5.0,
-                                     reference_names=[])
+
+        resp = CheckDistanceResponse(distance=0.2)
         mock_frame = MagicMock()
         mock_frame.payload = resp.to_payload()
 
         with patch("usmd._daemon_nrt.NcpClient") as MockClient:
-            with patch("usmd._daemon_nrt._update_reference_nodes",
-                       new_callable=AsyncMock) as mock_update:
+            with patch(
+                "usmd._daemon_nrt._update_reference_nodes", new_callable=AsyncMock
+            ) as mock_update:
                 mock_client = AsyncMock()
-                mock_client.send = AsyncMock(return_value=Ok(mock_frame))
+                mock_client.send = AsyncMock(return_value=_ok(mock_frame))
                 MockClient.return_value = mock_client
                 await _update_nrt_for_peer(daemon, "10.0.0.2")
                 mock_update.assert_called_once_with(daemon)
@@ -142,7 +171,7 @@ class TestUpdateReferenceNodes:
 
         with patch("usmd._daemon_nrt.NcpClient") as MockClient:
             mock_client = AsyncMock()
-            mock_client.send = AsyncMock(return_value=Err(Exception("skip")))
+            mock_client.send = AsyncMock(return_value=_err())
             MockClient.return_value = mock_client
             await _update_reference_nodes(daemon)
 
@@ -174,7 +203,7 @@ class TestUpdateReferenceNodes:
 
         with patch("usmd._daemon_nrt.NcpClient") as MockClient:
             mock_client = AsyncMock()
-            mock_client.send = AsyncMock(return_value=Err(Exception("skip")))
+            mock_client.send = AsyncMock(return_value=_err())
             MockClient.return_value = mock_client
             await _update_reference_nodes(daemon)
             # At least one send attempt should have occurred
@@ -188,7 +217,7 @@ class TestUpdateReferenceNodes:
 
         with patch("usmd._daemon_nrt.NcpClient") as MockClient:
             mock_client = AsyncMock()
-            mock_client.send = AsyncMock(return_value=Err(Exception("refused")))
+            mock_client.send = AsyncMock(return_value=_err())
             MockClient.return_value = mock_client
             await _update_reference_nodes(daemon)  # must not raise
 
@@ -225,6 +254,7 @@ class TestLogRefChange:
 # ===========================================================================
 # _daemon_peer tests
 # ===========================================================================
+
 
 class TestOnPeerDiscovered:
     def _make_peer_daemon(self):
@@ -307,8 +337,10 @@ class TestOnPeerDiscovered:
         _, pub = Ed25519Pair.generate()
         packet = _make_hia_packet(2, pub)
 
-        with patch("usmd._daemon_peer.asyncio.get_running_loop",
-                   side_effect=RuntimeError("no loop")):
+        with patch(
+            "usmd._daemon_peer.asyncio.get_running_loop",
+            side_effect=RuntimeError("no loop"),
+        ):
             _on_peer_discovered(daemon, packet, "10.0.0.2")  # must not raise
 
 
@@ -358,3 +390,45 @@ class TestMarkPeerInactive:
     def test_unknown_address_does_not_raise(self):
         daemon, _ = self._make_peer_daemon()
         _mark_peer_inactive(daemon, "99.99.99.99")  # no matching node — no raise
+
+
+# ---------------------------------------------------------------------------
+# _compute_reference_names (stickiness + preemption)
+# ---------------------------------------------------------------------------
+
+
+class TestComputeReferenceNames:
+    def test_fills_up_to_max_by_closest_distance(self):
+        cands = [(1, "a", 0.1), (2, "b", 0.4), (3, "c", 0.9)]
+        out = _compute_reference_names(cands, [], {}, 1000.0, 300.0, 2)
+        assert out == [1, 2]
+
+    def test_preempts_strictly_closer_peer(self):
+        """Unselected peer with lower d must enter, displacing a worse one."""
+        cands = [(1, "a", 0.1), (2, "b", 0.5), (3, "c", 0.9)]
+        old = [3]
+        since = {3: 500.0}
+        now = 550.0
+        hold = 300.0
+        out = _compute_reference_names(cands, old, since, now, hold, 2)
+        assert 3 not in out
+        assert set(out) == {1, 2}
+
+    def test_sticky_keeps_peer_if_no_strictly_better_outside(self):
+        # Tri par distance : 2 puis 1 ; aucun d strictement < d(2) hors set ne préempte
+        cands = [(2, "b", 0.60), (1, "a", 0.65)]
+        old = [2]
+        since = {2: 800.0}
+        now = 850.0
+        hold = 300.0
+        out = _compute_reference_names(cands, old, since, now, hold, 1)
+        assert out == [2]
+
+    def test_after_hold_expires_can_drop_for_closer(self):
+        cands = [(1, "a", 0.1), (2, "b", 0.9)]
+        old = [2]
+        since = {2: 0.0}
+        now = 400.0
+        hold = 300.0
+        out = _compute_reference_names(cands, old, since, now, hold, 1)
+        assert out == [1]
