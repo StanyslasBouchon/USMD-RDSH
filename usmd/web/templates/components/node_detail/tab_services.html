@@ -1,0 +1,69 @@
+{# Context: mutations, service_execution_log, address #}
+<div class="tab-pane fade" id="tab-services">
+
+  <h6 class="text-muted small text-uppercase mb-2">
+    <i class="bi bi-box-seam me-1"></i>Known services (catalogue)
+  </h6>
+  <div class="node-card mb-4">
+    <table class="table table-sm table-striped mb-0{% if not mutations %} d-none{% endif %}" id="services-known-table">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Version</th>
+          <th class="text-end">YAML</th>
+        </tr>
+      </thead>
+      <tbody id="services-known-tbody">
+        {% for m in mutations %}
+        <tr>
+          <td class="text-light"><code>{{ m.name }}</code></td>
+          <td>{{ m.type }}</td>
+          <td>{{ m.version }}</td>
+          <td class="text-end">
+            {% if m.yaml %}
+            <a href="{% url 'api_node_mutation_yaml' address m.name %}" class="btn btn-sm btn-outline-info py-0"
+               download="{{ m.name }}.yaml" title="Download {{ m.name }}.yaml">
+              <i class="bi bi-download"></i>
+            </a>
+            {% else %}
+            <span class="text-muted small">—</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <div id="services-known-empty" class="p-3 text-muted small{% if mutations %} d-none{% endif %}">
+      <i class="bi bi-inbox me-1"></i>No services in catalogue.
+    </div>
+  </div>
+
+  <h6 class="text-muted small text-uppercase mb-2">
+    <i class="bi bi-play-btn me-1"></i>Local lifecycle runs (this node)
+  </h6>
+  <p class="small text-muted mb-2">Recorded when “apply locally” is used on the Mutation page (build / update / health on this node).</p>
+  <div class="node-card">
+    <table class="table table-sm table-striped mb-0{% if not service_execution_log %} d-none{% endif %}" id="services-exec-table">
+      <thead>
+        <tr>
+          <th>Time</th>
+          <th>Service</th>
+          <th>Outcome</th>
+        </tr>
+      </thead>
+      <tbody id="services-exec-tbody">
+        {% for e in service_execution_log reversed %}
+        <tr>
+          <td class="text-muted small js-exec-time" data-ts="{{ e.at }}"></td>
+          <td class="text-light"><code>{{ e.service }}</code></td>
+          <td><span class="badge bg-secondary">{{ e.outcome }}</span></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <div id="services-exec-empty" class="p-3 text-muted small{% if service_execution_log %} d-none{% endif %}">
+      <i class="bi bi-inbox me-1"></i>No local runs recorded yet.
+    </div>
+  </div>
+</div>

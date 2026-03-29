@@ -44,6 +44,12 @@ def _get_state_reason(state_value: str) -> str:
     return _STATE_REASONS.get(state_value, "")
 
 
+def _ensure_mutation_fields(snap: dict) -> None:
+    """Older snapshots may omit mutation catalogue / execution fields."""
+    snap.setdefault("mutations", [])
+    snap.setdefault("service_execution_log", [])
+
+
 def _normalize_nrt_rows(snap: dict, usd_nodes: Iterable | None = None) -> None:
     """Ensure each NRT row exposes ``node_name`` for templates / JSON clients.
 
@@ -113,6 +119,8 @@ def _build_inactive_stub(address: str, usd_node) -> dict:
         "nrl": [],
         "reference_nodes": [],
         "quorum": {"elected_roles": [], "promotions": []},
+        "mutations": [],
+        "service_execution_log": [],
     }
 
 
@@ -205,6 +213,7 @@ async def collect_all_nodes() -> list[dict]:
                 "state_reason", _get_state_reason(node_info.get("state", ""))
             )
         _normalize_nrt_rows(node_snap, usd_node_list)
+        _ensure_mutation_fields(node_snap)
 
     return nodes
 

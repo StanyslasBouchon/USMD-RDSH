@@ -137,15 +137,8 @@ def _build_status_snapshot(daemon: "NodeDaemon") -> dict:
                 daemon.usd.config.dependency_check_interval
             ),
         },
-        "mutations": [
-            {
-                "name":    s.name,
-                "type":    s.service_type.value,
-                "version": s.version,
-                "deps":    s.dependencies,
-            }
-            for s in daemon.usd.mutation_catalog.all_services()
-        ],
+        "mutations": daemon.usd.mutation_catalog.snapshot_mutations(),
+        "service_execution_log": list(daemon._service_execution_log),
         "nit": nit_data,
         "nal": nal_data,
         "nel": {

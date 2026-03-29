@@ -20,7 +20,7 @@
 <div class="alert alert-danger"><i class="bi bi-exclamation-triangle-fill me-2"></i>{{ error }}</div>
 {% else %}
 
-{% with n=node_data.node r=node_data.resources usd=node_data.usd nit=node_data.nit nal=node_data.nal nel=node_data.nel refs=node_data.reference_nodes nrt=node_data.nrt nrl=node_data.nrl %}
+{% with n=node_data.node r=node_data.resources usd=node_data.usd nit=node_data.nit nal=node_data.nal nel=node_data.nel refs=node_data.reference_nodes nrt=node_data.nrt nrl=node_data.nrl mutations=node_data.mutations service_execution_log=node_data.service_execution_log %}
 
 {% include "components/node_detail/header.html" %}
 {% include "components/node_detail/tabs_nav.html" %}
@@ -32,6 +32,7 @@
   {% include "components/node_detail/tab_nal.html" %}
   {% include "components/node_detail/tab_nel.html" %}
   {% include "components/node_detail/tab_references.html" %}
+  {% include "components/node_detail/tab_services.html" %}
 </div>
 
 {% endwith %}

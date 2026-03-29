@@ -219,6 +219,67 @@ if (chartCtx) {
 
 const address = "{{ address }}";
 const snapshotRefreshUrl = "{% url 'api_node_snapshot' address %}";
+const servicesTabCount = document.getElementById('services-tab-count');
+
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function formatExecTimeCells() {
+  document.querySelectorAll('.js-exec-time').forEach(td => {
+    const ts = parseFloat(td.dataset.ts, 10);
+    if (!Number.isFinite(ts)) return;
+    td.textContent = new Date(ts * 1000).toLocaleString('en-US');
+  });
+}
+formatExecTimeCells();
+
+function renderServices(mutations, log) {
+  const knownTbody = document.getElementById('services-known-tbody');
+  const knownEmpty = document.getElementById('services-known-empty');
+  const knownTable = document.getElementById('services-known-table');
+  const execTbody = document.getElementById('services-exec-tbody');
+  const execEmpty = document.getElementById('services-exec-empty');
+  const execTable = document.getElementById('services-exec-table');
+  if (!knownTbody || !execTbody) return;
+
+  const mut = mutations || [];
+  if (servicesTabCount) servicesTabCount.textContent = String(mut.length);
+
+  if (mut.length === 0) {
+    knownTbody.innerHTML = '';
+    if (knownTable) knownTable.classList.add('d-none');
+    if (knownEmpty) knownEmpty.classList.remove('d-none');
+  } else {
+    if (knownTable) knownTable.classList.remove('d-none');
+    if (knownEmpty) knownEmpty.classList.add('d-none');
+    const addrEnc = encodeURIComponent(address);
+    knownTbody.innerHTML = mut.map(m => {
+      const yamlCell = m.has_yaml
+        ? `<a href="/api/node/${addrEnc}/mutation/${encodeURIComponent(m.name)}/yaml/" class="btn btn-sm btn-outline-info py-0" download="${escapeHtml(m.name)}.yaml" title="Download YAML"><i class="bi bi-download"></i></a>`
+        : '<span class="text-muted small">—</span>';
+      return `<tr><td class="text-light"><code>${escapeHtml(m.name)}</code></td><td>${escapeHtml(String(m.type))}</td><td>${escapeHtml(String(m.version))}</td><td class="text-end">${yamlCell}</td></tr>`;
+    }).join('');
+  }
+
+  const entries = log || [];
+  if (entries.length === 0) {
+    execTbody.innerHTML = '';
+    if (execTable) execTable.classList.add('d-none');
+    if (execEmpty) execEmpty.classList.remove('d-none');
+  } else {
+    if (execTable) execTable.classList.remove('d-none');
+    if (execEmpty) execEmpty.classList.add('d-none');
+    execTbody.innerHTML = entries.slice().reverse().map(e => {
+      const t = typeof e.at === 'number' ? new Date(e.at * 1000).toLocaleString('en-US') : '';
+      return `<tr><td class="text-muted small">${t}</td><td class="text-light"><code>${escapeHtml(e.service)}</code></td><td><span class="badge bg-secondary">${escapeHtml(e.outcome)}</span></td></tr>`;
+    }).join('');
+  }
+}
 
 async function refresh() {
   try {
@@ -247,6 +308,8 @@ async function refresh() {
       chart.data.datasets.forEach(ds => { if (ds.data.length > MAX_POINTS) ds.data.shift(); });
       chart.update('none');
     }
+
+    renderServices(node.mutations || [], node.service_execution_log || []);
   } catch(e) { /* ignore */ }
 }
 

@@ -44,6 +44,22 @@ class MutationCatalog:
         """Number of services in the catalogue."""
         return len(self._entries)
 
+    def snapshot_mutations(self) -> list[dict]:
+        """Serialisable mutation rows for status snapshots (includes YAML when stored)."""
+        rows: list[dict] = []
+        for name, ent in self._entries.items():
+            svc = ent.service
+            rows.append(
+                {
+                    "name": name,
+                    "type": svc.service_type.value,
+                    "version": svc.version,
+                    "deps": svc.dependencies,
+                    "yaml": ent.source_yaml,
+                }
+            )
+        return rows
+
     def summaries_for_broadcast(self) -> list[MutationSummary]:
         """Build NCP payloads: include YAML when we have it locally."""
         out: list[MutationSummary] = []

@@ -1,4 +1,4 @@
-{# Context: nit, nal, refs #}
+{# Context: nit, nal, refs, mutations #}
 <ul class="nav nav-tabs mb-3" id="detailTabs">
   <li class="nav-item">
     <a class="nav-link active" data-bs-toggle="tab" href="#tab-resources">
@@ -8,6 +8,12 @@
   <li class="nav-item">
     <a class="nav-link" data-bs-toggle="tab" href="#tab-usd">
       <i class="bi bi-diagram-3-fill me-1"></i>USD
+    </a>
+  </li>
+  <li class="nav-item">
+    <a class="nav-link" data-bs-toggle="tab" href="#tab-services">
+      <i class="bi bi-box-seam me-1"></i>Services
+      <span id="services-tab-count" class="badge bg-secondary ms-1">{{ mutations|length }}</span>
     </a>
   </li>
   <li class="nav-item">

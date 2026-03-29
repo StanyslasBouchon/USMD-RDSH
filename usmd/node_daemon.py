@@ -105,6 +105,8 @@ class NodeDaemon:
         self._reference_since: dict[int, float] = {}
         self._last_dependency_check_monotonic: float = 0.0
         self._last_peer_status_monotonic: float = 0.0
+        # Local mutation lifecycle runs (dashboard "apply locally" only)
+        self._service_execution_log: list[dict] = []
 
         # Wire the rejoin callback so the NCP handler can trigger a re-join
         # when our endorser sends us a REVOKE_ENDORSEMENT on shutdown.
@@ -246,6 +248,18 @@ class NodeDaemon:
     # Mutation / transmutation (dashboard + NCP propagation)
     # ------------------------------------------------------------------
 
+    def _record_service_execution(self, service_name: str, outcome: str) -> None:
+        """Append a local lifecycle run (bounded list for the dashboard)."""
+        self._service_execution_log.append(
+            {
+                "at": time.time(),
+                "service": service_name,
+                "outcome": outcome,
+            }
+        )
+        if len(self._service_execution_log) > 200:
+            self._service_execution_log[:] = self._service_execution_log[-200:]
+
     async def apply_mutation_from_web(
         self,
         service_name: str,
@@ -271,9 +285,14 @@ class NodeDaemon:
         )
         outcome: ServiceUpdateOutcome | None = None
         if isinstance(local, tuple):
+            ok, _msg = local
+            self._record_service_execution(
+                name, "ROLLBACK_OK" if ok else "LOCAL_FAILED"
+            )
             return local
         if local is not None:
             outcome = local
+            self._record_service_execution(name, local.name)
 
         cat = self.usd.mutation_catalog
         ms = self.usd.config.min_services

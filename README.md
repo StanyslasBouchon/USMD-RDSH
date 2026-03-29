@@ -17,6 +17,7 @@ USMD-RDSH is a distributed system for managing self-organizing nodes. Each node 
 - [Command-line options](#command-line-options)
 - [Node roles](#node-roles)
 - [Web dashboard](#web-dashboard)
+- [Mutation service definitions (YAML)](#mutation-service-definitions-yaml)
 - [Tests](#tests)
 
 ---
@@ -179,6 +180,8 @@ usd:
   ping_tolerance_ms: 200 # Max ping T (ms) in the distance formula
   load_check_interval: 30
   emergency_threshold: 0.9
+  min_services: 0        # optional — minimum mutation services in the catalogue (0 = no check)
+  max_services: null     # optional — maximum services (null = unlimited)
 
 # Startup behaviour
 bootstrap: false         # true = create a new USD; false = join existing
@@ -285,6 +288,73 @@ When node A’s dashboard shows node B, it sends NCP **REQUEST_SNAPSHOT** (ID 9)
 - Change `web.password` before any production deployment.
 - In production, provide a TLS certificate from a trusted CA via `web.ssl_cert` and `web.ssl_key`.
 - The dashboard exposes internal data — restrict access to the admin network.
+
+---
+
+## Mutation service definitions (YAML)
+
+A **mutation** is a service definition stored in the domain’s **mutation catalogue**. Each definition is a **single YAML document** describing how to bring a named service up, tear it down, handle emergencies, health-check it, and update it in place. The daemon uses this catalogue for **transmutation** (which service a node runs) and for **propagating** definitions to reference peers over NCP.
+
+### Static vs dynamic
+
+| Type       | Meaning |
+| ---------- | ------- |
+| **static** | All nodes that host the service share the same parameters, data, and commands. The catalogue expects all static services to be present domain-wide. |
+| **dynamic** | Parameters and commands are shared; **data is per-node**. Assignment avoids duplicate dynamic names across reference peers (see assignment logic in the codebase). |
+
+Set `type: static` or `type: dynamic` in YAML (default is **static** if omitted).
+
+### Who may publish
+
+Publishing mutations (web form or programmatic path) requires the **`usd_operator`** role on **this node’s Ed25519 key in the local NAL** (Node Access List). A node may hold **several roles** at once (for example `node_operator` and `usd_operator`); only the NAL matters for authorization, not the single `role:` field in `usmd.yaml` alone.
+
+### Using the web dashboard
+
+1. Enable the dashboard (`web.enabled: true`) and open `https://<node>:<port>/mutation/` (or follow **Mutation** in the nav).
+2. Sign in with `web.username` / `web.password`.
+3. Enter a **service name** (identifier for this service in the catalogue, e.g. `backend`).
+4. Paste the **YAML** body (one service per submit).
+5. Optionally check **Run build / update / health on this node now** to execute lifecycle phases **locally** immediately. If left unchecked, the daemon only updates the **catalogue** and **broadcasts** to reference nodes (useful for dry runs or when another node will apply the workload).
+
+On success, the USD **version** is bumped and the daemon sends **`SEND_USD_PROPERTIES`** and **`SEND_MUTATION_PROPERTIES`** to **reference nodes** so they can merge the new definitions (including YAML when provided).
+
+### YAML shape
+
+Each file is one service. The **service name** in the form is the canonical name (not the filename on disk). Minimal skeleton:
+
+```yaml
+type: static              # optional: static | dynamic
+dependencies: []          # optional — other service names this one depends on
+build:
+  - command: echo start
+unbuild:
+  - command: echo stop
+emergency: []             # optional — failure / resource pressure path
+check_health: []          # optional — commands that must succeed for “healthy”
+update: []                # optional — in-place update when a newer definition is applied
+```
+
+- **Lists** under each phase are ordered. Each item is either:
+  - `command: <shell string>` — run via the configured lifecycle runner (shell), or  
+  - `action: unbuild` — run the service’s **unbuild** phase (used from `emergency`, with a depth limit to avoid infinite recursion).
+
+- **Dependencies** are names of other services in the same catalogue (used for placement / dependency resolution between nodes).
+
+### Lifecycle phases
+
+| Phase        | YAML key        | Typical use |
+| ------------ | --------------- | ----------- |
+| Build        | `build`         | Install or start the service (transmutation bring-up). |
+| Unbuild      | `unbuild`       | Stop or remove the service (tear-down). |
+| Emergency    | `emergency`     | Degraded shutdown or backup when the node is in trouble. |
+| Health       | `check_health`  | Probes that must pass for the service to be considered healthy. |
+| Update       | `update`        | In-place upgrade when the definition changes while the service is active. |
+
+If **Apply locally** is enabled, the daemon runs the relevant phases on **this node** according to the update flow (including rollback when possible). Catalogue size may be constrained by **`usd.min_services`** and **`usd.max_services`** in configuration (see [Configuration](#configuration)).
+
+### Files on disk (optional)
+
+You can maintain the same YAML in a repository and paste it into the form, or use the same structure in automation. The parser also supports `ServiceYamlParser.parse_file(path)` in code, where the **service name** is taken from the **file name without extension**.
 
 ---
 

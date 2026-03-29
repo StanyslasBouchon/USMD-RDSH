@@ -59,15 +59,25 @@
     <div class="card node-card">
       <div class="card-header small text-uppercase text-muted">Known services (this domain)</div>
       <div class="card-body p-0">
-        {% if services %}
+        {% if service_rows %}
         <table class="table table-sm mb-0">
-          <thead><tr><th>Name</th><th>Type</th><th>Version</th></tr></thead>
+          <thead><tr><th>Name</th><th>Type</th><th>Version</th><th class="text-end">YAML</th></tr></thead>
           <tbody>
-            {% for s in services %}
+            {% for row in service_rows %}
             <tr>
-              <td><code>{{ s.name }}</code></td>
-              <td>{{ s.service_type.value }}</td>
-              <td>{{ s.version }}</td>
+              <td><code>{{ row.name }}</code></td>
+              <td>{{ row.type }}</td>
+              <td>{{ row.version }}</td>
+              <td class="text-end">
+                {% if row.has_yaml %}
+                <a href="{% url 'mutation_yaml_download' row.name %}" class="btn btn-sm btn-outline-info py-0"
+                   download="{{ row.name }}.yaml" title="Download {{ row.name }}.yaml">
+                  <i class="bi bi-download"></i>
+                </a>
+                {% else %}
+                <span class="text-muted small">—</span>
+                {% endif %}
+              </td>
             </tr>
             {% endfor %}
           </tbody>

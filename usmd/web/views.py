@@ -11,6 +11,7 @@ querying each address found in the local NIT.
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import logging
 import time
@@ -33,6 +34,16 @@ from .state import get_state
 
 logger = logging.getLogger(__name__)
 
+
+def _node_snapshot_json_safe(snap: dict) -> dict:
+    """Drop inline mutation YAML from *snap* for JSON APIs (keep ``has_yaml``)."""
+    out = copy.deepcopy(snap)
+    for m in out.get("mutations") or []:
+        raw = m.pop("yaml", None)
+        m["has_yaml"] = raw is not None and raw != ""
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Authentication helpers
 # ---------------------------------------------------------------------------
@@ -53,6 +64,18 @@ def login_required(view_fn):
         if not _is_authenticated(request):
             return HttpResponseRedirect(_LOGIN_URL)
         return await view_fn(request, *args, **kwargs)
+
+    return wrapper
+
+
+def login_required_sync(view_fn):
+    """Sync variant of :func:`login_required` for non-async views."""
+
+    @wraps(view_fn)
+    def wrapper(request: HttpRequest, *args, **kwargs):
+        if not _is_authenticated(request):
+            return HttpResponseRedirect(_LOGIN_URL)
+        return view_fn(request, *args, **kwargs)
 
     return wrapper
 
@@ -150,7 +173,7 @@ async def api_nodes(_request: HttpRequest) -> JsonResponse:
     nodes = await collect_all_nodes()
     return JsonResponse(
         {
-            "nodes": nodes,
+            "nodes": [_node_snapshot_json_safe(n) for n in nodes],
             "promotions": extract_promotions(nodes),
             "ts": time.time(),
         }
@@ -167,7 +190,7 @@ async def api_stream(_request: HttpRequest) -> StreamingHttpResponse:
                 nodes = await collect_all_nodes()
                 payload = json.dumps(
                     {
-                        "nodes": nodes,
+                        "nodes": [_node_snapshot_json_safe(n) for n in nodes],
                         "promotions": extract_promotions(nodes),
                         "ts": time.time(),
                     }
@@ -194,6 +217,7 @@ async def mutation_publish(request: HttpRequest) -> HttpResponse:
     error: str | None = None
     success: str | None = None
     services: list = []
+    service_rows: list[dict] = []
     usd_version = 0
     min_services = 0
     max_services: int | None = None
@@ -203,6 +227,16 @@ async def mutation_publish(request: HttpRequest) -> HttpResponse:
     else:
         usd = state.usd
         services = usd.mutation_catalog.all_services()
+        cat = usd.mutation_catalog
+        service_rows = [
+            {
+                "name": s.name,
+                "type": s.service_type.value,
+                "version": s.version,
+                "has_yaml": cat.get_yaml(s.name) is not None,
+            }
+            for s in services
+        ]
         usd_version = usd.config.version
         min_services = usd.config.min_services
         max_services = usd.config.max_services
@@ -221,6 +255,15 @@ async def mutation_publish(request: HttpRequest) -> HttpResponse:
                 else:
                     error = msg
                 services = usd.mutation_catalog.all_services()
+                service_rows = [
+                    {
+                        "name": s.name,
+                        "type": s.service_type.value,
+                        "version": s.version,
+                        "has_yaml": cat.get_yaml(s.name) is not None,
+                    }
+                    for s in services
+                ]
                 usd_version = usd.config.version
 
     return render(
@@ -230,8 +273,67 @@ async def mutation_publish(request: HttpRequest) -> HttpResponse:
             "error": error,
             "success": success,
             "services": services,
+            "service_rows": service_rows,
             "usd_version": usd_version,
             "min_services": min_services,
             "max_services": max_services,
         },
+    )
+
+
+@login_required_sync
+@require_http_methods(["GET"])
+def download_catalog_mutation_yaml(request: HttpRequest, name: str) -> HttpResponse:
+    """Download stored YAML for a catalogue service on this node (local daemon)."""
+    state = get_state()
+    if state is None:
+        return HttpResponse(
+            "Daemon state unavailable.",
+            status=503,
+            content_type="text/plain; charset=utf-8",
+        )
+    raw = state.usd.mutation_catalog.get_yaml(name)
+    if not raw:
+        return HttpResponse(
+            "No YAML stored for this service.",
+            status=404,
+            content_type="text/plain; charset=utf-8",
+        )
+    resp = HttpResponse(raw, content_type="application/x-yaml; charset=utf-8")
+    safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in name)
+    resp["Content-Disposition"] = f'attachment; filename="{safe}.yaml"'
+    return resp
+
+
+@login_required
+@require_http_methods(["GET"])
+async def download_node_mutation_yaml(
+    request: HttpRequest, address: str, name: str
+) -> HttpResponse:
+    """Download mutation YAML as seen on the given node (local snapshot or NCP)."""
+    snap, err = await resolve_node_snapshot(address)
+    if err or not snap:
+        return HttpResponse(
+            err or "Node unavailable.",
+            status=404,
+            content_type="text/plain; charset=utf-8",
+        )
+    for m in snap.get("mutations") or []:
+        if m.get("name") != name:
+            continue
+        y = m.get("yaml")
+        if y:
+            resp = HttpResponse(y, content_type="application/x-yaml; charset=utf-8")
+            safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in name)
+            resp["Content-Disposition"] = f'attachment; filename="{safe}.yaml"'
+            return resp
+        return HttpResponse(
+            "No YAML stored for this service on this node.",
+            status=404,
+            content_type="text/plain; charset=utf-8",
+        )
+    return HttpResponse(
+        "Unknown service.",
+        status=404,
+        content_type="text/plain; charset=utf-8",
     )
