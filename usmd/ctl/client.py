@@ -23,6 +23,8 @@ import json
 import sys
 from typing import Any
 
+from ..utils.io import close_writer
+
 
 # ---------------------------------------------------------------------------
 # Network
@@ -112,10 +114,7 @@ async def _exchange(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) 
         print(f"Erreur lors de la lecture de la réponse : {exc}", file=sys.stderr)
         sys.exit(1)
     finally:
-        try:
-            writer.close()
-        except OSError:
-            pass
+        close_writer(writer)
 
 
 # ---------------------------------------------------------------------------

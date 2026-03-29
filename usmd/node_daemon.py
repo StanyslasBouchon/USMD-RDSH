@@ -25,6 +25,7 @@ Examples:
 """
 
 from __future__ import annotations
+# pylint: disable=too-many-lines
 
 import asyncio
 import json
@@ -52,6 +53,7 @@ from .ctl.server import CtlServer
 from .web.server import WebServer
 from .security.crypto import Ed25519Pair, X25519Pair
 from .security.endorsement import EndorsementFactory
+from .quorum.manager import QuorumManager
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +72,9 @@ def _get_resource_usage() -> ResourceUsage:
         import psutil  # pylint: disable=import-outside-toplevel
 
         ram = psutil.virtual_memory().percent / 100.0
+        # cpu_percent(interval=None) returns 0.0 on the very first call
+        # because it needs a previous baseline measurement.  Subsequent calls
+        # (done every _HEARTBEAT_INTERVAL seconds) return real values.
         cpu = psutil.cpu_percent(interval=None) / 100.0
         _disk_root = "C:\\" if sys.platform == "win32" else "/"
         disk = psutil.disk_usage(_disk_root).percent / 100.0
@@ -83,6 +88,18 @@ def _get_resource_usage() -> ResourceUsage:
             network_percent=net,
         )
     except ImportError:
+        logger.warning(
+            "[\x1b[38;5;51mUSMD\x1b[0m] psutil non installé — "
+            "métriques ressources indisponibles. Exécutez : pip install psutil"
+        )
+        return ResourceUsage(
+            ram_percent=0.0,
+            cpu_percent=0.0,
+            disk_percent=0.0,
+            network_percent=0.0,
+        )
+    except Exception as exc:  # pylint: disable=broad-except
+        logger.debug("[\x1b[38;5;51mUSMD\x1b[0m] Erreur lecture ressources : %s", exc)
         return ResourceUsage(
             ram_percent=0.0,
             cpu_percent=0.0,
@@ -225,6 +242,14 @@ class NodeDaemon:  # pylint: disable=too-many-instance-attributes
 
         self._start_time: float = time.time()
 
+        # Prime the cpu_percent baseline so the first real heartbeat
+        # returns a non-zero value (psutil needs two measurements).
+        try:
+            import psutil as _psutil  # pylint: disable=import-outside-toplevel
+            _psutil.cpu_percent(interval=None)
+        except ImportError:
+            pass
+
         handler_ctx = HandlerContext(
             node=self.node,
             usd=self.usd,
@@ -236,6 +261,20 @@ class NodeDaemon:  # pylint: disable=too-many-instance-attributes
             snapshot_fn=self._build_status_snapshot,
             ping_tolerance_ms=cfg.ping_tolerance_ms,
         )
+
+        self._quorum: QuorumManager | None = None
+        if cfg.quorum_enabled:
+            self._quorum = QuorumManager(
+                node_address=address,
+                ed_pub=self._ed_pub,
+                nit=self.nit,
+                nal=self.nal,
+                cfg=cfg,
+                check_interval=cfg.quorum_check_interval,
+                ncp_port=cfg.ncp_port,
+                ncp_timeout=cfg.ncp_timeout,
+            )
+            handler_ctx.quorum_manager = self._quorum
 
         self._handler = NcpCommandHandler(handler_ctx)
         self._ncp_server = NcpServer(
@@ -360,6 +399,15 @@ class NodeDaemon:  # pylint: disable=too-many-instance-attributes
                 "disk_percent":    usage.disk_percent,
                 "network_percent": usage.network_percent,
                 "reference_load":  usage.reference_load(),
+            },
+            "quorum": {
+                "enabled":    self.cfg.quorum_enabled,
+                "is_operator": (
+                    self._quorum.is_operator if self._quorum else False
+                ),
+                "promotions": (
+                    self._quorum.get_promotions() if self._quorum else []
+                ),
             },
         }
 
@@ -586,6 +634,15 @@ class NodeDaemon:  # pylint: disable=too-many-instance-attributes
         if self._web is not None:
             web_task = asyncio.create_task(self._web.start(), name="web-dashboard")
 
+            def _on_web_done(task: asyncio.Task) -> None:  # type: ignore[type-arg]
+                if not task.cancelled() and task.exception():
+                    logger.error(
+                        "[\x1b[38;5;51mUSMD\x1b[0m] Tableau de bord web arrêté : %s",
+                        task.exception(),
+                    )
+
+            web_task.add_done_callback(_on_web_done)
+
         # 3. NNDP listener
         listener_transport = await self._nndp.start_listener()
 
@@ -606,6 +663,12 @@ class NodeDaemon:  # pylint: disable=too-many-instance-attributes
         # 6. Heartbeat
         heartbeat_task = asyncio.create_task(self._heartbeat_loop(), name="heartbeat")
 
+        # 7. Quorum monitor (optional)
+        quorum_task: asyncio.Task[None] | None = None
+        if self._quorum is not None:
+            quorum_task = asyncio.create_task(self._quorum.run(), name="quorum-monitor")
+            logger.info("[\x1b[38;5;51mUSMD\x1b[0m] Quorum monitor started.")
+
         logger.info(
             "[\x1b[38;5;51mUSMD\x1b[0m] "
             "\x1b[32mNode %d is running\x1b[0m (state=%s)",
@@ -621,6 +684,8 @@ class NodeDaemon:  # pylint: disable=too-many-instance-attributes
         finally:
             broadcast_task.cancel()
             heartbeat_task.cancel()
+            if quorum_task is not None:
+                quorum_task.cancel()
             if web_task is not None:
                 if self._web is not None:
                     self._web.close()

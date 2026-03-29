@@ -52,11 +52,13 @@ def _is_authenticated(request: HttpRequest) -> bool:
 
 def login_required(view_fn):
     """Decorator: redirect to login if the session has no 'authenticated' flag."""
+
     @wraps(view_fn)
     async def wrapper(request: HttpRequest, *args, **kwargs):
         if not _is_authenticated(request):
             return HttpResponseRedirect(_LOGIN_URL)
         return await view_fn(request, *args, **kwargs)
+
     return wrapper
 
 
@@ -64,7 +66,7 @@ def login_required(view_fn):
 # Node data collector
 # ---------------------------------------------------------------------------
 
-_SNAPSHOT_CACHE: dict[str, tuple[dict, float]] = {}   # address → (data, ts)
+_SNAPSHOT_CACHE: dict[str, tuple[dict, float]] = {}  # address → (data, ts)
 _CACHE_TTL = 8.0  # seconds before re-querying
 
 
@@ -110,10 +112,7 @@ async def _collect_all_nodes() -> list[dict]:
         if entry.address != local_addr
     ]
 
-    tasks = [
-        _fetch_remote_snapshot(addr, state.ncp_port)
-        for addr in remote_addrs
-    ]
+    tasks = [_fetch_remote_snapshot(addr, state.ncp_port) for addr in remote_addrs]
     results = await asyncio.gather(*tasks, return_exceptions=True)
     for addr, snap in zip(remote_addrs, results):
         if isinstance(snap, dict) and snap:
@@ -125,9 +124,31 @@ async def _collect_all_nodes() -> list[dict]:
     return nodes
 
 
+def _extract_promotions(nodes: list[dict]) -> list[dict]:
+    """Aggregate and deduplicate quorum promotions from all node snapshots.
+
+    Args:
+        nodes: List of node snapshot dicts (each may contain ``quorum.promotions``).
+
+    Returns:
+        list[dict]: Deduplicated promotions sorted newest first.
+    """
+    seen: set[tuple] = set()
+    all_promotions: list[dict] = []
+    for snap in nodes:
+        for promo in snap.get("quorum", {}).get("promotions", []):
+            key = (promo.get("epoch"), promo.get("address"))
+            if key not in seen:
+                seen.add(key)
+                all_promotions.append(promo)
+    all_promotions.sort(key=lambda p: p.get("promoted_at", 0.0), reverse=True)
+    return all_promotions
+
+
 # ---------------------------------------------------------------------------
 # Views
 # ---------------------------------------------------------------------------
+
 
 def index(request: HttpRequest) -> HttpResponse:
     """Redirect / → dashboard (or login if not authenticated)."""
@@ -146,8 +167,10 @@ def login_view(request: HttpRequest) -> HttpResponse:
     if request.method == "POST":
         username = request.POST.get("username", "")
         password = request.POST.get("password", "")
-        if (username == settings.USMD_WEB_USERNAME
-                and password == settings.USMD_WEB_PASSWORD):
+        if (
+            username == settings.USMD_WEB_USERNAME
+            and password == settings.USMD_WEB_PASSWORD
+        ):
             request.session["authenticated"] = True
             request.session.set_expiry(0)  # expire on browser close
             return HttpResponseRedirect(_DASHBOARD_URL)
@@ -166,7 +189,16 @@ def logout_view(request: HttpRequest) -> HttpResponse:
 async def dashboard(request: HttpRequest) -> HttpResponse:
     """Main dashboard — all nodes with resource bars."""
     nodes = await _collect_all_nodes()
-    return render(request, "dashboard.html", {"nodes": nodes, "now": time.time()})
+    promotions = _extract_promotions(nodes)
+    return render(
+        request,
+        "dashboard.html",
+        {
+            "nodes": nodes,
+            "promotions": promotions,
+            "now": time.time(),
+        },
+    )
 
 
 @login_required
@@ -180,10 +212,14 @@ async def node_detail(request: HttpRequest, address: str) -> HttpResponse:
     else:
         snap = await _fetch_remote_snapshot(address, state.ncp_port)
         if not snap:
-            return render(request, "node_detail.html", {
-                "error": f"Nœud {address} injoignable.",
-                "address": address,
-            })
+            return render(
+                request,
+                "node_detail.html",
+                {
+                    "error": f"Nœud {address} injoignable.",
+                    "address": address,
+                },
+            )
         snap["is_local"] = False
 
     return render(request, "node_detail.html", {"node_data": snap, "address": address})
@@ -193,7 +229,13 @@ async def node_detail(request: HttpRequest, address: str) -> HttpResponse:
 async def api_nodes(_request: HttpRequest) -> JsonResponse:
     """JSON endpoint — list of all nodes with their latest snapshot."""
     nodes = await _collect_all_nodes()
-    return JsonResponse({"nodes": nodes, "ts": time.time()})
+    return JsonResponse(
+        {
+            "nodes": nodes,
+            "promotions": _extract_promotions(nodes),
+            "ts": time.time(),
+        }
+    )
 
 
 @login_required
@@ -204,7 +246,13 @@ async def api_stream(_request: HttpRequest) -> StreamingHttpResponse:
         while True:
             try:
                 nodes = await _collect_all_nodes()
-                payload = json.dumps({"nodes": nodes, "ts": time.time()})
+                payload = json.dumps(
+                    {
+                        "nodes": nodes,
+                        "promotions": _extract_promotions(nodes),
+                        "ts": time.time(),
+                    }
+                )
                 yield f"data: {payload}\n\n".encode()
             except Exception as exc:  # pylint: disable=broad-except
                 logger.warning("SSE generator error: %s", exc)

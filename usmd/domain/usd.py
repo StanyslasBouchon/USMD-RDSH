@@ -24,6 +24,7 @@ from typing import Optional
 from ..node.node import Node, NodeInfo
 from ..utils.errors import Error, ErrorKind
 from ..utils.result import Result
+from ._versioned import log_config_update
 
 
 @dataclass
@@ -40,7 +41,7 @@ class USDConfig:  # pylint: disable=too-many-instance-attributes
         edb_address: Optional DNS/IP of the Easy Deployment Base server.
         max_reference_nodes: How many reference nodes each node maintains.
             Default: 5.
-        load_threshold: Normalised load (0–1) above which a node is considered
+        load_threshold: Normalised load (0 to 1) above which a node is considered
             weakened and triggers emergency. Default: 0.8.
         ping_tolerance_ms: Maximum ping (ms) used as T in the distance formula.
             Default: 200.
@@ -231,11 +232,8 @@ class UnifiedSystemDomain:
             2
         """
         if new_config.version > self.config.version:
-            logging.info(
-                "[\x1b[38;5;51mUSMD\x1b[0m] USD %s config updated v%d→v%d",
-                self.config.name,
-                self.config.version,
-                new_config.version,
+            log_config_update(
+                "USD", self.config.name, self.config.version, new_config.version
             )
             self.config = new_config
 

@@ -9,6 +9,7 @@ Examples:
     >>> isinstance(ctx, HandlerContext)
     True
 """
+# pylint: disable=too-many-lines
 
 import logging
 import time
@@ -24,6 +25,10 @@ from ..protocol.commands.get_status import (
     GetStatusResponse,
     NodeStatus,
 )
+from ..protocol.commands.announce_promotion import (
+    AnnouncePromotionRequest,
+    AnnouncePromotionResponse,
+)
 from ..protocol.commands.inform_reference_node import InformReferenceNodeRequest
 from ..protocol.commands.request_approval import (
     RequestApprovalRequest,
@@ -37,6 +42,10 @@ from ..protocol.commands.request_help import RequestHelpRequest, RequestHelpResp
 from ..protocol.commands.request_snapshot import (
     RequestSnapshotRequest,
     RequestSnapshotResponse,
+)
+from ..protocol.commands.request_vote import (
+    RequestVoteRequest,
+    RequestVoteResponse,
 )
 from ..protocol.commands.send_mutation_properties import SendMutationPropertiesRequest
 from ..protocol.commands.send_ucd_properties import SendUcdPropertiesRequest
@@ -53,6 +62,7 @@ from ...node.node import Node
 from ...node.role import NodeRole
 from ...security.endorsement import EndorsementFactory
 from ...utils.errors import Error
+from ...quorum.manager import QuorumManager
 
 _CURRENT_VERSION = NcpVersion(1, 0, 0, 0)
 
@@ -88,6 +98,7 @@ class HandlerContext:  # pylint: disable=too-many-instance-attributes
     resource_getter: Callable[[], ResourceUsage]
     snapshot_fn: Callable[[], dict] = lambda: {}
     ping_tolerance_ms: int = 200
+    quorum_manager: QuorumManager | None = None
 
 
 def _make_response(command_id: NcpCommandId, payload: bytes) -> NcpFrame:
@@ -143,6 +154,8 @@ class NcpCommandHandler:  # pylint: disable=too-few-public-methods
             NcpCommandId.SEND_MUTATION_PROPERTIES: self._handle_send_mutation_properties,
             NcpCommandId.INFORM_REFERENCE_NODE: self._handle_inform_reference_node,
             NcpCommandId.REQUEST_SNAPSHOT: self._handle_request_snapshot,
+            NcpCommandId.REQUEST_VOTE: self._handle_request_vote,
+            NcpCommandId.ANNOUNCE_PROMOTION: self._handle_announce_promotion,
         }
 
     def handle(self, frame: NcpFrame) -> NcpFrame:
@@ -438,4 +451,59 @@ class NcpCommandHandler:  # pylint: disable=too-few-public-methods
         return _make_response(
             NcpCommandId.REQUEST_SNAPSHOT,
             RequestSnapshotResponse(snapshot).to_payload(),
+        )
+
+    # ------------------------------------------------------------------
+    # Command 10: Request_vote
+    # ------------------------------------------------------------------
+
+    def _handle_request_vote(self, frame: NcpFrame) -> NcpFrame:
+        parse_result = RequestVoteRequest.from_payload(frame.payload)
+        if parse_result.is_err():
+            return _error_response(NcpCommandId.REQUEST_VOTE, parse_result.unwrap_err())
+
+        req = parse_result.unwrap()
+        if self.ctx.quorum_manager is not None:
+            granted = self.ctx.quorum_manager.should_grant_vote(
+                req.epoch, req.candidate_address
+            )
+        else:
+            granted = False
+
+        logger.debug(
+            "[\x1b[38;5;51mUSMD\x1b[0m] NCP REQUEST_VOTE epoch=%d from=%s → %s",
+            req.epoch,
+            req.candidate_address,
+            "YES" if granted else "NO",
+        )
+        return _make_response(
+            NcpCommandId.REQUEST_VOTE,
+            RequestVoteResponse(granted=granted).to_payload(),
+        )
+
+    # ------------------------------------------------------------------
+    # Command 11: Announce_promotion
+    # ------------------------------------------------------------------
+
+    def _handle_announce_promotion(self, frame: NcpFrame) -> NcpFrame:
+        parse_result = AnnouncePromotionRequest.from_payload(frame.payload)
+        if parse_result.is_err():
+            return _error_response(
+                NcpCommandId.ANNOUNCE_PROMOTION, parse_result.unwrap_err()
+            )
+
+        req = parse_result.unwrap()
+        if self.ctx.quorum_manager is not None:
+            self.ctx.quorum_manager.on_promotion_announced(
+                req.epoch, req.pub_key, req.address
+            )
+
+        logger.info(
+            "[\x1b[38;5;51mUSMD\x1b[0m] NCP ANNOUNCE_PROMOTION epoch=%d addr=%s",
+            req.epoch,
+            req.address,
+        )
+        return _make_response(
+            NcpCommandId.ANNOUNCE_PROMOTION,
+            AnnouncePromotionResponse().to_payload(),
         )

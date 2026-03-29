@@ -19,6 +19,7 @@ from dataclasses import dataclass
 
 from ..utils.errors import Error, ErrorKind
 from ..utils.result import Result
+from ._versioned import log_config_update
 
 
 @dataclass
@@ -165,13 +166,8 @@ class UnifiedSystemCluster:
             >>> usc.config.version
             2
         """
-        if new_config.version > self.config.version:  # pylint: disable=duplicate-code
-            logging.info(
-                "[\x1b[38;5;51mUSMD\x1b[0m] USC %s config updated v%d→v%d",
-                self.config.name,
-                self.config.version,
-                new_config.version,
-            )
+        if new_config.version > self.config.version:
+            log_config_update("USC", self.config.name, self.config.version, new_config.version)
             self.config = new_config
 
     def __repr__(self) -> str:

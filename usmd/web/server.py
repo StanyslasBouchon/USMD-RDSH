@@ -24,6 +24,7 @@ Examples:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import secrets
@@ -170,8 +171,9 @@ class WebServer:  # pylint: disable=too-few-public-methods
             )
         )
 
-        # 4. Resolve TLS
-        cert, key = self._resolve_ssl()
+        # 4. Resolve TLS — subprocess.run() is blocking; run it in a thread
+        loop = asyncio.get_running_loop()
+        cert, key = await loop.run_in_executor(None, self._resolve_ssl)
         scheme = "https" if cert else "http"
 
         # 5. Build ASGI app

@@ -64,6 +64,9 @@ class NodeConfig:  # pylint: disable=too-many-instance-attributes
         join_timeout: Seconds to wait for peer discovery + approval on startup.
         ctl_socket: Path to the Unix-domain control socket (Linux/macOS).
         ctl_port: TCP loopback port for the control server (Windows).
+        quorum_enabled: Enable the distributed operator election system.
+        quorum_check_interval: Seconds between operator liveness checks.
+        quorum_election_timeout: Max random candidacy delay in seconds.
 
     Examples:
         >>> cfg = NodeConfig()
@@ -103,8 +106,8 @@ class NodeConfig:  # pylint: disable=too-many-instance-attributes
     join_timeout: float = 30.0
 
     # Control socket / TCP (Linux: Unix-domain socket; Windows: TCP loopback)
-    ctl_socket: str = "usmd.sock"   # Unix-domain socket path (Linux/macOS)
-    ctl_port: int = 5627            # TCP loopback port (Windows)
+    ctl_socket: str = "usmd.sock"  # Unix-domain socket path (Linux/macOS)
+    ctl_port: int = 5627  # TCP loopback port (Windows)
 
     # Web dashboard
     web_enabled: bool = False
@@ -112,8 +115,13 @@ class NodeConfig:  # pylint: disable=too-many-instance-attributes
     web_port: int = 8443
     web_username: str = "admin"
     web_password: str = "changeme"
-    web_ssl_cert: str = ""   # path to TLS cert (PEM), "" → auto self-signed
-    web_ssl_key: str = ""    # path to TLS key (PEM)
+    web_ssl_cert: str = ""  # path to TLS cert (PEM), "" → auto self-signed
+    web_ssl_key: str = ""  # path to TLS key (PEM)
+
+    # Quorum election
+    quorum_enabled: bool = True
+    quorum_check_interval: float = 30.0  # seconds between operator liveness checks
+    quorum_election_timeout: float = 8.0  # max candidacy delay (random 1 to N seconds)
 
     # ------------------------------------------------------------------ #
     # Derived properties                                                   #
@@ -225,11 +233,19 @@ class NodeConfig:  # pylint: disable=too-many-instance-attributes
         cfg.usd_name = usd_sec.get("name", cfg.usd_name)
         cfg.cluster_name = usd_sec.get("cluster_name", cfg.cluster_name)
         cfg.edb_address = usd_sec.get("edb_address", cfg.edb_address)
-        cfg.max_reference_nodes = int(usd_sec.get("max_reference_nodes", cfg.max_reference_nodes))
+        cfg.max_reference_nodes = int(
+            usd_sec.get("max_reference_nodes", cfg.max_reference_nodes)
+        )
         cfg.load_threshold = float(usd_sec.get("load_threshold", cfg.load_threshold))
-        cfg.ping_tolerance_ms = int(usd_sec.get("ping_tolerance_ms", cfg.ping_tolerance_ms))
-        cfg.load_check_interval = int(usd_sec.get("load_check_interval", cfg.load_check_interval))
-        cfg.emergency_threshold = float(usd_sec.get("emergency_threshold", cfg.emergency_threshold))
+        cfg.ping_tolerance_ms = int(
+            usd_sec.get("ping_tolerance_ms", cfg.ping_tolerance_ms)
+        )
+        cfg.load_check_interval = int(
+            usd_sec.get("load_check_interval", cfg.load_check_interval)
+        )
+        cfg.emergency_threshold = float(
+            usd_sec.get("emergency_threshold", cfg.emergency_threshold)
+        )
 
         ports_sec = data.get("ports", {}) or {}
         cfg.ncp_port = int(ports_sec.get("ncp", cfg.ncp_port))
@@ -248,5 +264,14 @@ class NodeConfig:  # pylint: disable=too-many-instance-attributes
         cfg.web_password = str(web_sec.get("password", cfg.web_password))
         cfg.web_ssl_cert = str(web_sec.get("ssl_cert", cfg.web_ssl_cert))
         cfg.web_ssl_key = str(web_sec.get("ssl_key", cfg.web_ssl_key))
+
+        quorum_sec = data.get("quorum", {}) or {}
+        cfg.quorum_enabled = bool(quorum_sec.get("enabled", cfg.quorum_enabled))
+        cfg.quorum_check_interval = float(
+            quorum_sec.get("check_interval", cfg.quorum_check_interval)
+        )
+        cfg.quorum_election_timeout = float(
+            quorum_sec.get("election_timeout", cfg.quorum_election_timeout)
+        )
 
         return cfg

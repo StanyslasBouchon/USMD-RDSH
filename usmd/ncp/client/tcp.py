@@ -16,6 +16,7 @@ from typing import Optional
 from ..protocol.frame import NcpCommandId, NcpFrame
 from ..protocol.versions import NcpVersion
 from ...utils.errors import Error, ErrorKind
+from ...utils.io import close_stream_writer
 from ...utils.result import Result
 
 # Current NCP version this node speaks
@@ -164,8 +165,4 @@ class NcpClient:  # pylint: disable=too-few-public-methods
 
         finally:
             if writer is not None:
-                writer.close()
-                try:
-                    await writer.wait_closed()
-                except OSError:
-                    pass
+                await close_stream_writer(writer)

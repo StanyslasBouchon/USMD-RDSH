@@ -20,6 +20,7 @@ import struct
 from typing import Optional
 
 from ..protocol.frame import NcpFrame
+from ...utils.io import close_stream_writer
 from .handler import NcpCommandHandler
 
 logger = logging.getLogger(__name__)
@@ -122,11 +123,7 @@ class NcpServer:
                 exc,
             )
         finally:
-            writer.close()
-            try:
-                await writer.wait_closed()
-            except OSError:
-                pass
+            await close_stream_writer(writer)
 
     async def _read_frame(
         self,

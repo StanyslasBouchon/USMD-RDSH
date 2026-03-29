@@ -21,6 +21,8 @@ import os
 import sys
 from typing import Callable, Optional
 
+from ..utils.io import close_writer
+
 logger = logging.getLogger(__name__)
 
 
@@ -146,10 +148,7 @@ class CtlServer:  # pylint: disable=too-few-public-methods
         except (asyncio.TimeoutError, OSError):
             pass
         finally:
-            try:
-                writer.close()
-            except OSError:
-                pass
+            close_writer(writer)
 
     def close(self) -> None:
         """Close the server and (on Linux) remove the socket file."""

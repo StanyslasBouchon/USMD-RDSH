@@ -6,7 +6,6 @@ import os
 import sys
 import tempfile
 import time
-from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -356,7 +355,9 @@ class TestCtlServerTCP:
     @pytest.mark.asyncio
     async def test_tcp_status_command_returns_snapshot(self):
         """A 'status' request over TCP must return the snapshot dict."""
-        srv = CtlServer(socket_path="unused.sock", snapshot_fn=_make_snapshot, ctl_port=0)
+        srv = CtlServer(
+            socket_path="unused.sock", snapshot_fn=_make_snapshot, ctl_port=0
+        )
         # Force TCP path regardless of platform
         await srv._start_tcp()  # pylint: disable=protected-access
 
@@ -376,7 +377,9 @@ class TestCtlServerTCP:
     @pytest.mark.asyncio
     async def test_tcp_unknown_command_returns_error(self):
         """An unknown command over TCP must return an error key."""
-        srv = CtlServer(socket_path="unused.sock", snapshot_fn=_make_snapshot, ctl_port=0)
+        srv = CtlServer(
+            socket_path="unused.sock", snapshot_fn=_make_snapshot, ctl_port=0
+        )
         await srv._start_tcp()  # pylint: disable=protected-access
 
         try:
@@ -394,7 +397,9 @@ class TestCtlServerTCP:
     @pytest.mark.asyncio
     async def test_tcp_actual_port_nonzero_after_start(self):
         """actual_port must be updated to the OS-assigned port after start."""
-        srv = CtlServer(socket_path="unused.sock", snapshot_fn=_make_snapshot, ctl_port=0)
+        srv = CtlServer(
+            socket_path="unused.sock", snapshot_fn=_make_snapshot, ctl_port=0
+        )
         await srv._start_tcp()  # pylint: disable=protected-access
         try:
             assert srv.actual_port > 0

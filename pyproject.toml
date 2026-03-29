@@ -10,13 +10,13 @@ testpaths = ["tests"]
 legacy_tox_ini = "tox.ini"
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.13"
 strict = true
 ignore_missing_imports = true
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py313"
 
 [tool.pylint.messages_control]
 # R0801: duplicate-code is a false positive here — usc.py and usd.py both

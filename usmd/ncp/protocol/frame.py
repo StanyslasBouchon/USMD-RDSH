@@ -53,6 +53,8 @@ class NcpCommandId(IntEnum):
         SEND_MUTATION_PROPERTIES (7): Propagate mutation definitions.
         INFORM_REFERENCE_NODE (8): Notify reference nodes of one's peer list.
         REQUEST_SNAPSHOT (9): Request a full JSON status snapshot (NIT, NAL, NEL, resources).
+        REQUEST_VOTE (10): Quorum election — candidate solicits a vote from a peer.
+        ANNOUNCE_PROMOTION (11): Quorum election — winner announces new operator role.
 
     Examples:
         >>> NcpCommandId.GET_STATUS.value
@@ -71,6 +73,8 @@ class NcpCommandId(IntEnum):
     SEND_MUTATION_PROPERTIES = 7
     INFORM_REFERENCE_NODE = 8
     REQUEST_SNAPSHOT = 9
+    REQUEST_VOTE = 10
+    ANNOUNCE_PROMOTION = 11
 
 
 @dataclass

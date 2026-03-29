@@ -11,7 +11,7 @@ The NCP version is encoded on **4 bytes**:
 | 3       | Bug-fix version — bug corrections                |
 +---------+--------------------------------------------------+
 
-When a major version is released, bytes 1–3 are reset to 0.
+When a major version is released, bytes 1 to 3 are reset to 0.
 Each non-major release increments the appropriate byte.
 
 Examples:
