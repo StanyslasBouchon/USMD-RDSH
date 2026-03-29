@@ -45,13 +45,11 @@ def configure(
         DEBUG=debug,
         SECRET_KEY=secret_key,
         ALLOWED_HOSTS=["*"],
-
         # ---- Apps --------------------------------------------------------
         INSTALLED_APPS=[
             "django.contrib.staticfiles",
             "django.contrib.sessions",
         ],
-
         # ---- Middleware ---------------------------------------------------
         MIDDLEWARE=[
             "django.middleware.security.SecurityMiddleware",
@@ -60,15 +58,12 @@ def configure(
             "django.middleware.csrf.CsrfViewMiddleware",
             "django.middleware.clickjacking.XFrameOptionsMiddleware",
         ],
-
         # ---- Sessions (no database — signed cookies) ---------------------
         SESSION_ENGINE="django.contrib.sessions.backends.signed_cookies",
         SESSION_COOKIE_HTTPONLY=True,
         SESSION_COOKIE_SAMESITE="Lax",
-
         # ---- URL routing -------------------------------------------------
         ROOT_URLCONF="usmd.web.urls",
-
         # ---- Templates ---------------------------------------------------
         TEMPLATES=[
             {
@@ -82,37 +77,18 @@ def configure(
                 },
             }
         ],
-
         # ---- Static files ------------------------------------------------
         STATIC_URL="/static/",
         STATICFILES_DIRS=[str(_WEB_DIR / "static")],
-
         # ---- No database -------------------------------------------------
         DATABASES={},
-
         # ---- ASGI app ----------------------------------------------------
         ASGI_APPLICATION="usmd.web.asgi.application",
-
         # ---- Custom web credentials (accessible from views via settings) --
         USMD_WEB_USERNAME=username,
         USMD_WEB_PASSWORD=password,
-
-        # ---- Logging -----------------------------------------------------
-        LOGGING={
-            "version": 1,
-            "disable_existing_loggers": False,
-            "handlers": {
-                "console": {
-                    "class": "logging.StreamHandler",
-                    "level": "WARNING",
-                },
-            },
-            "root": {
-                "handlers": ["console"],
-                "level": "WARNING",
-            },
-        },
-
+        # ---- Logging — do not let Django override the daemon's logging setup ---
+        LOGGING_CONFIG=None,
         # ---- Security ----------------------------------------------------
         SECURE_CONTENT_TYPE_NOSNIFF=True,
         X_FRAME_OPTIONS="DENY",

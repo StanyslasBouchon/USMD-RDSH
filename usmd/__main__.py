@@ -46,6 +46,7 @@ from .node_daemon import NodeDaemon
 # Argument parsing
 # ---------------------------------------------------------------------------
 
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="usmd",
@@ -132,9 +133,13 @@ def _build_parser() -> argparse.ArgumentParser:
 # Status command
 # ---------------------------------------------------------------------------
 
+
 def _run_status(args: argparse.Namespace) -> None:
     """Connect to the CTL server of a running daemon and print its status."""
-    from .ctl.client import get_status, print_status  # pylint: disable=import-outside-toplevel
+    from .ctl.client import (  # pylint: disable=import-outside-toplevel
+        get_status,
+        print_status,
+    )
 
     cfg = NodeConfig.from_file(args.config)
 
@@ -153,6 +158,7 @@ def _run_status(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 # Daemon command (default)
 # ---------------------------------------------------------------------------
+
 
 def _run_daemon(args: argparse.Namespace) -> None:
     """Start the USMD node daemon."""
@@ -177,13 +183,43 @@ def _run_daemon(args: argparse.Namespace) -> None:
     if sys.platform == "win32":
         _run_daemon_windows(daemon)
     else:
-        try:
-            asyncio.run(daemon.run())
-        except KeyboardInterrupt:
-            pass
-        except Exception as exc:  # pylint: disable=broad-except
-            logging.critical("[\x1b[38;5;51mUSMD\x1b[0m] Fatal error: %s", exc)
-            sys.exit(1)
+        _run_daemon_unix(daemon)
+
+
+def _run_daemon_unix(daemon: "NodeDaemon") -> None:
+    """Run the daemon on Linux/macOS with proper Ctrl+C and SIGTERM support.
+
+    Uses ``loop.add_signal_handler()`` (Unix-only) to intercept SIGINT and
+    SIGTERM before any third-party library (e.g. uvicorn) can steal them.
+    The main asyncio task is cancelled gracefully, which lets the ``finally``
+    block in NodeDaemon.run() close all sub-tasks cleanly.
+    """
+    import signal  # pylint: disable=import-outside-toplevel
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    main_task = loop.create_task(daemon.run())
+
+    def _request_stop() -> None:
+        logging.info("[\x1b[38;5;51mUSMD\x1b[0m] Arrêt demandé (signal)…")
+        main_task.cancel()
+
+    loop.add_signal_handler(signal.SIGINT, _request_stop)
+    loop.add_signal_handler(signal.SIGTERM, _request_stop)
+
+    try:
+        loop.run_until_complete(main_task)
+    except asyncio.CancelledError:
+        pass
+    except Exception as exc:  # pylint: disable=broad-except
+        logging.critical("[\x1b[38;5;51mUSMD\x1b[0m] Fatal error: %s", exc)
+    finally:
+        pending = asyncio.all_tasks(loop)
+        for task in pending:
+            task.cancel()
+        if pending:
+            loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+        loop.close()
 
 
 def _run_daemon_windows(daemon: "NodeDaemon") -> None:
@@ -228,6 +264,7 @@ def _run_daemon_windows(daemon: "NodeDaemon") -> None:
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
+
 
 def main() -> None:
     """Dispatch to daemon or status command."""

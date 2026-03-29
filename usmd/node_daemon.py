@@ -369,6 +369,18 @@ class NodeDaemon:  # pylint: disable=too-many-instance-attributes
             for pkt in self.nel.all_issued()
         ]
 
+        # Reference nodes
+        ref_nodes_data = []
+        for peer_name in self.node.reference_nodes:
+            peer = self.usd.get_node(peer_name)
+            ref_nodes_data.append({
+                "name":           peer_name,
+                "address":        peer.address if peer else None,
+                "state":          peer.state.value if peer else "unknown",
+                "service":        peer.service_name if peer else None,
+                "reference_load": round(peer.reference_load * 100, 1) if peer else None,
+            })
+
         # Resources
         usage = _get_resource_usage()
 
@@ -393,6 +405,7 @@ class NodeDaemon:  # pylint: disable=too-many-instance-attributes
                 "received": nel_received,
                 "issued":   nel_issued,
             },
+            "reference_nodes": ref_nodes_data,
             "resources": {
                 "cpu_percent":     usage.cpu_percent,
                 "ram_percent":     usage.ram_percent,

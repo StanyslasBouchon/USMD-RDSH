@@ -222,7 +222,9 @@ async def node_detail(request: HttpRequest, address: str) -> HttpResponse:
             )
         snap["is_local"] = False
 
-    return render(request, "node_detail.html", {"node_data": snap, "address": address})
+    return render(
+        request, "node_detail.html", {"node_data": snap, "address": address, "error": None}
+    )
 
 
 @login_required

@@ -12,7 +12,7 @@
 <div class="alert alert-danger"><i class="bi bi-exclamation-triangle-fill me-2"></i>{{ error }}</div>
 {% else %}
 
-{% with n=node_data.node r=node_data.resources usd=node_data.usd nit=node_data.nit nal=node_data.nal nel=node_data.nel %}
+{% with n=node_data.node r=node_data.resources usd=node_data.usd nit=node_data.nit nal=node_data.nal nel=node_data.nel refs=node_data.reference_nodes %}
 
 <!-- ─── Node header ────────────────────────────────────────────── -->
 <div class="d-flex align-items-start gap-3 mb-4">
@@ -72,6 +72,11 @@
   <li class="nav-item">
     <a class="nav-link" data-bs-toggle="tab" href="#tab-nel">
       <i class="bi bi-patch-check-fill me-1"></i>NEL
+    </a>
+  </li>
+  <li class="nav-item">
+    <a class="nav-link" data-bs-toggle="tab" href="#tab-refs">
+      <i class="bi bi-diagram-2-fill me-1"></i>Références <span class="badge bg-secondary ms-1">{{ refs|length }}</span>
     </a>
   </li>
 </ul>
@@ -299,6 +304,68 @@
     </div>
   </div><!-- /tab-nel -->
 
+  <!-- ─ Références ────────────────────────────────────────────── -->
+  <div class="tab-pane fade" id="tab-refs">
+    <div class="node-card">
+      {% if refs %}
+      <table class="table table-sm table-striped mb-0">
+        <thead>
+          <tr>
+            <th>Nœud</th>
+            <th>Adresse</th>
+            <th>État</th>
+            <th>Service</th>
+            <th>Charge de référence (c)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for ref in refs %}
+          <tr>
+            <td class="text-light">#{{ ref.name }}</td>
+            <td class="text-light">{{ ref.address|default:"—" }}</td>
+            <td>
+              {% if ref.state == "active" %}
+                <span class="badge badge-state-active">Actif</span>
+              {% elif "pending" in ref.state %}
+                <span class="badge badge-state-pending">En attente</span>
+              {% elif "inactive" in ref.state or "timeout" in ref.state or ref.state == "unknown" %}
+                <span class="badge badge-state-inactive">Inactif</span>
+              {% else %}
+                <span class="badge badge-state-default">{{ ref.state }}</span>
+              {% endif %}
+            </td>
+            <td class="text-muted">{{ ref.service|default:"—" }}</td>
+            <td>
+              {% if ref.reference_load is not None %}
+              <div class="d-flex align-items-center gap-2">
+                <!-- djlint:off H021 -->
+                <div class="progress flex-grow-1" style="height:6px">
+                  <div class="progress-bar{% if ref.reference_load >= 80 %} bg-danger{% elif ref.reference_load >= 50 %} bg-warning{% else %} bg-success{% endif %}"
+                       style="width:{{ ref.reference_load }}%"></div>
+                </div>
+                <!-- djlint:on -->
+                <span class="text-light fw-semibold" style="min-width:3.5rem;text-align:right">{{ ref.reference_load|floatformat:1 }}%</span>
+              </div>
+              {% else %}
+              <span class="text-muted">—</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <div class="p-3 text-muted small"><i class="bi bi-info-circle me-1"></i>Aucun nœud de référence enregistré.</div>
+      {% endif %}
+    </div>
+    <div class="mt-2 text-muted small px-1">
+      <i class="bi bi-info-circle me-1"></i>
+      La <strong>charge de référence</strong> est la composante <em>c</em> de la formule de distance
+      <code>d = t/T + c + p + n</code>. Elle représente la charge maximale (CPU, RAM, disque, réseau)
+      du nœud de référence ∈ [0 ; 1].
+    </div>
+  </div><!-- /tab-refs -->
+
 </div><!-- /tab-content -->
 {% endwith %}
 {% endif %}
@@ -306,6 +373,26 @@
 
 {% block extra_js %}
 <script>
+// ── Uptime counter ────────────────────────────────────────────────
+const uptimeEl = document.getElementById('uptime-display');
+let uptimeSeconds = parseInt('{{ node_data.node.uptime_seconds|floatformat:0 }}', 10) || 0;
+
+function formatUptime(s) {
+  const d = Math.floor(s / 86400);
+  const h = Math.floor((s % 86400) / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  if (d > 0) return `${d}j ${h}h ${String(m).padStart(2,'0')}m ${String(sec).padStart(2,'0')}s`;
+  if (h > 0) return `${h}h ${String(m).padStart(2,'0')}m ${String(sec).padStart(2,'0')}s`;
+  if (m > 0) return `${m}m ${String(sec).padStart(2,'0')}s`;
+  return `${sec}s`;
+}
+
+if (uptimeEl) {
+  uptimeEl.textContent = formatUptime(uptimeSeconds);
+  setInterval(() => { uptimeSeconds++; uptimeEl.textContent = formatUptime(uptimeSeconds); }, 1000);
+}
+
 // ── Live resource chart ───────────────────────────────────────────
 const ctx = document.getElementById('resourceChart');
 if (ctx) {
@@ -347,6 +434,8 @@ if (ctx) {
       const data = await resp.json();
       const node = data.nodes.find(n => n.node?.address === address);
       if (!node) return;
+      // Resync uptime from server to avoid drift
+      if (node.node?.uptime_seconds != null) uptimeSeconds = Math.round(node.node.uptime_seconds);
       const r = node.resources;
       chart.data.datasets[0].data.push(+(r.cpu_percent    * 100).toFixed(1));
       chart.data.datasets[1].data.push(+(r.ram_percent    * 100).toFixed(1));
