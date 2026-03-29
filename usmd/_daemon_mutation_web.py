@@ -18,12 +18,20 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _node_has_usd_operator_role(daemon: "NodeDaemon") -> bool:
+    """True if this node's key holds ``USD_OPERATOR`` in the NAL (may coexist with other roles)."""
+    return daemon.nal.has_role(daemon.ed_pub, NodeRole.USD_OPERATOR)
+
+
 def parse_mutation_web_input(
     daemon: "NodeDaemon", service_name: str, yaml_text: str
 ) -> tuple[str, Service, Service | None, bool] | str:
     """Return ``(name, new_svc, existing, is_new)`` or an error message."""
-    if daemon.cfg.node_role != NodeRole.USD_OPERATOR:
-        return "Reserved for the usd_operator role."
+    if not _node_has_usd_operator_role(daemon):
+        return (
+            "Mutation publish requires the usd_operator role on this node "
+            "(NAL); multiple roles per node are allowed."
+        )
     name = service_name.strip()
     if not name:
         return "Service name is required."

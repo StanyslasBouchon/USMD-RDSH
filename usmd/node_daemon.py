@@ -254,10 +254,10 @@ class NodeDaemon:
     ) -> tuple[bool, str]:
         """Parse YAML, optionally run lifecycle on this node, sync USD + catalogue.
 
-        Reserved for ``usd_operator`` — updates :attr:`usd.config.version` and
-        pushes ``SEND_USD_PROPERTIES`` + ``SEND_MUTATION_PROPERTIES`` to references
-        when the update succeeds (or when only the catalogue is updated with
-        ``apply_locally=False``).
+        Requires ``usd_operator`` in the local NAL (may be one of several roles).
+        Updates :attr:`usd.config.version` and pushes ``SEND_USD_PROPERTIES`` +
+        ``SEND_MUTATION_PROPERTIES`` to references when the update succeeds (or
+        when only the catalogue is updated with ``apply_locally=False``).
         """
         prep = parse_mutation_web_input(self, service_name, yaml_text)
         if isinstance(prep, str):
