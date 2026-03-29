@@ -69,6 +69,68 @@ def login_required(view_fn):
 _SNAPSHOT_CACHE: dict[str, tuple[dict, float]] = {}  # address → (data, ts)
 _CACHE_TTL = 8.0  # seconds before re-querying
 
+# Human-readable French labels for each NodeState value
+_STATE_REASONS: dict[str, str] = {
+    "inactive":                                    "Inactif",
+    "inactive_timeout":                            "Délai NCP dépassé",
+    "inactive_nndp_no_here_i_am":                  "Aucun HIA reçu",
+    "inactive_mutating":                           "En mutation",
+    "inactive_emergency":                          "Urgence",
+    "inactive_emergency_out_of_resources":         "Ressources insuffisantes",
+    "inactive_emergency_dependency_inactive":      "Dépendance inactive",
+    "inactive_emergency_health_check_failed":      "Vérification santé échouée",
+    "inactive_emergency_update_failed":            "Mise à jour échouée",
+    "excluded_invalid_nit":                        "NIT invalide (exclu)",
+    "excluded_invalid_endorsement":                "Endorsement invalide (exclu)",
+    "excluded_unverifiable_endorsement":           "Endorsement invérifiable (exclu)",
+    "excluded_invalid_revocation":                 "Révocation invalide (exclu)",
+    "excluded_invalid_endorsement_revocation":     "Révocation endorsement invalide (exclu)",
+}
+
+
+def _get_state_reason(state_value: str) -> str:
+    """Return a human-readable French label for a NodeState value."""
+    return _STATE_REASONS.get(state_value, "")
+
+
+def _invalidate_snapshot_cache(address: str) -> None:
+    """Remove any cached snapshot for *address* (e.g. after a node goes inactive)."""
+    _SNAPSHOT_CACHE.pop(address, None)
+
+
+def _build_inactive_stub(address: str, usd_node) -> dict:
+    """Build a minimal snapshot dict for a node known to be inactive.
+
+    Avoids any NCP poll while still surfacing the node on the dashboard.
+    """
+    state_val = usd_node.state.value
+    return {
+        "is_local": False,
+        "node": {
+            "address": address,
+            "name": usd_node.name,
+            "state": state_val,
+            "state_reason": _get_state_reason(state_val),
+            "role": "unknown",
+            "uptime_seconds": 0,
+        },
+        "resources": {
+            "cpu_percent": 0.0,
+            "ram_percent": 0.0,
+            "disk_percent": 0.0,
+            "network_percent": 0.0,
+            "reference_load": 0.0,
+        },
+        "usd": {},
+        "nit": [],
+        "nal": [],
+        "nel": [],
+        "nrt": [],
+        "nrl": [],
+        "reference_nodes": [],
+        "quorum": {"elected_roles": [], "promotions": []},
+    }
+
 
 async def _fetch_remote_snapshot(address: str, ncp_port: int) -> dict | None:
     """Fetch a snapshot from a remote node via NCP REQUEST_SNAPSHOT."""
@@ -84,6 +146,7 @@ async def _fetch_remote_snapshot(address: str, ncp_port: int) -> dict | None:
     )
     if result.is_err():
         logger.debug("REQUEST_SNAPSHOT to %s failed: %s", address, result.unwrap_err())
+        _invalidate_snapshot_cache(address)
         state = get_state()
         if state.on_ncp_failure:
             state.on_ncp_failure(address)
@@ -99,7 +162,13 @@ async def _fetch_remote_snapshot(address: str, ncp_port: int) -> dict | None:
 
 
 async def _collect_all_nodes() -> list[dict]:
-    """Collect snapshots from the local node + all NIT peers."""
+    """Collect snapshots from the local node + all peers.
+
+    Inactive nodes (state != ACTIVE in the USD) are included as lightweight
+    stub entries without any NCP poll.  Only nodes whose USD state is active
+    (or whose state is unknown, e.g. not yet registered in the USD) are queried
+    via NCP REQUEST_SNAPSHOT.
+    """
     state = get_state()
 
     # Local node (direct call — no network)
@@ -107,22 +176,46 @@ async def _collect_all_nodes() -> list[dict]:
     local_snap["is_local"] = True
     nodes = [local_snap]
 
-    # Remote nodes listed in the NIT
     local_addr = local_snap.get("node", {}).get("address", "")
-    remote_addrs = [
-        entry.address
-        for entry in state.nit._entries.values()  # pylint: disable=protected-access
-        if entry.address != local_addr
-    ]
 
-    tasks = [_fetch_remote_snapshot(addr, state.ncp_port) for addr in remote_addrs]
+    # Build address → USD node map (excluding self)
+    addr_to_usd_node = {
+        n.address: n
+        for n in state.usd.nodes.values()
+        if n.address != local_addr
+    }
+
+    # Union of NIT peers and USD-known peers so stale-but-known nodes stay visible
+    nit_addrs = {
+        entry.address
+        for entry in state.nit.iter_all_entries()
+        if entry.address != local_addr
+    }
+    all_remote_addrs = nit_addrs | set(addr_to_usd_node.keys())
+
+    # Partition: inactive nodes get a stub, others are polled via NCP
+    active_addrs: list[str] = []
+    for addr in all_remote_addrs:
+        usd_node = addr_to_usd_node.get(addr)
+        if usd_node is not None and not usd_node.state.is_active():
+            nodes.append(_build_inactive_stub(addr, usd_node))
+        else:
+            active_addrs.append(addr)
+
+    tasks = [_fetch_remote_snapshot(addr, state.ncp_port) for addr in active_addrs]
     results = await asyncio.gather(*tasks, return_exceptions=True)
-    for addr, snap in zip(remote_addrs, results):
+    for addr, snap in zip(active_addrs, results):
         if isinstance(snap, dict) and snap:
             snap["is_local"] = False
             nodes.append(snap)
-        elif snap and not isinstance(snap, Exception):
-            pass  # None — node unreachable
+
+    # Enrich every snapshot with a human-readable state reason
+    for node_snap in nodes:
+        node_info = node_snap.get("node")
+        if isinstance(node_info, dict):
+            node_info.setdefault(
+                "state_reason", _get_state_reason(node_info.get("state", ""))
+            )
 
     return nodes
 
@@ -213,17 +306,30 @@ async def node_detail(request: HttpRequest, address: str) -> HttpResponse:
         snap = state.snapshot_fn()
         snap["is_local"] = True
     else:
-        snap = await _fetch_remote_snapshot(address, state.ncp_port)
-        if not snap:
-            return render(
-                request,
-                "node_detail.html",
-                {
-                    "error": f"Nœud {address} injoignable.",
-                    "address": address,
-                },
-            )
-        snap["is_local"] = False
+        # Check USD state before attempting any NCP poll
+        usd_node = next(
+            (n for n in state.usd.nodes.values() if n.address == address),
+            None,
+        )
+        if usd_node is not None and not usd_node.state.is_active():
+            snap = _build_inactive_stub(address, usd_node)
+        else:
+            snap = await _fetch_remote_snapshot(address, state.ncp_port)
+            if not snap:
+                return render(
+                    request,
+                    "node_detail.html",
+                    {
+                        "error": f"Nœud {address} injoignable.",
+                        "address": address,
+                    },
+                )
+            snap["is_local"] = False
+            node_info = snap.get("node")
+            if isinstance(node_info, dict):
+                node_info.setdefault(
+                    "state_reason", _get_state_reason(node_info.get("state", ""))
+                )
 
     return render(
         request, "node_detail.html", {"node_data": snap, "address": address, "error": None}
@@ -259,7 +365,7 @@ async def api_stream(_request: HttpRequest) -> StreamingHttpResponse:
                     }
                 )
                 yield f"data: {payload}\n\n".encode()
-            except Exception as exc:  # pylint: disable=broad-except
+            except Exception as exc:
                 logger.warning("SSE generator error: %s", exc)
                 yield f"data: {json.dumps({'error': str(exc)})}\n\n".encode()
             await asyncio.sleep(5)

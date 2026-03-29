@@ -43,7 +43,7 @@ from ..utils.errors import Error, ErrorKind
 from ..utils.result import Result
 
 
-class EndorsementFactory:  # pylint: disable=too-few-public-methods
+class EndorsementFactory:
     """Creates signed EndorsementPackets on behalf of an endorsing node.
 
     Attributes:
@@ -65,7 +65,7 @@ class EndorsementFactory:  # pylint: disable=too-few-public-methods
         self._priv = endorser_private_key
         self._pub = endorser_public_key
 
-    def issue(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    def issue(
         self,
         node_name: int,
         node_pub_key: bytes,

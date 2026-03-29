@@ -30,6 +30,7 @@ Examples:
 import asyncio
 import logging
 import socket
+from dataclasses import dataclass
 from typing import Callable, Optional
 
 from ..node.state import NodeState
@@ -40,6 +41,27 @@ _PUB_KEY_OFFSET = 4   # 4 bytes NNDP version prefix
 _PUB_KEY_SIZE = 32
 
 _FALLBACK_BROADCAST = "255.255.255.255"
+
+
+@dataclass
+class NndpOptions:
+    """Network-level options for :class:`NndpService`.
+
+    Attributes:
+        listen_port: UDP port to listen on.
+        send_port: UDP source port for outbound broadcasts.
+        broadcast_address: ``"auto"`` to enumerate interfaces, or a specific
+            broadcast IP such as ``"192.168.1.255"``.
+
+    Examples:
+        >>> opts = NndpOptions()
+        >>> opts.listen_port
+        5221
+    """
+
+    listen_port: int = 5221
+    send_port: int = 5222
+    broadcast_address: str = "auto"
 
 
 def _get_interface_broadcasts(fallback: str) -> list[str]:
@@ -72,7 +94,7 @@ def _get_interface_broadcasts(fallback: str) -> list[str]:
         return [fallback]
 
     try:
-        import psutil  # pylint: disable=import-outside-toplevel
+        import psutil
 
         broadcasts: list[str] = []
         for iface_addrs in psutil.net_if_addrs().values():
@@ -142,7 +164,7 @@ class _NndpListenerProtocol(asyncio.DatagramProtocol):
             )
 
 
-class NndpService:  # pylint: disable=too-many-instance-attributes
+class NndpService:
     """NNDP broadcaster and listener for a running USMD-RDSH node.
 
     Starts two concurrent asyncio tasks:
@@ -161,7 +183,7 @@ class NndpService:  # pylint: disable=too-many-instance-attributes
         True
     """
 
-    def __init__(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    def __init__(
         self,
         node_name: int,
         pub_key: bytes,
@@ -169,9 +191,7 @@ class NndpService:  # pylint: disable=too-many-instance-attributes
         ttl: int,
         state_getter: Callable[[], NodeState],
         on_peer_discovered: Callable[[HereIAmPacket, str], None],
-        listen_port: int = 5221,
-        send_port: int = 5222,
-        broadcast_address: str = "auto",
+        options: NndpOptions | None = None,
     ) -> None:
         """Initialise the NNDP service.
 
@@ -182,20 +202,19 @@ class NndpService:  # pylint: disable=too-many-instance-attributes
             ttl: Broadcast interval in seconds.
             state_getter: Callable returning the current NodeState.
             on_peer_discovered: Called with (packet, sender_ip) on valid HIA.
-            listen_port: UDP port to listen on. Default: 5221.
-            send_port: UDP source port for broadcasts. Default: 5222.
-            broadcast_address: ``"auto"`` to broadcast on all interfaces
-                (default), or a specific IP such as ``"192.168.1.255"``.
+            options: Network-level options (ports, broadcast address).
+                     Defaults to :class:`NndpOptions` with stock values.
         """
+        _opts = options or NndpOptions()
         self.node_name = node_name
         self.ttl = ttl
         self._pub_key = pub_key
         self._priv_key = priv_key
         self._state_getter = state_getter
         self._on_peer_discovered = on_peer_discovered
-        self._listen_port = listen_port
-        self._send_port = send_port
-        self._broadcast_address = broadcast_address
+        self._listen_port = _opts.listen_port
+        self._send_port = _opts.send_port
+        self._broadcast_address = _opts.broadcast_address
 
     # ------------------------------------------------------------------
     # Listener

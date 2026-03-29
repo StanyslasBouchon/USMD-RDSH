@@ -155,11 +155,65 @@ def _row(label: str, value: Any, indent: int = 2) -> None:
     print(f"{pad}{label:<22}{value}")
 
 
+def _print_nrt(nrt: list, thin: str) -> None:
+    count = len(nrt)
+    print(f"\n  NRT  —  {count} entrée{'s' if count != 1 else ''} (distances vers les pairs)")
+    if nrt:
+        print(f"  {'Adresse':<18} {'Distance':>10} {'Ping':>9}  Mis à jour")
+        print(f"  {thin[:54]}")
+        for entry in nrt:
+            stale = "  \033[33m[périmé]\033[0m" if entry.get("stale") else ""
+            print(
+                f"  {entry.get('address', '?'):<18} "
+                f"{entry.get('distance', 0.0):>10.4f} "
+                f"{entry.get('ping_ms', 0.0):>7.1f}ms  "
+                f"{entry.get('updated_at_str', '?')}{stale}"
+            )
+    else:
+        print("  (vide)")
+
+
+def _print_nqt(promotions: list, thin: str) -> None:
+    count = len(promotions)
+    print(f"\n  NQT  —  {count} promotion{'s' if count != 1 else ''} enregistrée{'s' if count != 1 else ''}")
+    if promotions:
+        for p in promotions:
+            role = p.get("role_name", "?")
+            role_col = (
+                "\033[33m" if role == "node_operator" else
+                "\033[36m" if role == "usd_operator"  else
+                "\033[34m"
+            )
+            print(
+                f"  #{p.get('epoch', '?'):<4} "
+                f"{role_col}{role:<20}\033[0m "
+                f"{p.get('address', '?'):<18}  "
+                f"{p.get('promoted_at_str', '?')}"
+            )
+            print(f"       Clé : {p.get('pub_key', '?')}  —  {p.get('reason', '?')}")
+    else:
+        print("  (vide — aucun quorum élu)")
+
+
+def _print_nrl(nrl: list) -> None:
+    count = len(nrl)
+    print(f"\n  NRL  —  {count} mandataire{'s' if count != 1 else ''} (nœuds qui nous référencent)")
+    if nrl:
+        for entry in nrl:
+            print(
+                f"  #{entry.get('name', '?'):<14} "
+                f"{entry.get('address', '?'):<18}  "
+                f"depuis {entry.get('declared_at_str', '?')}"
+            )
+    else:
+        print("  (vide — aucun nœud ne nous référence)")
+
+
 # ---------------------------------------------------------------------------
 # Pretty-printer
 # ---------------------------------------------------------------------------
 
-def print_status(data: dict) -> None:  # pylint: disable=too-many-locals,too-many-statements
+def print_status(data: dict) -> None:
     """Pretty-print a status snapshot dict to stdout.
 
     Args:
@@ -263,6 +317,21 @@ def print_status(data: dict) -> None:  # pylint: disable=too-many-locals,too-man
             f"clé {pkt.get('node_pub_key', '?')}"
         )
         print(f"      rôles : {roles}  —  expire : {exp_str}{flag}")
+
+    # ------------------------------------------------------------------ #
+    # NRT                                                                 #
+    # ------------------------------------------------------------------ #
+    _print_nrt(data.get("nrt", []), thin)
+
+    # ------------------------------------------------------------------ #
+    # NQT                                                                 #
+    # ------------------------------------------------------------------ #
+    _print_nqt(data.get("quorum", {}).get("promotions", []), thin)
+
+    # ------------------------------------------------------------------ #
+    # NRL                                                                 #
+    # ------------------------------------------------------------------ #
+    _print_nrl(data.get("nrl", []))
 
     # ------------------------------------------------------------------ #
     # Resources                                                           #

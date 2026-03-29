@@ -36,9 +36,11 @@ import argparse
 import asyncio
 import json
 import logging
+import signal
 import sys
 
 from .config import NodeConfig
+from .ctl.client import get_status, print_status
 from .node_daemon import NodeDaemon
 
 
@@ -136,11 +138,6 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def _run_status(args: argparse.Namespace) -> None:
     """Connect to the CTL server of a running daemon and print its status."""
-    from .ctl.client import (  # pylint: disable=import-outside-toplevel
-        get_status,
-        print_status,
-    )
-
     cfg = NodeConfig.from_file(args.config)
 
     # Resolve socket path (Linux/macOS) and CTL port (Windows)
@@ -194,8 +191,6 @@ def _run_daemon_unix(daemon: "NodeDaemon") -> None:
     The main asyncio task is cancelled gracefully, which lets the ``finally``
     block in NodeDaemon.run() close all sub-tasks cleanly.
     """
-    import signal  # pylint: disable=import-outside-toplevel
-
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     main_task = loop.create_task(daemon.run())
@@ -211,7 +206,7 @@ def _run_daemon_unix(daemon: "NodeDaemon") -> None:
         loop.run_until_complete(main_task)
     except asyncio.CancelledError:
         pass
-    except Exception as exc:  # pylint: disable=broad-except
+    except Exception as exc:
         logging.critical("[\x1b[38;5;51mUSMD\x1b[0m] Fatal error: %s", exc)
     finally:
         pending = asyncio.all_tasks(loop)
@@ -249,7 +244,7 @@ def _run_daemon_windows(daemon: "NodeDaemon") -> None:
             loop.run_until_complete(main_task)
         except asyncio.CancelledError:
             pass
-    except Exception as exc:  # pylint: disable=broad-except
+    except Exception as exc:
         logging.critical("[\x1b[38;5;51mUSMD\x1b[0m] Fatal error: %s", exc)
     finally:
         # Cancel any remaining tasks (e.g. web dashboard, heartbeat)

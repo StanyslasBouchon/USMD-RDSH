@@ -26,7 +26,7 @@ from ....utils.result import Result
 
 
 @dataclass
-class SendUsdPropertiesRequest:  # pylint: disable=too-many-instance-attributes
+class SendUsdPropertiesRequest:
     """NCP command 6 request — USD configuration propagation.
 
     Attributes:

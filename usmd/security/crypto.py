@@ -160,7 +160,7 @@ class Ed25519Pair:
             )
 
 
-class X25519Pair:  # pylint: disable=too-few-public-methods
+class X25519Pair:
     """Utilities for X25519 Diffie-Hellman key exchange.
 
     X25519 is used to derive shared session keys between pairs of nodes.
@@ -219,7 +219,7 @@ class X25519Pair:  # pylint: disable=too-few-public-methods
         return private_key.exchange(peer_public_key)
 
 
-class HkdfDeriver:  # pylint: disable=too-few-public-methods
+class HkdfDeriver:
     """HKDF key derivation from a shared secret.
 
     HKDF is used to derive symmetric encryption keys from an X25519 shared

@@ -36,7 +36,7 @@ def configure(
         secret_key: Django SECRET_KEY (random string, generated at startup).
         debug: Enable Django debug mode (disabled in production).
     """
-    from django.conf import settings  # pylint: disable=import-outside-toplevel
+    from django.conf import settings
 
     if settings.configured:
         return  # Already configured (idempotent)

@@ -4,6 +4,13 @@
 {% block title %}Tableau de bord — USMD-RDSH{% endblock title %}
 {% block breadcrumb %}Tableau de bord{% endblock breadcrumb %}
 
+{% block extra_css %}
+<style>
+.inactive-reason { font-size: .65rem; color: #8a9ba8; margin-top: 2px; letter-spacing: .01em; }
+.code-key-sm { font-size: .72rem; word-break: break-all; }
+</style>
+{% endblock extra_css %}
+
 {% block content %}
 
 <!-- ─── Header ──────────────────────────────────────────────────── -->
@@ -24,15 +31,18 @@
 
       <!-- State badge -->
       {% if n.state == "active" %}
-        <span class="badge badge-state-active"><i class="bi bi-check-circle-fill me-1"></i>ACTIF</span>
+        <span class="badge badge-state-active node-state-badge" data-state="{{ n.state }}"><i class="bi bi-check-circle-fill me-1"></i>ACTIF</span>
       {% elif "pending" in n.state %}
-        <span class="badge badge-state-pending"><i class="bi bi-hourglass-split me-1"></i>EN ATTENTE</span>
+        <span class="badge badge-state-pending node-state-badge" data-state="{{ n.state }}"><i class="bi bi-hourglass-split me-1"></i>EN ATTENTE</span>
       {% elif "exclu" in n.state or "excluded" in n.state %}
-        <span class="badge badge-state-excluded"><i class="bi bi-x-circle-fill me-1"></i>EXCLU</span>
+        <span class="badge badge-state-excluded node-state-badge" data-state="{{ n.state }}"><i class="bi bi-x-circle-fill me-1"></i>EXCLU</span>
       {% elif "inactive" in n.state or "timeout" in n.state %}
-        <span class="badge badge-state-inactive"><i class="bi bi-dash-circle-fill me-1"></i>INACTIF</span>
+        <div>
+          <span class="badge badge-state-inactive node-state-badge" data-state="{{ n.state }}"><i class="bi bi-dash-circle-fill me-1"></i>INACTIF</span>
+          {% if n.state_reason %}<div class="inactive-reason node-state-reason">{{ n.state_reason }}</div>{% endif %}
+        </div>
       {% else %}
-        <span class="badge badge-state-default">{{ n.state }}</span>
+        <span class="badge badge-state-default node-state-badge" data-state="{{ n.state }}">{{ n.state }}</span>
       {% endif %}
 
       <!-- Role badge -->
@@ -52,7 +62,8 @@
       <!-- Identity -->
       <div class="mb-2">
         <div class="text-light fw-semibold node-addr">
-          <i class="bi bi-hdd-network me-1 text-info"></i>{{ n.address }}
+          <i class="bi bi-hdd-network me-1 text-info"></i>
+          <a href="{% url 'node_detail' n.address %}" class="text-info text-decoration-none">{{ n.address }}</a>
         </div>
         <div class="text-muted small">
           <i class="bi bi-tag me-1"></i>#{{ n.name }} · <i class="bi bi-clock me-1"></i>uptime {{ n.uptime_seconds|floatformat:0 }}s
@@ -137,6 +148,7 @@
     <thead>
       <tr>
         <th>Époque</th>
+        <th>Rôle élu</th>
         <th>Nœud promu</th>
         <th>Clé publique</th>
         <th>Horodatage</th>
@@ -148,11 +160,24 @@
       <tr>
         <td><span class="badge bg-secondary">#{{ p.epoch }}</span></td>
         <td>
-          <i class="bi bi-hdd-network me-1 text-warning"></i>
-          <strong class="text-warning">{{ p.address }}</strong>
+          {% if p.role_name == "node_operator" %}
+            <span class="badge bg-warning text-dark">node_operator</span>
+          {% elif p.role_name == "usd_operator" %}
+            <span class="badge bg-info text-dark">usd_operator</span>
+          {% elif p.role_name == "ucd_operator" %}
+            <span class="badge bg-primary">ucd_operator</span>
+          {% else %}
+            <span class="badge bg-secondary">{{ p.role_name }}</span>
+          {% endif %}
         </td>
         <td>
-          <code class="code-key-sm text-muted">{{ p.pub_key }}</code>
+          <i class="bi bi-hdd-network me-1 text-warning"></i>
+          <a href="{% url 'node_detail' p.address %}" class="text-warning text-decoration-none fw-semibold">{{ p.address }}</a>
+        </td>
+        <td>
+          <a href="{% url 'node_detail' p.address %}" class="text-decoration-none">
+            <code class="code-key-sm text-muted">{{ p.pub_key }}</code>
+          </a>
         </td>
         <td class="text-muted small">{{ p.promoted_at_str }}</td>
         <td class="small">{{ p.reason }}</td>
@@ -168,6 +193,64 @@
 {% endif %}
 </div><!-- /#promo-section -->
 
+<!-- ─── NIT locale ────────────────────────────────────────── -->
+<div class="d-flex align-items-center mt-5 mb-3">
+  <h5 class="mb-0 fw-semibold text-light me-auto">
+    <i class="bi bi-people-fill me-2 text-info"></i>NIT — Table d'identité des nœuds
+    <span class="text-muted small fw-normal ms-2">(nœud local)</span>
+  </h5>
+  <span class="badge bg-secondary" id="nit-count">
+    {% with local=nodes|first %}{{ local.nit|length }}{% endwith %} entrée(s)
+  </span>
+</div>
+
+<div id="nit-section">
+{% with local_nit=nodes|first %}
+{% if local_nit.nit %}
+<div class="table-responsive">
+  <table class="table table-sm table-hover align-middle" id="nit-table">
+    <thead>
+      <tr>
+        <th>Adresse IP</th>
+        <th>Clé publique</th>
+        <th>TTL restant</th>
+        <th>État</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for entry in local_nit.nit %}
+      <tr{% if entry.expired %} class="table-danger"{% endif %}>
+        <td>
+          <a href="{% url 'node_detail' entry.address %}" class="text-info text-decoration-none">
+            <i class="bi bi-hdd-network me-1"></i>{{ entry.address }}
+          </a>
+        </td>
+        <td><code class="code-key-sm text-muted">{{ entry.pub_key }}</code></td>
+        <td>
+          <span class="{% if entry.expired %}text-danger{% elif entry.ttl_remaining < 30 %}text-warning{% else %}text-success{% endif %}">
+            {{ entry.ttl_remaining }}s
+          </span>
+        </td>
+        <td>
+          {% if entry.expired %}
+            <span class="badge bg-danger">EXPIRÉ</span>
+          {% else %}
+            <span class="badge bg-success">Valide</span>
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div class="alert alert-secondary text-muted small" id="nit-empty">
+  <i class="bi bi-info-circle me-2"></i>Aucune entrée NIT enregistrée.
+</div>
+{% endif %}
+{% endwith %}
+</div><!-- /#nit-section -->
+
 {% endblock content %}
 
 {% block extra_js %}
@@ -182,6 +265,24 @@ evtSource.onmessage = function(e) {
   const nodes = data.nodes;
   document.getElementById('node-count').textContent = nodes.length + ' nœud(s)';
 
+  // Map state values → French labels (mirrors _STATE_REASONS in views.py)
+  const STATE_REASONS = {
+    'inactive':                                  'Inactif',
+    'inactive_timeout':                          'Délai NCP dépassé',
+    'inactive_nndp_no_here_i_am':                'Aucun HIA reçu',
+    'inactive_mutating':                         'En mutation',
+    'inactive_emergency':                        'Urgence',
+    'inactive_emergency_out_of_resources':       'Ressources insuffisantes',
+    'inactive_emergency_dependency_inactive':    'Dépendance inactive',
+    'inactive_emergency_health_check_failed':    'Vérification santé échouée',
+    'inactive_emergency_update_failed':          'Mise à jour échouée',
+    'excluded_invalid_nit':                      'NIT invalide (exclu)',
+    'excluded_invalid_endorsement':              'Endorsement invalide (exclu)',
+    'excluded_unverifiable_endorsement':         'Endorsement invérifiable (exclu)',
+    'excluded_invalid_revocation':               'Révocation invalide (exclu)',
+    'excluded_invalid_endorsement_revocation':   'Révocation endorsement invalide (exclu)',
+  };
+
   nodes.forEach(function(node) {
     const addr = node.node?.address;
     if (!addr) return;
@@ -191,6 +292,42 @@ evtSource.onmessage = function(e) {
       // New node appeared — do a full reload to add it
       location.reload();
       return;
+    }
+
+    // ── Update state badge + reason ──────────────────────────────────
+    const state = node.node?.state || '';
+    const reason = node.node?.state_reason || STATE_REASONS[state] || '';
+    const badge = card.querySelector('.node-state-badge');
+    if (badge && badge.dataset.state !== state) {
+      badge.dataset.state = state;
+      if (state === 'active') {
+        badge.className = 'badge badge-state-active node-state-badge';
+        badge.innerHTML = '<i class="bi bi-check-circle-fill me-1"></i>ACTIF';
+      } else if (state.includes('inactive') || state.includes('timeout')) {
+        badge.className = 'badge badge-state-inactive node-state-badge';
+        badge.innerHTML = '<i class="bi bi-dash-circle-fill me-1"></i>INACTIF';
+      } else if (state.includes('pending')) {
+        badge.className = 'badge badge-state-pending node-state-badge';
+        badge.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>EN ATTENTE';
+      } else if (state.includes('exclud')) {
+        badge.className = 'badge badge-state-excluded node-state-badge';
+        badge.innerHTML = '<i class="bi bi-x-circle-fill me-1"></i>EXCLU';
+      } else {
+        badge.className = 'badge badge-state-default node-state-badge';
+        badge.textContent = state;
+      }
+      // Create or update the reason line below the badge
+      let reasonEl = card.querySelector('.node-state-reason');
+      if (state.includes('inactive') || state.includes('timeout')) {
+        if (!reasonEl) {
+          reasonEl = document.createElement('div');
+          reasonEl.className = 'inactive-reason node-state-reason';
+          badge.insertAdjacentElement('afterend', reasonEl);
+        }
+        reasonEl.textContent = reason;
+      } else if (reasonEl) {
+        reasonEl.remove();
+      }
     }
 
     const r = node.resources;
@@ -235,10 +372,18 @@ evtSource.onmessage = function(e) {
 
   let rows = '';
   promotions.forEach(function(p) {
+    const roleBadge = p.role_name === 'node_operator'
+      ? `<span class="badge bg-warning text-dark">node_operator</span>`
+      : p.role_name === 'usd_operator'
+        ? `<span class="badge bg-info text-dark">usd_operator</span>`
+        : p.role_name === 'ucd_operator'
+          ? `<span class="badge bg-primary">ucd_operator</span>`
+          : `<span class="badge bg-secondary">${p.role_name || '—'}</span>`;
     rows += `<tr>
       <td><span class="badge bg-secondary">#${p.epoch}</span></td>
-      <td><i class="bi bi-hdd-network me-1 text-warning"></i><strong class="text-warning">${p.address}</strong></td>
-      <td><code class="code-key-sm text-muted">${p.pub_key}</code></td>
+      <td>${roleBadge}</td>
+      <td><i class="bi bi-hdd-network me-1 text-warning"></i><a href="/node/${p.address}" class="text-warning text-decoration-none fw-semibold">${p.address}</a></td>
+      <td><a href="/node/${p.address}" class="text-decoration-none"><code class="code-key-sm text-muted">${p.pub_key}</code></a></td>
       <td class="text-muted small">${p.promoted_at_str}</td>
       <td class="small">${p.reason}</td>
     </tr>`;
@@ -247,8 +392,47 @@ evtSource.onmessage = function(e) {
   section.innerHTML =
     '<div class="table-responsive"><table class="table table-sm table-hover align-middle" id="promo-table">' +
     '<thead><tr>' +
-    '<th>Époque</th><th>Nœud promu</th><th>Clé publique</th><th>Horodatage</th><th>Cause</th>' +
+    '<th>Époque</th><th>Rôle élu</th><th>Nœud promu</th><th>Clé publique</th><th>Horodatage</th><th>Cause</th>' +
     '</tr></thead><tbody>' + rows + '</tbody></table></div>';
+
+  // ── Update NIT (local node only) ─────────────────────────
+  const localSnap = nodes.find(n => n.is_local);
+  const nit = localSnap ? (localSnap.nit || []) : [];
+  document.getElementById('nit-count').textContent = nit.length + ' entrée(s)';
+
+  const nitSection = document.getElementById('nit-section');
+  if (!nitSection) return;
+
+  if (nit.length === 0) {
+    nitSection.innerHTML =
+      '<div class="alert alert-secondary text-muted small" id="nit-empty">' +
+      '<i class="bi bi-info-circle me-2"></i>Aucune entrée NIT enregistrée.' +
+      '</div>';
+    return;
+  }
+
+  let nitRows = '';
+  nit.forEach(function(entry) {
+    const ttl = entry.ttl_remaining ?? 0;
+    const expired = entry.expired;
+    const ttlClass = expired ? 'text-danger' : ttl < 30 ? 'text-warning' : 'text-success';
+    const stateBadge = expired
+      ? '<span class="badge bg-danger">EXPIRÉ</span>'
+      : '<span class="badge bg-success">Valide</span>';
+    const rowClass = expired ? ' class="table-danger"' : '';
+    nitRows += `<tr${rowClass}>
+      <td><a href="/node/${entry.address}" class="text-info text-decoration-none"><i class="bi bi-hdd-network me-1"></i>${entry.address}</a></td>
+      <td><code class="code-key-sm text-muted">${entry.pub_key}</code></td>
+      <td><span class="${ttlClass}">${ttl}s</span></td>
+      <td>${stateBadge}</td>
+    </tr>`;
+  });
+
+  nitSection.innerHTML =
+    '<div class="table-responsive"><table class="table table-sm table-hover align-middle" id="nit-table">' +
+    '<thead><tr>' +
+    '<th>Adresse IP</th><th>Clé publique</th><th>TTL restant</th><th>État</th>' +
+    '</tr></thead><tbody>' + nitRows + '</tbody></table></div>';
 };
 
 evtSource.onerror = function() {

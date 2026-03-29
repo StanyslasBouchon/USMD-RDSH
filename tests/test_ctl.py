@@ -206,7 +206,7 @@ class TestCtlServer:
 
 
 # ---------------------------------------------------------------------------
-# _build_status_snapshot integration-style tests
+# build_status_snapshot integration-style tests
 # ---------------------------------------------------------------------------
 
 
@@ -222,7 +222,7 @@ class TestNodeDaemonSnapshot:
 
     def test_snapshot_has_all_sections(self):
         daemon = self._make_daemon()
-        snap = daemon._build_status_snapshot()  # pylint: disable=protected-access
+        snap = daemon.build_status_snapshot()
         assert "node" in snap
         assert "usd" in snap
         assert "nit" in snap
@@ -232,7 +232,7 @@ class TestNodeDaemonSnapshot:
 
     def test_snapshot_node_fields(self):
         daemon = self._make_daemon()
-        snap = daemon._build_status_snapshot()  # pylint: disable=protected-access
+        snap = daemon.build_status_snapshot()
         node = snap["node"]
         assert isinstance(node["name"], int)
         assert isinstance(node["address"], str)
@@ -242,7 +242,7 @@ class TestNodeDaemonSnapshot:
 
     def test_snapshot_usd_fields(self):
         daemon = self._make_daemon()
-        snap = daemon._build_status_snapshot()  # pylint: disable=protected-access
+        snap = daemon.build_status_snapshot()
         usd = snap["usd"]
         assert usd["name"] == "snap-domain"
         assert isinstance(usd["node_count"], int)
@@ -250,25 +250,25 @@ class TestNodeDaemonSnapshot:
     def test_snapshot_nit_contains_self(self):
         """The daemon registers itself in the NIT on init."""
         daemon = self._make_daemon()
-        snap = daemon._build_status_snapshot()  # pylint: disable=protected-access
+        snap = daemon.build_status_snapshot()
         assert len(snap["nit"]) >= 1
 
     def test_snapshot_nal_contains_self(self):
         """The daemon grants its own key in the NAL on init."""
         daemon = self._make_daemon()
-        snap = daemon._build_status_snapshot()  # pylint: disable=protected-access
+        snap = daemon.build_status_snapshot()
         assert len(snap["nal"]) >= 1
         assert snap["nal"][0]["permanent"] is True
 
     def test_snapshot_nel_bootstrap_node(self):
         """A bootstrap node has no received endorsement."""
         daemon = self._make_daemon()
-        snap = daemon._build_status_snapshot()  # pylint: disable=protected-access
+        snap = daemon.build_status_snapshot()
         assert snap["nel"]["received"] is None
 
     def test_snapshot_resources_keys(self):
         daemon = self._make_daemon()
-        snap = daemon._build_status_snapshot()  # pylint: disable=protected-access
+        snap = daemon.build_status_snapshot()
         res = snap["resources"]
         for key in (
             "cpu_percent",
@@ -359,7 +359,7 @@ class TestCtlServerTCP:
             socket_path="unused.sock", snapshot_fn=_make_snapshot, ctl_port=0
         )
         # Force TCP path regardless of platform
-        await srv._start_tcp()  # pylint: disable=protected-access
+        await srv._start_tcp()
 
         try:
             reader, writer = await asyncio.open_connection("127.0.0.1", srv.actual_port)
@@ -380,7 +380,7 @@ class TestCtlServerTCP:
         srv = CtlServer(
             socket_path="unused.sock", snapshot_fn=_make_snapshot, ctl_port=0
         )
-        await srv._start_tcp()  # pylint: disable=protected-access
+        await srv._start_tcp()
 
         try:
             reader, writer = await asyncio.open_connection("127.0.0.1", srv.actual_port)
@@ -400,7 +400,7 @@ class TestCtlServerTCP:
         srv = CtlServer(
             socket_path="unused.sock", snapshot_fn=_make_snapshot, ctl_port=0
         )
-        await srv._start_tcp()  # pylint: disable=protected-access
+        await srv._start_tcp()
         try:
             assert srv.actual_port > 0
         finally:

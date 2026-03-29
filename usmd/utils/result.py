@@ -118,7 +118,7 @@ class Result(Generic[T, E]):
         return Result.Ok(None)
 
     @classmethod
-    def Ok(cls, value: T) -> "Result[T, E]":  # pylint: disable=invalid-name
+    def Ok(cls, value: T) -> "Result[T, E]":
         """Create a success Result.
 
         Args:
@@ -134,7 +134,7 @@ class Result(Generic[T, E]):
         return cls(value, True)
 
     @classmethod
-    def Err(cls, value: E) -> "Result[T, E]":  # pylint: disable=invalid-name
+    def Err(cls, value: E) -> "Result[T, E]":
         """Create an error Result.
 
         Args:

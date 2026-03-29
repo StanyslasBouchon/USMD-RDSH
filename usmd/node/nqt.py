@@ -11,13 +11,15 @@ Each entry records:
     address     - IP address of the promoted node
     promoted_at - UNIX timestamp of the promotion
     reason      - human-readable explanation (French)
+    role_name   - name of the elected role (e.g. ``"node_operator"``)
 
 The table is kept sorted by ``promoted_at`` descending (newest first) and
 capped at ``_MAX_ENTRIES`` to avoid unbounded growth.
 
 Examples:
     >>> nqt = NodeQuorumTable()
-    >>> nqt.add(epoch=1, pub_key=b'k' * 32, address="10.0.0.1", reason="Élu")
+    >>> nqt.add(epoch=1, pub_key=b'k' * 32, address="10.0.0.1",
+    ...          reason="Élu", role_name="node_operator")
     >>> len(nqt)
     1
     >>> nqt.get_latest().address
@@ -30,11 +32,13 @@ from __future__ import annotations
 
 import datetime
 import time
+from dataclasses import dataclass, field
 from typing import Optional
 
 _MAX_ENTRIES: int = 50
 
 
+@dataclass
 class NqtEntry:
     """A single quorum promotion record.
 
@@ -44,27 +48,24 @@ class NqtEntry:
         address: IP address of the promoted node.
         promoted_at: UNIX timestamp of the promotion.
         reason: Human-readable explanation (French).
+        role_name: Name of the elected role (e.g. ``"node_operator"``).
 
     Examples:
-        >>> e = NqtEntry(epoch=1, pub_key=b'k'*32,
-        ...              address="10.0.0.2", promoted_at=0.0, reason="Test")
+        >>> e = NqtEntry(epoch=1, pub_key=b'k'*32, address="10.0.0.2",
+        ...              promoted_at=0.0, reason="Test",
+        ...              role_name="usd_operator")
         >>> e.pub_key_short.endswith("…")
         True
+        >>> e.role_name
+        'usd_operator'
     """
 
-    def __init__(  # pylint: disable=too-many-arguments,too-many-positional-arguments
-        self,
-        epoch: int,
-        pub_key: bytes,
-        address: str,
-        promoted_at: float,
-        reason: str,
-    ) -> None:
-        self.epoch = epoch
-        self.pub_key = pub_key
-        self.address = address
-        self.promoted_at = promoted_at
-        self.reason = reason
+    epoch: int
+    pub_key: bytes
+    address: str
+    promoted_at: float = field(default_factory=time.time)
+    reason: str = ""
+    role_name: str = "node_operator"
 
     @property
     def pub_key_short(self) -> str:
@@ -83,21 +84,24 @@ class NqtEntry:
 
         Returns:
             dict: With keys epoch, address, pub_key, pub_key_hex,
-                  promoted_at, promoted_at_str, reason.
+                  promoted_at, promoted_at_str, reason, role_name.
 
         Example:
-            >>> e = NqtEntry(1, b'k'*32, "1.2.3.4", 0.0, "Élu")
+            >>> e = NqtEntry(1, b'k'*32, "1.2.3.4", 0.0, "Élu", "node_operator")
             >>> e.to_dict()["epoch"]
             1
+            >>> e.to_dict()["role_name"]
+            'node_operator'
         """
         return {
-            "epoch": self.epoch,
-            "address": self.address,
-            "pub_key": self.pub_key_short,
-            "pub_key_hex": self.pub_key.hex(),
-            "promoted_at": self.promoted_at,
+            "epoch":          self.epoch,
+            "address":        self.address,
+            "pub_key":        self.pub_key.hex(),
+            "pub_key_hex":    self.pub_key.hex(),
+            "promoted_at":    self.promoted_at,
             "promoted_at_str": self.promoted_at_str,
-            "reason": self.reason,
+            "reason":         self.reason,
+            "role_name":      self.role_name,
         }
 
     @classmethod
@@ -111,9 +115,9 @@ class NqtEntry:
             NqtEntry: Reconstructed entry.
 
         Example:
-            >>> e = NqtEntry(2, b'x'*32, "5.5.5.5", 1.0, "Sync")
-            >>> NqtEntry.from_dict(e.to_dict()).epoch
-            2
+            >>> e = NqtEntry(2, b'x'*32, "5.5.5.5", 1.0, "Sync", "ucd_operator")
+            >>> NqtEntry.from_dict(e.to_dict()).role_name
+            'ucd_operator'
         """
         raw_hex = data.get("pub_key_hex", "")
         try:
@@ -126,6 +130,7 @@ class NqtEntry:
             address=str(data.get("address", "")),
             promoted_at=float(data.get("promoted_at", time.time())),
             reason=str(data.get("reason", "")),
+            role_name=str(data.get("role_name", "node_operator")),
         )
 
 
@@ -139,7 +144,7 @@ class NodeQuorumTable:
 
     Examples:
         >>> nqt = NodeQuorumTable()
-        >>> nqt.add(1, b'k'*32, "10.0.0.1", "Élu")
+        >>> nqt.add(1, b'k'*32, "10.0.0.1", "Élu", "node_operator")
         >>> nqt.get_latest().address
         '10.0.0.1'
         >>> nqt.merge_from_dicts([])
@@ -153,29 +158,37 @@ class NodeQuorumTable:
     # Mutation
     # ------------------------------------------------------------------
 
-    def add(self, epoch: int, pub_key: bytes, address: str, reason: str) -> None:
+    def add(
+        self,
+        epoch: int,
+        pub_key: bytes,
+        address: str,
+        reason: str,
+        role_name: str = "node_operator",
+    ) -> None:
         """Prepend a new promotion record.
 
-        If an entry with the same (epoch, address) already exists it is
-        **not** duplicated.
+        If an entry with the same (epoch, address, role_name) already exists
+        it is **not** duplicated.
 
         Args:
             epoch: Election epoch of the promotion.
             pub_key: Ed25519 public key (32 bytes).
             address: IP address of the promoted node.
             reason: Human-readable explanation (French).
+            role_name: Name of the elected role.
 
         Example:
             >>> nqt = NodeQuorumTable()
-            >>> nqt.add(1, b'k'*32, "10.0.0.1", "Élu")
+            >>> nqt.add(1, b'k'*32, "10.0.0.1", "Élu", "usd_operator")
             >>> len(nqt)
             1
-            >>> nqt.add(1, b'k'*32, "10.0.0.1", "Élu")  # duplicate → ignored
+            >>> nqt.add(1, b'k'*32, "10.0.0.1", "Élu", "usd_operator")  # duplicate
             >>> len(nqt)
             1
         """
-        existing_keys = {(e.epoch, e.address) for e in self._entries}
-        if (epoch, address) in existing_keys:
+        existing_keys = {(e.epoch, e.address, e.role_name) for e in self._entries}
+        if (epoch, address, role_name) in existing_keys:
             return
         entry = NqtEntry(
             epoch=epoch,
@@ -183,6 +196,7 @@ class NodeQuorumTable:
             address=address,
             promoted_at=time.time(),
             reason=reason,
+            role_name=role_name,
         )
         self._entries.insert(0, entry)
         if len(self._entries) > _MAX_ENTRIES:
@@ -205,20 +219,20 @@ class NodeQuorumTable:
             >>> added = nqt.merge_from_dicts([
             ...     {"epoch": 1, "address": "10.0.0.1", "pub_key_hex": "aa"*32,
             ...      "promoted_at": 1.0, "reason": "Test", "pub_key": "…",
-            ...      "promoted_at_str": ""}])
+            ...      "promoted_at_str": "", "role_name": "node_operator"}])
             >>> added
             1
             >>> nqt.merge_from_dicts([
             ...     {"epoch": 1, "address": "10.0.0.1", "pub_key_hex": "aa"*32,
             ...      "promoted_at": 1.0, "reason": "Test", "pub_key": "…",
-            ...      "promoted_at_str": ""}])
+            ...      "promoted_at_str": "", "role_name": "node_operator"}])
             0
         """
-        existing = {(e.epoch, e.address) for e in self._entries}
+        existing = {(e.epoch, e.address, e.role_name) for e in self._entries}
         added = 0
         for data in dicts:
             entry = NqtEntry.from_dict(data)
-            key = (entry.epoch, entry.address)
+            key = (entry.epoch, entry.address, entry.role_name)
             if key not in existing:
                 self._entries.append(entry)
                 existing.add(key)
@@ -243,12 +257,34 @@ class NodeQuorumTable:
         """
         return self._entries[0] if self._entries else None
 
+    def get_latest_for_role(self, role_name: str) -> Optional[NqtEntry]:
+        """Return the most recent promotion for a specific role, or None.
+
+        Args:
+            role_name: Role name to filter by (e.g. ``"usd_operator"``).
+
+        Returns:
+            Optional[NqtEntry]: Most recent matching entry, or None.
+
+        Example:
+            >>> nqt = NodeQuorumTable()
+            >>> nqt.add(1, b'k'*32, "10.0.0.1", "Élu", "usd_operator")
+            >>> nqt.get_latest_for_role("usd_operator").address
+            '10.0.0.1'
+            >>> nqt.get_latest_for_role("node_operator") is None
+            True
+        """
+        for entry in self._entries:
+            if entry.role_name == role_name:
+                return entry
+        return None
+
     def get_all_entries(self) -> list[NqtEntry]:
         """Return a shallow copy of all entries (newest first).
 
         Example:
             >>> nqt = NodeQuorumTable()
-            >>> nqt.add(1, b'k'*32, "10.0.0.1", "Élu")
+            >>> nqt.add(1, b'k'*32, "10.0.0.1", "Élu", "node_operator")
             >>> len(nqt.get_all_entries())
             1
         """
@@ -261,9 +297,9 @@ class NodeQuorumTable:
 
         Example:
             >>> nqt = NodeQuorumTable()
-            >>> nqt.add(1, b'k'*32, "10.0.0.1", "Élu")
-            >>> nqt.get_all_dicts()[0]["epoch"]
-            1
+            >>> nqt.add(1, b'k'*32, "10.0.0.1", "Élu", "usd_operator")
+            >>> nqt.get_all_dicts()[0]["role_name"]
+            'usd_operator'
         """
         return [e.to_dict() for e in self._entries]
 

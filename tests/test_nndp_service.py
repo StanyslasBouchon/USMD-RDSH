@@ -6,7 +6,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from usmd.nndp.lib import NndpService, _NndpListenerProtocol, _get_interface_broadcasts
+from usmd.nndp.lib import (
+    NndpOptions,
+    NndpService,
+    _NndpListenerProtocol,
+    _get_interface_broadcasts,
+)
 from usmd.nndp.protocol.here_i_am import HereIAmPacket, PACKET_SIZE
 from usmd.node.state import NodeState
 from usmd.security.crypto import Ed25519Pair
@@ -15,6 +20,7 @@ from usmd.security.crypto import Ed25519Pair
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture()
 def keypair():
@@ -38,6 +44,7 @@ def nndp_service(keypair):
 # ---------------------------------------------------------------------------
 # _NndpListenerProtocol unit tests
 # ---------------------------------------------------------------------------
+
 
 class TestNndpListenerProtocol:
     def _make_valid_packet(self, priv, pub):
@@ -99,17 +106,23 @@ class TestNndpListenerProtocol:
 
     def test_connection_made_does_not_raise(self):
         own_priv, own_pub = Ed25519Pair.generate()
-        protocol = _NndpListenerProtocol(own_pub_key=own_pub, on_packet=lambda p, i: None)
+        protocol = _NndpListenerProtocol(
+            own_pub_key=own_pub, on_packet=lambda p, i: None
+        )
         protocol.connection_made(MagicMock())  # Should not raise
 
     def test_error_received_does_not_raise(self):
         own_priv, own_pub = Ed25519Pair.generate()
-        protocol = _NndpListenerProtocol(own_pub_key=own_pub, on_packet=lambda p, i: None)
+        protocol = _NndpListenerProtocol(
+            own_pub_key=own_pub, on_packet=lambda p, i: None
+        )
         protocol.error_received(OSError("test"))  # Should not raise
 
     def test_connection_lost_does_not_raise(self):
         own_priv, own_pub = Ed25519Pair.generate()
-        protocol = _NndpListenerProtocol(own_pub_key=own_pub, on_packet=lambda p, i: None)
+        protocol = _NndpListenerProtocol(
+            own_pub_key=own_pub, on_packet=lambda p, i: None
+        )
         protocol.connection_lost(None)
         protocol.connection_lost(OSError("closed"))
 
@@ -117,6 +130,7 @@ class TestNndpListenerProtocol:
 # ---------------------------------------------------------------------------
 # NndpService unit tests
 # ---------------------------------------------------------------------------
+
 
 class TestNndpService:
     def test_init_stores_config(self, nndp_service, keypair):
@@ -137,9 +151,11 @@ class TestNndpService:
             ttl=10,
             state_getter=lambda: NodeState.ACTIVE,
             on_peer_discovered=lambda p, i: None,
-            listen_port=9221,
-            send_port=9222,
-            broadcast_address="10.255.255.255",
+            options=NndpOptions(
+                listen_port=9221,
+                send_port=9222,
+                broadcast_address="10.255.255.255",
+            ),
         )
         assert svc._listen_port == 9221
         assert svc._send_port == 9222
@@ -151,10 +167,17 @@ class TestNndpService:
         sent_packets = []
 
         class MockSock:
-            def setsockopt(self, *a, **kw): pass
-            def bind(self, *a, **kw): pass
-            def sendto(self, data, addr): sent_packets.append((data, addr))
-            def close(self): pass
+            def setsockopt(self, *a, **kw):
+                pass
+
+            def bind(self, *a, **kw):
+                pass
+
+            def sendto(self, data, addr):
+                sent_packets.append((data, addr))
+
+            def close(self):
+                pass
 
         with patch("usmd.nndp.lib.socket.socket", return_value=MockSock()):
             task = asyncio.create_task(nndp_service.broadcast_loop())
@@ -181,20 +204,29 @@ class TestNndpService:
             ttl=30,
             state_getter=lambda: NodeState.ACTIVE,
             on_peer_discovered=lambda pkt, ip: None,
-            broadcast_address="auto",
+            options=NndpOptions(broadcast_address="auto"),
         )
         sent_addrs = []
 
         class MockSock:
-            def setsockopt(self, *a, **kw): pass
-            def bind(self, *a, **kw): pass
-            def sendto(self, data, addr): sent_addrs.append(addr[0])
-            def close(self): pass
+            def setsockopt(self, *a, **kw):
+                pass
+
+            def bind(self, *a, **kw):
+                pass
+
+            def sendto(self, data, addr):
+                sent_addrs.append(addr[0])
+
+            def close(self):
+                pass
 
         two_iface_broadcasts = ["192.168.1.255", "10.0.0.255"]
         with patch("usmd.nndp.lib.socket.socket", return_value=MockSock()):
-            with patch("usmd.nndp.lib._get_interface_broadcasts",
-                       return_value=two_iface_broadcasts):
+            with patch(
+                "usmd.nndp.lib._get_interface_broadcasts",
+                return_value=two_iface_broadcasts,
+            ):
                 task = asyncio.create_task(svc.broadcast_loop())
                 await asyncio.sleep(0.05)
                 task.cancel()
@@ -222,17 +254,25 @@ class TestNndpService:
         sent_addrs = []
 
         class MockSockWithError:
-            def setsockopt(self, *a, **kw): pass
-            def bind(self, *a, **kw): pass
+            def setsockopt(self, *a, **kw):
+                pass
+
+            def bind(self, *a, **kw):
+                pass
+
             def sendto(self, data, addr):
                 if addr[0] == "192.168.1.255":
                     raise OSError("network unreachable")
                 sent_addrs.append(addr[0])
-            def close(self): pass
+
+            def close(self):
+                pass
 
         with patch("usmd.nndp.lib.socket.socket", return_value=MockSockWithError()):
-            with patch("usmd.nndp.lib._get_interface_broadcasts",
-                       return_value=["192.168.1.255", "10.0.0.255"]):
+            with patch(
+                "usmd.nndp.lib._get_interface_broadcasts",
+                return_value=["192.168.1.255", "10.0.0.255"],
+            ):
                 task = asyncio.create_task(svc.broadcast_loop())
                 await asyncio.sleep(0.05)
                 task.cancel()
@@ -248,6 +288,7 @@ class TestNndpService:
 # ---------------------------------------------------------------------------
 # _get_interface_broadcasts unit tests
 # ---------------------------------------------------------------------------
+
 
 class TestGetInterfaceBroadcasts:
     def test_explicit_address_returned_directly(self):
@@ -281,6 +322,7 @@ class TestGetInterfaceBroadcasts:
     def test_auto_collects_all_interface_broadcasts(self):
         """Each interface broadcast address is included in the result."""
         import socket as _socket  # noqa: PLC0415
+
         mock_addr_1 = MagicMock()
         mock_addr_1.family = _socket.AF_INET
         mock_addr_1.broadcast = "192.168.1.255"
@@ -306,6 +348,7 @@ class TestGetInterfaceBroadcasts:
     def test_auto_ignores_none_broadcast(self):
         """Interface addresses with broadcast=None (e.g. loopback) are skipped."""
         import socket as _socket  # noqa: PLC0415
+
         mock_lo = MagicMock()
         mock_lo.family = _socket.AF_INET
         mock_lo.broadcast = None  # loopback has no broadcast

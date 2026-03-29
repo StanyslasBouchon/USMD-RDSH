@@ -106,7 +106,7 @@ class ServiceCommand:
 
 
 @dataclass
-class Service:  # pylint: disable=too-many-instance-attributes
+class Service:
     """A fully-parsed service definition for USMD-RDSH.
 
     Attributes:

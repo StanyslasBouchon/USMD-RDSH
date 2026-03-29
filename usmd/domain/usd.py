@@ -28,7 +28,7 @@ from ._versioned import log_config_update
 
 
 @dataclass
-class USDConfig:  # pylint: disable=too-many-instance-attributes
+class USDConfig:
     """Configuration parameters for a Unified System Domain.
 
     These parameters are set by the administrator and propagated to all nodes

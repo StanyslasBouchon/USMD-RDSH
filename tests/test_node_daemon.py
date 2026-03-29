@@ -10,7 +10,8 @@ import pytest
 
 from usmd.config import NodeConfig
 from usmd.node.state import NodeState
-from usmd.node_daemon import NodeDaemon, _get_resource_usage, _load_or_generate_keys
+from usmd.node_daemon import NodeDaemon
+from usmd._daemon_helpers import _get_resource_usage, _load_or_generate_keys
 from usmd.security.crypto import Ed25519Pair, X25519Pair
 
 

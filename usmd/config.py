@@ -39,7 +39,7 @@ from .node.role import NodeRole
 
 
 @dataclass
-class NodeConfig:  # pylint: disable=too-many-instance-attributes
+class NodeConfig:
     """All tunable parameters for a running USMD-RDSH node.
 
     Attributes:

@@ -1,41 +1,48 @@
 """Quorum manager — distributed operator election for USMD-RDSH.
 
-Monitors the NIT/NAL for active operators.  When none are detected,
-orchestrates a Raft-inspired election to promote one executor to
-NODE_OPERATOR status.
+Monitors the NIT/NAL for active holders of each of the three operator roles.
+When no live holder is detected for a given role, orchestrates a
+Raft-inspired election to promote one executor to that role.
 
-Algorithm summary (simplified Raft leader election):
+Monitored roles (independent elections):
 
-1. Every ``check_interval`` seconds, scan NIT+NAL for a live operator.
-2. If none found, wait a random delay (1 to 8 seconds) then enter candidacy.
-3. Gather all non-expired NIT peer addresses.
-4. Send ``REQUEST_VOTE`` (epoch, self_address) to every peer.
-5. Count YES votes: if ``yes_votes > total_peers / 2`` → elected.
-6. Promote self in cfg + NAL.
-7. Broadcast ``ANNOUNCE_PROMOTION`` to all live peers.
+- ``NODE_OPERATOR``  — manages individual nodes within an USD
+- ``USD_OPERATOR``   — manages a Unified System Domain
+- ``UCD_OPERATOR``   — manages the Unified Configuration Database
 
-On the receiver side (called by the NCP handler):
+Algorithm summary (per role, simplified Raft leader election):
 
-- :meth:`should_grant_vote` — votes YES at most once per epoch.
-- :meth:`on_promotion_announced` — grants NODE_OPERATOR to the winner.
+1. Every ``check_interval`` seconds, scan NIT+NAL for each operator role.
+2. For each role with no live holder, wait a random delay then enter candidacy.
+3. Gather all non-expired, active NIT peer addresses.
+4. Send ``REQUEST_VOTE`` (epoch, self_address, role) to every peer.
+5. Count YES votes: if ``yes_votes > total_peers / 2`` → elected for that role.
+6. Promote self in cfg + NAL for that specific role.
+7. Broadcast ``ANNOUNCE_PROMOTION`` (with role) to all live peers.
+
+On the receiver side:
+
+- :meth:`should_grant_vote`     — votes YES at most once per (role, epoch).
+- :meth:`on_promotion_announced` — grants the announced role to the winner.
+
+Heavy helpers are split into :mod:`._quorum_rpc` to stay under 450 lines.
 """
 
 from __future__ import annotations
 
-# pylint: disable=too-many-lines
-
 import asyncio
 import logging
 import random
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING
 
-from ..ncp.client.tcp import NcpClient
-from ..ncp.protocol.commands.announce_promotion import AnnouncePromotionRequest
-from ..ncp.protocol.commands.request_vote import (
-    RequestVoteRequest,
-    RequestVoteResponse,
+from ._quorum_rpc import (
+    QuorumOptions,
+    announce_promotion,
+    on_promotion_announced as _on_promotion_announced,
+    promote_self,
+    request_vote,
+    should_grant_vote as _should_grant_vote,
 )
-from ..ncp.protocol.frame import NcpCommandId
 from ..node.nal import NodeAccessList
 from ..node.nit import NodeIdentityTable
 from ..node.nqt import NodeQuorumTable
@@ -48,9 +55,16 @@ logger = logging.getLogger(__name__)
 
 _ELECTION_DELAY_MIN = 1.0  # seconds — minimum random candidacy delay
 
+# The three operator roles managed by independent elections
+_OPERATOR_ROLES: list[NodeRole] = [
+    NodeRole.NODE_OPERATOR,
+    NodeRole.USD_OPERATOR,
+    NodeRole.UCD_OPERATOR,
+]
 
-class QuorumManager:  # pylint: disable=too-many-instance-attributes
-    """Monitors operator liveness and runs elections when needed.
+
+class QuorumManager:
+    """Monitors operator liveness and runs elections for all three operator roles.
 
     Attributes:
         _node_address: IP address of this node.
@@ -59,12 +73,10 @@ class QuorumManager:  # pylint: disable=too-many-instance-attributes
         _nal: Shared Node Access List.
         _nqt: Shared Node Quorum Table (promotion history).
         _cfg: Node configuration (role updated on self-promotion).
-        _check_interval: Seconds between operator liveness checks.
-        _ncp_port: TCP port for outbound NCP connections.
-        _ncp_timeout: Timeout in seconds for outbound NCP connections.
-        _epoch: Current election epoch counter.
-        _voted_epochs: Set of epochs in which this node already voted.
-        _is_operator: True once this node has been promoted.
+        _options: Tunable runtime parameters (intervals, ports, callbacks).
+        _epochs: Per-role election epoch counters.
+        _voted_epochs: Per-role sets of epochs in which this node already voted.
+        _elected_roles: Set of roles this node currently holds.
 
     Examples:
         >>> from usmd.node.nit import NodeIdentityTable
@@ -83,7 +95,7 @@ class QuorumManager:  # pylint: disable=too-many-instance-attributes
         True
     """
 
-    def __init__(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    def __init__(
         self,
         node_address: str,
         ed_pub: bytes,
@@ -91,10 +103,7 @@ class QuorumManager:  # pylint: disable=too-many-instance-attributes
         nal: NodeAccessList,
         nqt: NodeQuorumTable,
         cfg: "NodeConfig",
-        check_interval: float = 30.0,
-        ncp_port: int = 5626,
-        ncp_timeout: float = 5.0,
-        on_ncp_failure: Callable[[str], None] | None = None,
+        options: QuorumOptions | None = None,
     ) -> None:
         """Initialise the QuorumManager.
 
@@ -105,26 +114,31 @@ class QuorumManager:  # pylint: disable=too-many-instance-attributes
             nal: Shared Node Access List.
             nqt: Shared Node Quorum Table.
             cfg: Node configuration.
-            check_interval: Seconds between operator liveness checks.
-            ncp_port: TCP port for outbound NCP connections.
-            ncp_timeout: Timeout in seconds for outbound NCP connections.
-            on_ncp_failure: Optional callback invoked with a peer's address when
-                an outgoing NCP request to that peer fails.
+            options: Tunable runtime parameters (intervals, ports, callbacks).
+                     Defaults to :class:`QuorumOptions` with stock values.
         """
+        _opts = options or QuorumOptions()
         self._node_address = node_address
         self._ed_pub = ed_pub
         self._nit = nit
         self._nal = nal
         self._nqt = nqt
         self._cfg = cfg
-        self._check_interval = check_interval
-        self._ncp_port = ncp_port
-        self._ncp_timeout = ncp_timeout
-        self._on_ncp_failure = on_ncp_failure
+        self._check_interval = _opts.check_interval
+        self._ncp_port = _opts.ncp_port
+        self._ncp_timeout = _opts.ncp_timeout
+        self._on_ncp_failure = _opts.on_ncp_failure
+        self._usd = _opts.usd
 
-        self._epoch: int = 0
-        self._voted_epochs: set[int] = set()
-        self._is_operator: bool = cfg.node_role == NodeRole.NODE_OPERATOR
+        self._epochs: dict[NodeRole, int] = {r: 0 for r in _OPERATOR_ROLES}
+        self._voted_epochs: dict[NodeRole, set[int]] = {r: set() for r in _OPERATOR_ROLES}
+
+        # Seed elected roles from the configured role so a node that was
+        # previously elected and restarted with its role persisted in yaml
+        # does not immediately trigger a new election for its own role.
+        self._elected_roles: set[NodeRole] = set()
+        if cfg.node_role in _OPERATOR_ROLES:
+            self._elected_roles.add(cfg.node_role)
 
     # ------------------------------------------------------------------
     # Public accessors
@@ -132,18 +146,259 @@ class QuorumManager:  # pylint: disable=too-many-instance-attributes
 
     @property
     def is_operator(self) -> bool:
-        """Return True if this node has been promoted to NODE_OPERATOR."""
-        return self._is_operator
+        """Return True if this node holds any operator role.
+
+        Kept for backward compatibility with call-sites that check
+        ``is_operator`` without caring which specific role is held.
+        """
+        return bool(self._elected_roles)
+
+    @property
+    def elected_roles(self) -> list[str]:
+        """Return the list of operator role names held by this node.
+
+        Returns:
+            list[str]: Role values (e.g. ``["node_operator", "usd_operator"]``).
+        """
+        return [r.value for r in self._elected_roles]
 
     def get_promotions(self) -> list[dict]:
         """Return the promotion history from the shared NQT (most recent first).
 
         Each entry is a dict with keys:
         ``epoch``, ``address``, ``pub_key``, ``promoted_at``,
-        ``promoted_at_str``, ``reason``.
+        ``promoted_at_str``, ``reason``, ``role_name``.
 
         Returns:
             list[dict]: Promotion records, newest first.
+        """
+        return self._nqt.get_all_dicts()
+
+    # ------------------------------------------------------------------
+    # Main monitoring loop
+    # ------------------------------------------------------------------
+
+    async def run(self) -> None:
+        """Monitor for live operator holders and run elections when needed.
+
+        Checks each of the three operator roles independently every
+        ``check_interval`` seconds.  Runs until the asyncio task is cancelled.
+        """
+        logger.debug(
+            "[USMD-QUORUM] Monitor started (check_interval=%.1fs, roles=%s)",
+            self._check_interval,
+            [r.value for r in _OPERATOR_ROLES],
+        )
+        while True:
+            try:
+                await asyncio.sleep(self._check_interval)
+                for role in _OPERATOR_ROLES:
+                    if role in self._elected_roles:
+                        continue
+                    if not self._has_live_role(role):
+                        logger.info(
+                            "[USMD-QUORUM] No live %s detected — starting election.",
+                            role.value,
+                        )
+                        await self._start_election(role)
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:
+                logger.warning("[USMD-QUORUM] Monitor loop error: %s", exc)
+
+    # ------------------------------------------------------------------
+    # Liveness check
+    # ------------------------------------------------------------------
+
+    def _has_live_role(self, role: NodeRole) -> bool:
+        """Return True if at least one non-expired non-self peer holds *role*.
+
+        Args:
+            role: The operator role to look up.
+
+        Returns:
+            bool: True if a live holder is found, False otherwise.
+        """
+        for entry in self._nit.iter_all_entries():
+            if entry.is_expired():
+                continue
+            if entry.address == self._node_address:
+                continue
+            if self._nal.has_role(entry.public_key, role):
+                return True
+        return False
+
+    # ------------------------------------------------------------------
+    # Election
+    # ------------------------------------------------------------------
+
+    async def _start_election(self, role: NodeRole) -> None:
+        """Run a single election round for *role*.
+
+        Random delay → send REQUEST_VOTE (with role) to all live peers
+        → evaluate votes → promote self if elected.
+
+        Args:
+            role: The operator role being contested.
+        """
+        delay = random.uniform(_ELECTION_DELAY_MIN, self._cfg.quorum_election_timeout)
+        logger.debug(
+            "[USMD-QUORUM] [%s] Candidacy delay %.2fs before sending votes.",
+            role.value,
+            delay,
+        )
+        await asyncio.sleep(delay)
+
+        if self._has_live_role(role):
+            logger.debug(
+                "[USMD-QUORUM] [%s] Role holder appeared during candidacy delay — aborting.",
+                role.value,
+            )
+            return
+
+        self._epochs[role] += 1
+        epoch = self._epochs[role]
+        peers = self._live_peer_addresses()
+
+        if not peers:
+            logger.warning(
+                "[USMD-QUORUM] [%s] No live peers — cannot reach quorum, staying as executor.",
+                role.value,
+            )
+            return
+
+        logger.info(
+            "[USMD-QUORUM] [%s] Epoch %d: requesting vote from %d peer(s).",
+            role.value,
+            epoch,
+            len(peers),
+        )
+
+        yes_votes = 0
+        for address in peers:
+            granted = await self._request_vote(epoch, role, address)
+            if granted:
+                yes_votes += 1
+
+        logger.info(
+            "[USMD-QUORUM] [%s] Epoch %d: %d/%d YES votes.",
+            role.value,
+            epoch,
+            yes_votes,
+            len(peers),
+        )
+
+        if yes_votes > len(peers) / 2:
+            logger.info(
+                "[USMD-QUORUM] [%s] Epoch %d: elected — promoting self.",
+                role.value,
+                epoch,
+            )
+            reason = (
+                f"Élection — {yes_votes}/{len(peers)} vote(s) OUI "
+                f"(epoch {epoch}, aucun {role.value} détecté)"
+            )
+            self._promote_self(role=role, epoch=epoch, reason=reason)
+            await self._announce_promotion(role=role, epoch=epoch, peers=peers)
+        else:
+            logger.info(
+                "[USMD-QUORUM] [%s] Epoch %d: not elected (insufficient votes).",
+                role.value,
+                epoch,
+            )
+
+    def _live_peer_addresses(self) -> list[str]:
+        """Return addresses of non-expired, non-self, active NIT entries.
+
+        Inactive USD nodes are excluded to avoid polling unreachable peers.
+        """
+        inactive_addrs: set[str] = set()
+        if self._usd is not None:
+            inactive_addrs = {
+                n.address for n in self._usd.nodes.values()
+                if not n.state.is_active() and n.address != self._node_address
+            }
+        seen: set[str] = set()
+        addresses: list[str] = []
+        for entry in self._nit.iter_all_entries():
+            if entry.is_expired():
+                continue
+            if entry.address == self._node_address:
+                continue
+            if entry.address in inactive_addrs:
+                continue
+            if entry.address not in seen:
+                seen.add(entry.address)
+                addresses.append(entry.address)
+        return addresses
+
+    async def _request_vote(
+        self, epoch: int, role: NodeRole, address: str
+    ) -> bool:
+        """Send a REQUEST_VOTE frame to one peer and return the vote."""
+        return await request_vote(
+            self._node_address,
+            self._ncp_port,
+            self._ncp_timeout,
+            self._on_ncp_failure,
+            epoch,
+            role,
+            address,
+        )
+
+    def _promote_self(self, role: NodeRole, epoch: int, reason: str) -> None:
+        """Update local role in cfg and NAL for the elected role."""
+        promote_self(
+            self._cfg,
+            self._nal,
+            self._nqt,
+            self._elected_roles,
+            self._ed_pub,
+            self._node_address,
+            role,
+            epoch,
+            reason,
+        )
+
+    async def _announce_promotion(
+        self, role: NodeRole, epoch: int, peers: list[str]
+    ) -> None:
+        """Broadcast ANNOUNCE_PROMOTION to all live peers."""
+        await announce_promotion(
+            self._node_address,
+            self._ed_pub,
+            self._ncp_port,
+            self._ncp_timeout,
+            self._on_ncp_failure,
+            role,
+            epoch,
+            peers,
+        )
+
+    # ------------------------------------------------------------------
+    # NCP handler callbacks
+    # ------------------------------------------------------------------
+
+    def should_grant_vote(
+        self,
+        epoch: int,
+        candidate_address: str,
+        role_name: str = "node_operator",
+    ) -> bool:
+        """Decide whether to grant a vote for the given epoch, role, and candidate.
+
+        A node votes YES if and only if:
+        - The requested role is one of the three managed operator roles.
+        - It has not yet voted for this role in this epoch.
+        - It does not believe a live holder of that role already exists.
+
+        Args:
+            epoch: Election epoch from the candidate.
+            candidate_address: IP address of the candidate node.
+            role_name: Name of the operator role being contested.
+
+        Returns:
+            bool: True to grant the vote (YES), False to refuse (NO).
 
         Example:
             >>> from usmd.node.nit import NodeIdentityTable
@@ -153,303 +408,43 @@ class QuorumManager:  # pylint: disable=too-many-instance-attributes
             >>> qm = QuorumManager("10.0.0.1", b"k"*32,
             ...                    NodeIdentityTable(), NodeAccessList(),
             ...                    NodeQuorumTable(), NodeConfig())
-            >>> qm.get_promotions()
-            []
-        """
-        return self._nqt.get_all_dicts()
-
-    # ------------------------------------------------------------------
-    # Main monitoring loop
-    # ------------------------------------------------------------------
-
-    async def run(self) -> None:
-        """Monitor for live operators and run an election when none found.
-
-        Runs until the asyncio task is cancelled.
-        """
-        logger.debug(
-            "[USMD-QUORUM] Monitor started (check_interval=%.1fs)",
-            self._check_interval,
-        )
-        while True:
-            try:
-                await asyncio.sleep(self._check_interval)
-                if self._is_operator:
-                    continue
-                if not self._has_live_operator():
-                    logger.info(
-                        "[USMD-QUORUM] No live operator detected — starting election."
-                    )
-                    await self._start_election()
-            except asyncio.CancelledError:
-                break
-            except Exception as exc:  # pylint: disable=broad-except
-                logger.warning("[USMD-QUORUM] Monitor loop error: %s", exc)
-
-    # ------------------------------------------------------------------
-    # Liveness check
-    # ------------------------------------------------------------------
-
-    def _has_live_operator(self) -> bool:
-        """Return True if at least one non-expired operator peer is known.
-
-        Checks every non-expired NIT entry to see whether the corresponding
-        public key holds the NODE_OPERATOR role in the local NAL.
-
-        Returns:
-            bool: True if a live operator is found, False otherwise.
-
-        Example:
-            >>> from usmd.node.nit import NodeIdentityTable
-            >>> from usmd.node.nal import NodeAccessList
-            >>> from usmd.config import NodeConfig
-            >>> qm = QuorumManager("10.0.0.1", b"k"*32,
-            ...                    NodeIdentityTable(), NodeAccessList(),
-            ...                    NodeConfig())
-            >>> qm._has_live_operator()
-            False
-        """
-        for (
-            pub_key,
-            entry,
-        ) in self._nit._entries.items():  # pylint: disable=protected-access
-            if entry.is_expired():
-                continue
-            if entry.address == self._node_address:
-                continue
-            if self._nal.has_role(pub_key, NodeRole.NODE_OPERATOR):
-                return True
-        return False
-
-    # ------------------------------------------------------------------
-    # Election
-    # ------------------------------------------------------------------
-
-    async def _start_election(self) -> None:
-        """Run a single election round.
-
-        Random delay → send REQUEST_VOTE to all live peers → evaluate votes.
-        """
-        delay = random.uniform(_ELECTION_DELAY_MIN, self._cfg.quorum_election_timeout)
-        logger.debug("[USMD-QUORUM] Candidacy delay %.2fs before sending votes.", delay)
-        await asyncio.sleep(delay)
-
-        if self._has_live_operator():
-            logger.debug(
-                "[USMD-QUORUM] Operator appeared during candidacy delay — aborting."
-            )
-            return
-
-        self._epoch += 1
-        epoch = self._epoch
-        peers = self._live_peer_addresses()
-
-        if not peers:
-            logger.warning(
-                "[USMD-QUORUM] No live peers — cannot reach quorum, staying as executor."
-            )
-            return
-
-        logger.info(
-            "[USMD-QUORUM] Epoch %d: requesting vote from %d peer(s).",
-            epoch,
-            len(peers),
-        )
-
-        yes_votes = 0
-        for address in peers:
-            granted = await self._request_vote(epoch, address)
-            if granted:
-                yes_votes += 1
-
-        logger.info(
-            "[USMD-QUORUM] Epoch %d: %d/%d YES votes.", epoch, yes_votes, len(peers)
-        )
-
-        if yes_votes > len(peers) / 2:
-            logger.info("[USMD-QUORUM] Epoch %d: elected — promoting self.", epoch)
-            reason = (
-                f"Élection — {yes_votes}/{len(peers)} vote(s) OUI "
-                f"(epoch {epoch}, aucun opérateur détecté)"
-            )
-            self._promote_self(epoch=epoch, reason=reason)
-            await self._announce_promotion(epoch, peers)
-        else:
-            logger.info(
-                "[USMD-QUORUM] Epoch %d: not elected (insufficient votes).", epoch
-            )
-
-    def _live_peer_addresses(self) -> list[str]:
-        """Return addresses of all non-expired, non-self NIT entries.
-
-        Returns:
-            list[str]: Unique list of peer IP addresses.
-        """
-        seen: set[str] = set()
-        addresses: list[str] = []
-        for entry in self._nit._entries.values():  # pylint: disable=protected-access
-            if entry.is_expired():
-                continue
-            if entry.address == self._node_address:
-                continue
-            if entry.address not in seen:
-                seen.add(entry.address)
-                addresses.append(entry.address)
-        return addresses
-
-    async def _request_vote(self, epoch: int, address: str) -> bool:
-        """Send a REQUEST_VOTE frame to one peer and return the vote.
-
-        Args:
-            epoch: Current election epoch.
-            address: Peer IP address.
-
-        Returns:
-            bool: True if the peer voted YES.
-        """
-        req = RequestVoteRequest(epoch=epoch, candidate_address=self._node_address)
-        client = NcpClient(
-            address=address,
-            port=self._ncp_port,
-            timeout=self._ncp_timeout,
-        )
-        result = await client.send(NcpCommandId.REQUEST_VOTE, req.to_payload())
-        if result.is_err():
-            logger.debug(
-                "[USMD-QUORUM] REQUEST_VOTE to %s failed: %s",
-                address,
-                result.unwrap_err(),
-            )
-            if self._on_ncp_failure:
-                self._on_ncp_failure(address)
-            return False
-
-        parse_result = RequestVoteResponse.from_payload(result.unwrap().payload)
-        if parse_result.is_err():
-            logger.debug(
-                "[USMD-QUORUM] REQUEST_VOTE response parse error from %s: %s",
-                address,
-                parse_result.unwrap_err(),
-            )
-            return False
-
-        granted = parse_result.unwrap().granted
-        logger.debug(
-            "[USMD-QUORUM] Vote from %s: %s", address, "YES" if granted else "NO"
-        )
-        return granted
-
-    def _promote_self(self, epoch: int, reason: str) -> None:
-        """Update local role to NODE_OPERATOR in cfg and NAL."""
-        self._cfg.role = "operator"
-        self._nal.grant(self._ed_pub, NodeRole.NODE_OPERATOR, permanent=False)
-        self._is_operator = True
-        self._nqt.add(epoch, self._ed_pub, self._node_address, reason)
-        logger.info(
-            "[USMD-QUORUM] This node (%s) is now NODE_OPERATOR.",
-            self._node_address,
-        )
-
-    async def _announce_promotion(self, epoch: int, peers: list[str]) -> None:
-        """Broadcast ANNOUNCE_PROMOTION to all live peers.
-
-        Args:
-            epoch: Election epoch.
-            peers: List of peer IP addresses to notify.
-        """
-        req = AnnouncePromotionRequest(
-            epoch=epoch,
-            pub_key=self._ed_pub,
-            address=self._node_address,
-        )
-        payload = req.to_payload()
-        for address in peers:
-            client = NcpClient(
-                address=address,
-                port=self._ncp_port,
-                timeout=self._ncp_timeout,
-            )
-            result = await client.send(NcpCommandId.ANNOUNCE_PROMOTION, payload)
-            if result.is_err():
-                logger.debug(
-                    "[USMD-QUORUM] ANNOUNCE_PROMOTION to %s failed: %s",
-                    address,
-                    result.unwrap_err(),
-                )
-                if self._on_ncp_failure:
-                    self._on_ncp_failure(address)
-            else:
-                logger.debug(
-                    "[USMD-QUORUM] ANNOUNCE_PROMOTION acknowledged by %s.", address
-                )
-
-    # ------------------------------------------------------------------
-    # NCP handler callbacks
-    # ------------------------------------------------------------------
-
-    def should_grant_vote(self, epoch: int, candidate_address: str) -> bool:
-        """Decide whether to grant a vote for the given epoch and candidate.
-
-        A node votes YES if and only if:
-        - It has not yet voted in this epoch.
-        - It does not believe a live operator already exists.
-
-        Args:
-            epoch: Election epoch from the candidate.
-            candidate_address: IP address of the candidate node.
-
-        Returns:
-            bool: True to grant the vote (YES), False to refuse (NO).
-
-        Example:
-            >>> from usmd.node.nit import NodeIdentityTable
-            >>> from usmd.node.nal import NodeAccessList
-            >>> from usmd.config import NodeConfig
-            >>> qm = QuorumManager("10.0.0.1", b"k"*32,
-            ...                    NodeIdentityTable(), NodeAccessList(),
-            ...                    NodeConfig())
-            >>> qm.should_grant_vote(1, "10.0.0.2")
+            >>> qm.should_grant_vote(1, "10.0.0.2", "node_operator")
             True
         """
-        if epoch in self._voted_epochs:
-            logger.debug(
-                "[USMD-QUORUM] Already voted in epoch %d — refusing %s.",
-                epoch,
-                candidate_address,
-            )
-            return False
-        if self._has_live_operator():
-            logger.debug(
-                "[USMD-QUORUM] Live operator exists — refusing vote for %s.",
-                candidate_address,
-            )
-            return False
-        self._voted_epochs.add(epoch)
-        logger.info(
-            "[USMD-QUORUM] Granting vote (epoch=%d) to candidate %s.",
+        return _should_grant_vote(
+            self._voted_epochs,
+            self._has_live_role,
+            _OPERATOR_ROLES,
             epoch,
             candidate_address,
+            role_name,
         )
-        return True
 
-    def on_promotion_announced(self, epoch: int, pub_key: bytes, address: str) -> None:
+    def on_promotion_announced(
+        self,
+        epoch: int,
+        pub_key: bytes,
+        address: str,
+        role_name: str = "node_operator",
+    ) -> None:
         """Handle an incoming ANNOUNCE_PROMOTION notification.
 
-        Registers the promoted node's public key in the local NAL with
-        NODE_OPERATOR role, and registers or refreshes its NIT entry.
+        Registers the promoted node's public key in the local NAL with the
+        announced role, and registers or refreshes its NIT entry.
 
         Args:
             epoch: Election epoch from the announcement.
             pub_key: Ed25519 public key of the promoted node (32 bytes).
             address: IP address of the promoted node.
+            role_name: Name of the role the node was promoted to.
         """
-        logger.info(
-            "[USMD-QUORUM] Epoch %d: %s promoted to NODE_OPERATOR (key=%s…).",
+        _on_promotion_announced(
+            self._nal,
+            self._nit,
+            self._voted_epochs,
+            self._nqt,
             epoch,
+            pub_key,
             address,
-            pub_key.hex()[:16],
+            role_name,
         )
-        self._nal.grant(pub_key, NodeRole.NODE_OPERATOR, permanent=False)
-        self._nit.register(address, pub_key, ttl=86400)
-        self._voted_epochs.discard(epoch)
-        self._nqt.add(epoch, pub_key, address, f"Annonce reçue d'un pair (epoch {epoch})")

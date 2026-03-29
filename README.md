@@ -23,7 +23,6 @@ USMD-RDSH est un système distribué de gestion de nœuds auto-organisés. Chaqu
 
 ## Architecture
 
-
 | Composant                                   | Rôle                                                                          |
 | ------------------------------------------- | ----------------------------------------------------------------------------- |
 | **NCP** — Node Cohesion Protocol            | Communication inter-nœuds (TCP/5626) — 10 commandes                           |
@@ -35,7 +34,6 @@ USMD-RDSH est un système distribué de gestion de nœuds auto-organisés. Chaqu
 | **NEL** — Node Endorsement List             | Liste des endorsements Ed25519 émis et reçus                                  |
 | **CTL** — Control Socket                    | Socket Unix local pour introspection en direct (`python -m usmd status`)      |
 | **Web Dashboard**                           | Interface web Django (optionnelle) pour supervision multi-nœuds en temps réel |
-
 
 Chaque nœud génère une paire de clés **Ed25519** (signature) et **X25519** (échange de clés) au premier démarrage. Ces clés sont persistées localement et constituent l'identité cryptographique du nœud.
 
@@ -143,7 +141,7 @@ source .venv/bin/activate       # Linux / macOS
 
 # 3. Installer les dépendances
 pip install -e .
-pip install pytest pytest-asyncio tox pylint djlint # pour les tests
+pip install pytest pytest-asyncio pytest-cov tox pylint djlint # pour les tests
 
 # 4a. Démarrer le premier nœud (bootstrap — crée un nouveau USD)
 python -m usmd --config usmd.yaml --bootstrap
@@ -237,14 +235,12 @@ Les options CLI ont priorité sur le fichier de configuration.
 
 ## Rôles des nœuds
 
-
 | Rôle           | Description                                       |
 | -------------- | ------------------------------------------------- |
 | `executor`     | Nœud exécutant des services (rôle par défaut)     |
 | `operator`     | Nœud de gestion sans responsabilité de domaine    |
 | `usd_operator` | Nœud responsable de la gestion d'un USD           |
 | `ucd_operator` | Nœud responsable de la gestion d'un USC (cluster) |
-
 
 ---
 

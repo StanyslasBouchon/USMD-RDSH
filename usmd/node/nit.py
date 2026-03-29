@@ -24,7 +24,7 @@ Examples:
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Iterator, Optional
 
 from ..utils.errors import Error, ErrorKind
 from ..utils.result import Result
@@ -240,3 +240,17 @@ class NodeIdentityTable:
 
     def __repr__(self) -> str:
         return f"NodeIdentityTable({len(self)} entries)"
+
+    def iter_all_entries(self) -> Iterator[NitEntry]:
+        """Iterate over all registered NIT entries (including expired ones).
+
+        Returns:
+            Iterator[NitEntry]: All current entries in insertion order.
+
+        Example:
+            >>> nit = NodeIdentityTable()
+            >>> nit.register("10.0.0.1", b"k" * 32)
+            >>> list(nit.iter_all_entries())[0].address
+            '10.0.0.1'
+        """
+        return iter(self._entries.values())

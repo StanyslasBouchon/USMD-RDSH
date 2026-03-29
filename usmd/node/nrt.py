@@ -30,6 +30,7 @@ Examples:
 
 from __future__ import annotations
 
+import datetime
 import time
 from dataclasses import dataclass, field
 from typing import Optional
@@ -157,20 +158,20 @@ class NodeReferenceTable:
             >>> nrt.get_all()[0]["address"]
             '10.0.0.1'
         """
-        import datetime  # pylint: disable=import-outside-toplevel
-
         rows = []
         for e in self._entries.values():
-            rows.append({
-                "address":       e.address,
-                "distance":      e.distance,
-                "ping_ms":       e.ping_ms,
-                "updated_at":    e.updated_at,
-                "updated_at_str": datetime.datetime.fromtimestamp(
-                    e.updated_at
-                ).strftime("%d/%m/%Y %H:%M:%S"),
-                "stale":         e.is_stale(),
-            })
+            rows.append(
+                {
+                    "address": e.address,
+                    "distance": e.distance,
+                    "ping_ms": e.ping_ms,
+                    "updated_at": e.updated_at,
+                    "updated_at_str": datetime.datetime.fromtimestamp(
+                        e.updated_at
+                    ).strftime("%d/%m/%Y %H:%M:%S"),
+                    "stale": e.is_stale(),
+                }
+            )
         rows.sort(key=lambda r: r["distance"])
         return rows
 

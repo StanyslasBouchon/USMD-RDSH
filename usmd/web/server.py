@@ -35,8 +35,12 @@ import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Optional
 
+from .settings import configure as _configure_django
+from .state import WebState, set_state
+
 if TYPE_CHECKING:
     from ..config import NodeConfig
+    from ..domain.usd import UnifiedSystemDomain
     from ..node.nit import NodeIdentityTable
 
 logger = logging.getLogger(__name__)
@@ -44,7 +48,7 @@ logger = logging.getLogger(__name__)
 
 class _Win32ProactorResetFilter(
     logging.Filter
-):  # pylint: disable=too-few-public-methods
+):
     """Suppress harmless WinError 10054 from the asyncio proactor on Windows.
 
     When a browser closes a connection abruptly, the proactor transport logs a
@@ -60,7 +64,7 @@ class _Win32ProactorResetFilter(
         return True
 
 
-class WebServer:  # pylint: disable=too-few-public-methods
+class WebServer:
     """Asyncio-compatible web server wrapping Django + uvicorn.
 
     Attributes:
@@ -77,6 +81,7 @@ class WebServer:  # pylint: disable=too-few-public-methods
         cfg: "NodeConfig",
         snapshot_fn: Callable[[], dict],
         nit: "NodeIdentityTable",
+        usd: "UnifiedSystemDomain",
         on_ncp_failure: Optional[Callable[[str], None]] = None,
     ) -> None:
         """Initialise the web server.
@@ -85,15 +90,17 @@ class WebServer:  # pylint: disable=too-few-public-methods
             cfg: Node configuration (web_* fields).
             snapshot_fn: Returns the local node's status snapshot dict.
             nit: Live NodeIdentityTable for peer discovery.
+            usd: Live UnifiedSystemDomain used to check node states before polling.
             on_ncp_failure: Optional callback invoked with a peer's address when
                 an outgoing NCP REQUEST_SNAPSHOT to that peer fails.
         """
         self._cfg = cfg
         self._snapshot_fn = snapshot_fn
         self._nit = nit
+        self._usd = usd
         self._on_ncp_failure = on_ncp_failure
         self._uvicorn_server: Optional[object] = None
-        self._tmp_cert_dir: Optional[tempfile.TemporaryDirectory] = None  # type: ignore[type-arg]
+        self._cleanup: contextlib.ExitStack = contextlib.ExitStack()
 
     # ------------------------------------------------------------------
     # SSL / TLS helpers
@@ -116,12 +123,9 @@ class WebServer:  # pylint: disable=too-few-public-methods
 
         # Try to generate a self-signed cert
         try:
-            self._tmp_cert_dir = (
-                tempfile.TemporaryDirectory(  # pylint: disable=consider-using-with
-                    prefix="usmd_tls_"
-                )
+            tmp = self._cleanup.enter_context(
+                tempfile.TemporaryDirectory(prefix="usmd_tls_")
             )
-            tmp = self._tmp_cert_dir.name
             cert_path = os.path.join(tmp, "cert.pem")
             key_path = os.path.join(tmp, "key.pem")
             subprocess.run(
@@ -153,9 +157,8 @@ class WebServer:  # pylint: disable=too-few-public-methods
                 "[\x1b[38;5;51mUSMD\x1b[0m] Web: openssl not found — "
                 "starting without TLS (HTTP only)"
             )
-            if self._tmp_cert_dir:
-                self._tmp_cert_dir.cleanup()
-                self._tmp_cert_dir = None
+            self._cleanup.close()
+            self._cleanup = contextlib.ExitStack()
             return None, None
 
     # ------------------------------------------------------------------
@@ -171,23 +174,21 @@ class WebServer:  # pylint: disable=too-few-public-methods
             ImportError: If uvicorn or Django are not installed.
         """
         try:
-            import uvicorn  # pylint: disable=import-outside-toplevel
+            import uvicorn
         except ImportError as exc:
             raise ImportError(
                 "uvicorn is required for the web dashboard: pip install uvicorn"
             ) from exc
 
         # 1. Configure Django settings
-        from .settings import configure  # pylint: disable=import-outside-toplevel
-
-        configure(
+        _configure_django(
             username=self._cfg.web_username,
             password=self._cfg.web_password,
             secret_key=secrets.token_hex(32),
         )
 
         # 2. Initialise Django
-        import django  # pylint: disable=import-outside-toplevel
+        import django
 
         if not django.conf.settings.configured:
             pass  # Already done above
@@ -197,15 +198,11 @@ class WebServer:  # pylint: disable=too-few-public-methods
             pass  # setup() called more than once — safe to ignore
 
         # 3. Register shared web state
-        from .state import (  # pylint: disable=import-outside-toplevel
-            WebState,
-            set_state,
-        )
-
         set_state(
             WebState(
                 snapshot_fn=self._snapshot_fn,
                 nit=self._nit,
+                usd=self._usd,
                 ncp_port=self._cfg.ncp_port,
                 cfg=self._cfg,
                 on_ncp_failure=self._on_ncp_failure,
@@ -218,7 +215,7 @@ class WebServer:  # pylint: disable=too-few-public-methods
         scheme = "https" if cert else "http"
 
         # 5. Build ASGI app
-        from django.core.asgi import (  # pylint: disable=import-outside-toplevel
+        from django.core.asgi import (
             get_asgi_application,
         )
 
@@ -262,12 +259,7 @@ class WebServer:  # pylint: disable=too-few-public-methods
         await self._uvicorn_server.serve()
 
     def close(self) -> None:
-        """Signal uvicorn to stop gracefully."""
+        """Signal uvicorn to stop gracefully and release the TLS temp directory."""
         if self._uvicorn_server is not None:
             self._uvicorn_server.should_exit = True  # type: ignore[attr-defined]
-        if self._tmp_cert_dir is not None:
-            try:
-                self._tmp_cert_dir.cleanup()
-            except OSError:
-                pass
-            self._tmp_cert_dir = None
+        self._cleanup.close()

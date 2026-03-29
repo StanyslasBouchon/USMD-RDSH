@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Callable, Optional
 
 if TYPE_CHECKING:
     from ..config import NodeConfig
+    from ..domain.usd import UnifiedSystemDomain
     from ..node.nit import NodeIdentityTable
 
 
@@ -33,6 +34,7 @@ class WebState:
         nit: Live NodeIdentityTable (read-only from views).
         ncp_port: NCP TCP port used to query remote nodes.
         cfg: Full node configuration (contains web_username, web_password, etc.).
+        usd: Live UnifiedSystemDomain used to check per-node state before NCP polling.
         on_ncp_failure: Optional callback invoked with the peer's address when an
             outgoing NCP request fails (connection refused, timeout, etc.).
     """
@@ -41,23 +43,31 @@ class WebState:
     nit: "NodeIdentityTable"
     ncp_port: int
     cfg: "NodeConfig"
+    usd: "UnifiedSystemDomain"
     on_ncp_failure: Optional[Callable[[str], None]] = None
 
 
-_STATE: Optional[WebState] = None
+class _StateHolder:
+    """Module-level singleton container.
+
+    Using a class attribute instead of a module-level variable means the write
+    in :func:`set_state` is a simple attribute assignment on the class, which
+    pylint does not flag as a global-statement.
+    """
+
+    current: Optional[WebState] = None
 
 
 def set_state(state: WebState) -> None:
     """Register the shared state. Called once by NodeDaemon before starting."""
-    global _STATE  # pylint: disable=global-statement
-    _STATE = state
+    _StateHolder.current = state
 
 
 def get_state() -> WebState:
     """Return the shared state. Raises RuntimeError if not yet initialised."""
-    if _STATE is None:
+    if _StateHolder.current is None:
         raise RuntimeError(
             "WebState has not been initialised — "
             "call usmd.web.state.set_state() before serving requests."
         )
-    return _STATE
+    return _StateHolder.current

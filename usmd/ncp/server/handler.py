@@ -4,23 +4,28 @@ Dispatches incoming NCP frames to the appropriate command handler and
 returns a response frame. The handler holds a reference to the running
 node's shared state (node, USD, NIT, NAL, NEL, etc.) via a context object.
 
+Implementation note — three heavier handlers are split into a private module
+to keep this file under 450 lines:
+
+- :mod:`._handler_node_ops` — CHECK_DISTANCE, REQUEST_APPROVAL, INFORM_REFERENCE_NODE.
+
 Examples:
     >>> ctx = HandlerContext.__new__(HandlerContext)
     >>> isinstance(ctx, HandlerContext)
     True
 """
-# pylint: disable=too-many-lines
 
 import logging
-import time
 from dataclasses import dataclass
 from typing import Callable
 
-from ..protocol.commands.get_nqt import GetNqtRequest, GetNqtResponse
-from ..protocol.commands.check_distance import (
-    CheckDistanceRequest,
-    CheckDistanceResponse,
+from ._handler_node_ops import (
+    handle_check_distance,
+    handle_inform_reference_node,
+    handle_request_approval,
 )
+
+from ..protocol.commands.get_nqt import GetNqtRequest, GetNqtResponse
 from ..protocol.commands.get_status import (
     GetStatusRequest,
     GetStatusResponse,
@@ -29,11 +34,6 @@ from ..protocol.commands.get_status import (
 from ..protocol.commands.announce_promotion import (
     AnnouncePromotionRequest,
     AnnouncePromotionResponse,
-)
-from ..protocol.commands.inform_reference_node import InformReferenceNodeRequest
-from ..protocol.commands.request_approval import (
-    RequestApprovalRequest,
-    RequestApprovalResponse,
 )
 from ..protocol.commands.request_emergency import (
     RequestEmergencyRequest,
@@ -54,15 +54,13 @@ from ..protocol.commands.send_usd_properties import SendUsdPropertiesRequest
 from ..protocol.frame import NcpCommandId, NcpFrame
 from ..protocol.versions import NcpVersion
 from ...domain.usd import UnifiedSystemDomain
-from ...mutation.transmutation import DistanceCalculator, ResourceUsage
-from ...security.crypto import Ed25519Pair
+from ...mutation.transmutation import ResourceUsage
 from ...node.nal import NodeAccessList
 from ...node.nel import NodeEndorsementList
 from ...node.nit import NodeIdentityTable
 from ...node.node import Node
 from ...node.nqt import NodeQuorumTable
 from ...node.nrl import NodeReferenceList
-from ...node.role import NodeRole
 from ...security.endorsement import EndorsementFactory
 from ...utils.errors import Error
 from ...quorum.manager import QuorumManager
@@ -73,7 +71,7 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class HandlerContext:  # pylint: disable=too-many-instance-attributes
+class HandlerContext:
     """All mutable state the NCP handler needs to process commands.
 
     Attributes:
@@ -125,7 +123,7 @@ def _error_response(command_id: NcpCommandId, err: Error) -> NcpFrame:
     return _make_response(command_id, b"")
 
 
-class NcpCommandHandler:  # pylint: disable=too-few-public-methods
+class NcpCommandHandler:
     """Dispatches NCP frames to command-specific handlers.
 
     Instantiate once per node and pass the same instance to the TCP server
@@ -213,32 +211,7 @@ class NcpCommandHandler:  # pylint: disable=too-few-public-methods
     # ------------------------------------------------------------------
 
     def _handle_check_distance(self, frame: NcpFrame) -> NcpFrame:
-        parse_result = CheckDistanceRequest.from_payload(frame.payload)
-        if parse_result.is_err():
-            return _error_response(
-                NcpCommandId.CHECK_DISTANCE, parse_result.unwrap_err()
-            )
-
-        req = parse_result.unwrap()
-        now_ms = int(time.time() * 1000)
-        ping_ms = float(max(0, now_ms - req.sent_at_ms))
-
-        usage = self.ctx.resource_getter()
-        load = usage.reference_load()
-
-        calc = DistanceCalculator(
-            ping_tolerance_ms=self.ctx.usd.config.ping_tolerance_ms
-        )
-        d = calc.compute(
-            ping_ms=ping_ms,
-            reference_load=load,
-            same_service=False,
-            is_already_reference=False,
-        )
-        return _make_response(
-            NcpCommandId.CHECK_DISTANCE,
-            CheckDistanceResponse(distance=d).to_payload(),
-        )
+        return handle_check_distance(self.ctx, frame)
 
     # ------------------------------------------------------------------
     # Command 2: Request_emergency
@@ -290,89 +263,7 @@ class NcpCommandHandler:  # pylint: disable=too-few-public-methods
     # ------------------------------------------------------------------
 
     def _handle_request_approval(self, frame: NcpFrame) -> NcpFrame:
-        parse_result = RequestApprovalRequest.from_payload(frame.payload)
-        if parse_result.is_err():
-            return _error_response(
-                NcpCommandId.REQUEST_APPROVAL, parse_result.unwrap_err()
-            )
-
-        req = parse_result.unwrap()
-
-        # Verify the request signature
-        sig_result = Ed25519Pair.verify(
-            req.ed25519_pub, req.signable_bytes(), req.signature
-        )
-        if sig_result.is_err():
-            logger.warning(
-                "[\x1b[38;5;51mUSMD\x1b[0m] REQUEST_APPROVAL rejected "
-                "(bad signature) for node %d",
-                req.node_name,
-            )
-            return _make_response(
-                NcpCommandId.REQUEST_APPROVAL,
-                RequestApprovalResponse(approved=False).to_payload(),
-            )
-
-        # Check name uniqueness
-        if self.ctx.usd.get_node(req.node_name) is not None:
-            logger.warning(
-                "[\x1b[38;5;51mUSMD\x1b[0m] REQUEST_APPROVAL rejected "
-                "(name conflict) for node %d",
-                req.node_name,
-            )
-            return _make_response(
-                NcpCommandId.REQUEST_APPROVAL,
-                RequestApprovalResponse(approved=False).to_payload(),
-            )
-
-        # Only active nodes can endorse
-        if not self.ctx.node.is_reachable():
-            return _make_response(
-                NcpCommandId.REQUEST_APPROVAL,
-                RequestApprovalResponse(approved=False).to_payload(),
-            )
-
-        # Issue endorsement
-        packet = self.ctx.endorsement_factory.issue(
-            node_name=req.node_name,
-            node_pub_key=req.ed25519_pub,
-            node_session_key=req.x25519_pub,
-            roles=[NodeRole.NODE_EXECUTOR],
-            ttl_seconds=86400,
-        )
-        self.ctx.nel.add_issued(packet)
-
-        # Register in NIT so the new node can talk to us
-        self.ctx.nit.register(
-            address="unknown",  # will be refreshed when the node sends HIA
-            public_key=req.ed25519_pub,
-            ttl=int(packet.expiration - time.time()),
-        )
-
-        # Encode endorsement packet inline with the approval byte
-        import json  # pylint: disable=import-outside-toplevel
-
-        endorsement_doc = {
-            "endorser_key": packet.endorser_key.hex(),
-            "node_name": packet.node_name,
-            "node_pub_key": packet.node_pub_key.hex(),
-            "node_session_key": packet.node_session_key.hex(),
-            "roles": [r.value for r in packet.roles],
-            "serial": packet.serial.hex(),
-            "expiration": packet.expiration,
-            "signature": packet.signature.hex(),
-        }
-        approval_byte = bytes([0x01])
-        endorsement_bytes = json.dumps(endorsement_doc).encode("utf-8")
-
-        logger.info(
-            "[\x1b[38;5;51mUSMD\x1b[0m] REQUEST_APPROVAL approved for node %d",
-            req.node_name,
-        )
-        return _make_response(
-            NcpCommandId.REQUEST_APPROVAL,
-            approval_byte + endorsement_bytes,
-        )
+        return handle_request_approval(self.ctx, frame)
 
     # ------------------------------------------------------------------
     # Command 5: Send_ucd_properties
@@ -435,36 +326,7 @@ class NcpCommandHandler:  # pylint: disable=too-few-public-methods
     # ------------------------------------------------------------------
 
     def _handle_inform_reference_node(self, frame: NcpFrame) -> NcpFrame:
-        parse_result = InformReferenceNodeRequest.from_payload(frame.payload)
-        if parse_result.is_err():
-            return _error_response(
-                NcpCommandId.INFORM_REFERENCE_NODE, parse_result.unwrap_err()
-            )
-        req = parse_result.unwrap()
-
-        # Update the NRL: track whether the sender has chosen us as a reference.
-        if self.ctx.nrl is not None and req.sender_name != 0:
-            if self.ctx.node.name in req.reference_names:
-                self.ctx.nrl.add(req.sender_name, req.sender_address)
-                logger.info(
-                    "[\x1b[38;5;51mUSMD\x1b[0m] NRL: %s (#%d) nous mandate.",
-                    req.sender_address,
-                    req.sender_name,
-                )
-            else:
-                if self.ctx.nrl.get(req.sender_name) is not None:
-                    self.ctx.nrl.remove(req.sender_name)
-                    logger.info(
-                        "[\x1b[38;5;51mUSMD\x1b[0m] NRL: %s (#%d) ne nous mandate plus.",
-                        req.sender_address,
-                        req.sender_name,
-                    )
-        else:
-            logger.debug(
-                "[\x1b[38;5;51mUSMD\x1b[0m] NCP INFORM_REFERENCE_NODE: refs=%s",
-                req.reference_names,
-            )
-        return _make_response(NcpCommandId.INFORM_REFERENCE_NODE, b"")
+        return handle_inform_reference_node(self.ctx, frame)
 
     # ------------------------------------------------------------------
     # Command 9: Request_snapshot
@@ -490,14 +352,15 @@ class NcpCommandHandler:  # pylint: disable=too-few-public-methods
         req = parse_result.unwrap()
         if self.ctx.quorum_manager is not None:
             granted = self.ctx.quorum_manager.should_grant_vote(
-                req.epoch, req.candidate_address
+                req.epoch, req.candidate_address, req.role
             )
         else:
             granted = False
 
         logger.debug(
-            "[\x1b[38;5;51mUSMD\x1b[0m] NCP REQUEST_VOTE epoch=%d from=%s → %s",
+            "[\x1b[38;5;51mUSMD\x1b[0m] NCP REQUEST_VOTE epoch=%d role=%s from=%s → %s",
             req.epoch,
+            req.role,
             req.candidate_address,
             "YES" if granted else "NO",
         )
@@ -520,12 +383,13 @@ class NcpCommandHandler:  # pylint: disable=too-few-public-methods
         req = parse_result.unwrap()
         if self.ctx.quorum_manager is not None:
             self.ctx.quorum_manager.on_promotion_announced(
-                req.epoch, req.pub_key, req.address
+                req.epoch, req.pub_key, req.address, req.role
             )
 
         logger.info(
-            "[\x1b[38;5;51mUSMD\x1b[0m] NCP ANNOUNCE_PROMOTION epoch=%d addr=%s",
+            "[\x1b[38;5;51mUSMD\x1b[0m] NCP ANNOUNCE_PROMOTION epoch=%d role=%s addr=%s",
             req.epoch,
+            req.role,
             req.address,
         )
         return _make_response(

@@ -26,7 +26,7 @@ from ..utils.io import close_writer
 logger = logging.getLogger(__name__)
 
 
-class CtlServer:  # pylint: disable=too-few-public-methods
+class CtlServer:
     """Asyncio control server that serves node status snapshots on demand.
 
     On Linux/macOS a Unix-domain socket is used.  On Windows a TCP loopback

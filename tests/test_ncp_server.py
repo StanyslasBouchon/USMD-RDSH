@@ -250,7 +250,11 @@ class TestNcpCommandHandler:
         assert response.payload == b""
 
     def test_inform_reference_node_returns_empty(self, handler):
-        req = InformReferenceNodeRequest(reference_names=[100, 200, 300])
+        req = InformReferenceNodeRequest(
+            sender_name=1,
+            sender_address="10.0.0.1",
+            reference_names=[100, 200, 300],
+        )
         frame = _make_frame(NcpCommandId.INFORM_REFERENCE_NODE, req.to_payload())
         response = handler.handle(frame)
         assert response.command_id == NcpCommandId.INFORM_REFERENCE_NODE

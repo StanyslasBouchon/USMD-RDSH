@@ -27,7 +27,7 @@ _HEADER_SIZE = 9
 _PAYLOAD_LEN_OFFSET = 5  # offset of the uint32 payload length inside the header
 
 
-class NcpClient:  # pylint: disable=too-few-public-methods
+class NcpClient:
     """Async TCP client that sends a single NCP command and reads the response.
 
     Each call to :meth:`send` opens a fresh TCP connection, transmits the

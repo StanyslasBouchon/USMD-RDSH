@@ -37,7 +37,7 @@ from .role import NodeRole
 
 
 @dataclass
-class EndorsementPacket:  # pylint: disable=too-many-instance-attributes
+class EndorsementPacket:
     """An endorsement packet issued by an existing node to a new joining node.
 
     This packet is the proof-of-identity that new nodes present to unknown
