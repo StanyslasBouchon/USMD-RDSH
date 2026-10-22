@@ -214,3 +214,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# usmd daemon (origin/master history)
+usmd_keys.json
+usmd.yaml
+usmd.sock

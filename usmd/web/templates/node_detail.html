@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+
+{% block title %}Node {{ address }} — USMD-RDSH{% endblock title %}
+{% block breadcrumb %}
+  <a href="{% url 'dashboard' %}" class="text-info text-decoration-none">Dashboard</a>
+  › {{ address }}
+{% endblock breadcrumb %}
+
+{% block extra_css %}
+<style>
+.table-meta-label { font-size: .7rem; text-transform: none; }
+.code-key    { font-size: .78rem; word-break: break-all; }
+.code-key-sm { font-size: .72rem; word-break: break-all; }
+</style>
+{% endblock extra_css %}
+
+{% block content %}
+
+{% if error %}
+<div class="alert alert-danger"><i class="bi bi-exclamation-triangle-fill me-2"></i>{{ error }}</div>
+{% else %}
+
+{% with n=node_data.node r=node_data.resources usd=node_data.usd nit=node_data.nit nal=node_data.nal nel=node_data.nel refs=node_data.reference_nodes nrt=node_data.nrt nrl=node_data.nrl mutations=node_data.mutations service_execution_log=node_data.service_execution_log %}
+
+{% include "components/node_detail/header.html" %}
+{% include "components/node_detail/tabs_nav.html" %}
+
+<div class="tab-content">
+  {% include "components/node_detail/tab_resources.html" %}
+  {% include "components/node_detail/tab_usd.html" %}
+  {% include "components/node_detail/tab_nit.html" %}
+  {% include "components/node_detail/tab_nal.html" %}
+  {% include "components/node_detail/tab_nel.html" %}
+  {% include "components/node_detail/tab_references.html" %}
+  {% include "components/node_detail/tab_services.html" %}
+</div>
+
+{% endwith %}
+{% endif %}
+{% endblock content %}
+
+{% block extra_js %}
+{% if not error %}
+{% include "components/node_detail/scripts.html" %}
+{% endif %}
+{% endblock extra_js %}

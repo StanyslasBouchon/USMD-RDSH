@@ -32,5 +32,31 @@ build-backend = "pdm.backend"
 distribution = true
 
 [tool.pytest.ini_options]
-pythonpath = ["src"]
-testpaths = ["src", "tests"]
+# Both implementations: usmd_rdsh (src/) and the usmd daemon (repository root).
+asyncio_mode = "strict"
+pythonpath = ["src", "."]
+testpaths = ["tests"]
+
+[dependency-groups]
+# What the usmd daemon (repository root, see requirements.txt) needs to run its tests.
+usmd-daemon = [
+    "pytest-asyncio>=0.23.0",
+    "asyncio-dgram>=2.1.0",
+]
+
+[tool.tox]
+legacy_tox_ini = "tox.ini"
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+ignore_missing_imports = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.pylint.messages_control]
+# R0801: duplicate-code is a false positive here — usc.py and usd.py both
+# implement an update_config() method that is intentionally parallel in structure.
+disable = ["R0801"]

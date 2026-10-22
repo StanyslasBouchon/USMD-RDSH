@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}Dashboard — USMD-RDSH{% endblock title %}
+{% block breadcrumb %}Dashboard{% endblock breadcrumb %}
+
+{% block extra_css %}
+<style>
+.inactive-reason { font-size: .65rem; color: #8a9ba8; margin-top: 2px; letter-spacing: .01em; }
+.code-key-sm { font-size: .72rem; word-break: break-all; }
+</style>
+{% endblock extra_css %}
+
+{% block content %}
+
+{% include "components/dashboard/page_header.html" %}
+{% include "components/dashboard/node_grid.html" %}
+{% include "components/dashboard/promotions_section.html" %}
+
+{% endblock content %}
+
+{% block extra_js %}
+{% include "components/dashboard/sse_script.html" %}
+{% endblock extra_js %}

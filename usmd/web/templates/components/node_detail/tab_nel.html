@@ -1,0 +1,77 @@
+{# Context: nel #}
+<div class="tab-pane fade" id="tab-nel">
+  <div class="row g-3">
+    <div class="col-lg-5">
+      <h6 class="text-muted small text-uppercase mb-2">Received endorsement</h6>
+      <div class="node-card p-3">
+        {% if nel.received %}
+        {% with recv=nel.received %}
+        <table class="table table-sm table-borderless mb-0">
+          <tbody>
+            <tr><td class="text-muted">Endorser</td><td>
+              {% if recv.endorser_address %}
+              <a href="{% url 'node_detail' recv.endorser_address %}" class="text-decoration-none">
+                <code class="text-info code-key">{{ recv.endorser_key }}</code>
+              </a>
+              {% else %}
+              <code class="text-info code-key">{{ recv.endorser_key }}</code>
+              {% endif %}
+            </td></tr>
+            <tr><td class="text-muted">Roles</td>
+                <td>{% for r in recv.roles %}<span class="badge badge-role me-1">{{ r }}</span>{% endfor %}</td></tr>
+            <tr><td class="text-muted">Expires</td>
+                <td>
+                  {% if recv.expired %}
+                    <span class="badge badge-state-inactive">Expired</span>
+                  {% else %}
+                    <span class="badge badge-state-active">Valid</span>
+                  {% endif %}
+                </td></tr>
+          </tbody>
+        </table>
+        {% endwith %}
+        {% else %}
+        <div class="text-muted small"><i class="bi bi-info-circle me-1"></i>None — bootstrap node.</div>
+        {% endif %}
+      </div>
+    </div>
+    <div class="col-lg-7">
+      <h6 class="text-muted small text-uppercase mb-2">Issued endorsements ({{ nel.issued|length }})</h6>
+      <div class="node-card">
+        {% if nel.issued %}
+        <table class="table table-sm table-striped mb-0">
+          <thead>
+            <tr><th>Node</th><th>Roles</th><th>Validity</th></tr>
+          </thead>
+          <tbody>
+            {% for pkt in nel.issued %}
+            <tr>
+              <td>
+                <div class="text-light">#{{ pkt.node_name }}</div>
+                {% if pkt.node_address %}
+                <a href="{% url 'node_detail' pkt.node_address %}" class="text-decoration-none">
+                  <code class="text-info code-key-sm">{{ pkt.node_pub_key }}</code>
+                </a>
+                {% else %}
+                <code class="text-info code-key-sm">{{ pkt.node_pub_key }}</code>
+                {% endif %}
+              </td>
+              <td>{% for r in pkt.roles %}<span class="badge badge-role me-1">{{ r }}</span>{% endfor %}</td>
+              <td>
+                {% if pkt.expired %}
+                  <span class="badge badge-state-inactive">Expired</span>
+                {% else %}
+                  <span class="badge badge-state-active">Valid</span>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+        <div class="p-3 text-muted small">No endorsements issued.</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
