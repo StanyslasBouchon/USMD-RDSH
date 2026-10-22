@@ -1,0 +1,124 @@
+"""``config usc``, ``config usd`` and ``config service-area``: the cluster and
+the domain [ARCH-02 9.1, 9.2, 11.2].
+
+In a running USD these properties are signed by the authority and propagated
+by NCP; what is configured here is the local copy, which an authority node
+injects and any node may inspect or override while the propagation is not
+implemented.
+"""
+
+import ipaddress
+from typing import Self
+
+from nan_actions.views import ConfigNode, view
+from pydantic import BaseModel, Field, model_validator
+
+from usmd_rdsh.cli.views.common import NODE_ACCESS, IPv4, Port
+
+
+class UscConfig(BaseModel):
+    """USC properties."""
+
+    name: str = Field("", description="USCN")
+    public_key: str = Field("", description="Ed25519 key of the USC (base64url)")
+    usd: list[str] = Field([], description="USDN of each member USD")
+
+
+@view("usc", model=UscConfig, **NODE_ACCESS)
+class UscView(ConfigNode):
+    """Unified System Cluster properties."""
+
+
+class UsdConfig(BaseModel):
+    """USD properties; each parameter carries its registry code [ARCH-02 9.2]."""
+
+    name: str = Field("", description="USDN")
+    public_key: str = Field("", description="Ed25519 key of the USD (base64url)")
+    reference_nodes: int = Field(5, ge=1, le=64, description="0x0001 NNR, nodes")
+    ping_tolerance: int = Field(1000, ge=1, description="0x0002 T, ms")
+    solicited_nodes: int = Field(5, ge=1, description="0x0003 X, nodes")
+    weakened_threshold: int = Field(800, ge=1, le=1000, description="0x0004 per mille")
+    emergency_threshold: int = Field(950, ge=1, le=1000, description="0x0005 per mille")
+    distance_interval: int = Field(300, ge=1, description="0x0006 s")
+    load_sample_interval: int = Field(5, ge=1, description="0x0007 s")
+    delegation_timeout: int = Field(30, ge=1, description="0x0008 s")
+    dependency_interval: int = Field(30, ge=1, description="0x0009 s")
+    instances_per_service: int = Field(3, ge=1, description="0x000A K, instances")
+    healing_interval: int = Field(60, ge=1, description="0x000B s")
+    health_check_interval: int = Field(30, ge=1, description="0x000C s")
+    endorsement_validity: int = Field(2592000, ge=60, description="0x000D s")
+    sp_port: Port | None = Field(None, description="0x0010 SP UDP port")
+    sp_mtu: int = Field(1412, ge=576, le=9000, description="0x0013 bytes")
+    voters: int = Field(5, ge=1, le=15, description="0x0014 Nv, nodes")
+    voter_removal_delay: int = Field(600, ge=1, description="0x0015 s")
+
+    @model_validator(mode="after")
+    def _coherent(self) -> Self:
+        if self.solicited_nodes > self.reference_nodes:
+            raise ValueError("solicited-nodes (X) cannot exceed reference-nodes (NNR)")
+        if self.emergency_threshold <= self.weakened_threshold:
+            raise ValueError("emergency-threshold must be above weakened-threshold")
+        return self
+
+
+#: Parameter codes of [ARCH-02 9.2], in the order of the model, for
+#: ``show usd parameters``. 0x0011 and 0x0012 (the single services prefix of
+#: revision -01) are reserved since service areas replaced them.
+USD_PARAMETER_CODES: dict[str, int] = {
+    "reference_nodes": 0x0001,
+    "ping_tolerance": 0x0002,
+    "solicited_nodes": 0x0003,
+    "weakened_threshold": 0x0004,
+    "emergency_threshold": 0x0005,
+    "distance_interval": 0x0006,
+    "load_sample_interval": 0x0007,
+    "delegation_timeout": 0x0008,
+    "dependency_interval": 0x0009,
+    "instances_per_service": 0x000A,
+    "healing_interval": 0x000B,
+    "health_check_interval": 0x000C,
+    "endorsement_validity": 0x000D,
+    "sp_port": 0x0010,
+    "sp_mtu": 0x0013,
+    "voters": 0x0014,
+    "voter_removal_delay": 0x0015,
+}
+
+
+@view("usd", model=UsdConfig, **NODE_ACCESS)
+class UsdView(ConfigNode):
+    """Unified System Domain properties and parameters."""
+
+
+class ServiceAreaConfig(BaseModel):
+    """A service area: an isolated addressing plane of the WVNN [ARCH-02 11.2]."""
+
+    name: str = Field(description="Area name")
+    id: int = Field(ge=0, le=255, description="8-bit identifier, unique in the USD")
+    prefix: IPv4 = Field(description="IPv4 prefix address; every address is usable")
+    prefix_length: int = Field(24, ge=1, le=32, description="Mask length")
+
+    def network(self) -> ipaddress.IPv4Network:
+        """The area's prefix."""
+        return ipaddress.IPv4Network(f"{self.prefix}/{self.prefix_length}", strict=False)
+
+
+@view("service-area", model=ServiceAreaConfig, table=True, key="name", **NODE_ACCESS)
+class ServiceAreaView(ConfigNode):
+    """Service areas: identifier and prefix of each isolated addressing plane."""
+
+    async def apply(self, config: dict[str, ServiceAreaConfig]) -> None:
+        # Rules that span rows, which a single row's model cannot check.
+        seen_ids: dict[int, str] = {}
+        areas = list(config.values())
+        for area in areas:
+            if area.id in seen_ids:
+                raise ValueError(f"areas '{seen_ids[area.id]}' and '{area.name}' share id {area.id}")
+            seen_ids[area.id] = area.name
+        for index, area in enumerate(areas):
+            for other in areas[index + 1:]:
+                if area.network().overlaps(other.network()):
+                    raise ValueError(
+                        f"the prefixes of '{area.name}' and '{other.name}' overlap; "
+                        "areas must be disjoint [ARCH 11.2]"
+                    )

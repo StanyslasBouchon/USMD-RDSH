@@ -113,6 +113,55 @@ class Core:
             client_pp=self._nndp_client_pp,
             ed25519_keypair=self.properties.self_ed25519_keypair,
         )
+        self.nndp_enabled: bool = True
+        self.hia_tolerance: int = int(
+            os.getenv("NNDP_HIA_TROLERANCE_BEFORE_INACTIVE_IN_SEC", "5")
+        )
+        # Last HIA seen per node id, with the local time it arrived: what
+        # ``show nndp neighbors`` and the web interface read.
+        self.neighbors: dict[str, tuple[HereIAmData, float]] = {}
+        self.hia_sent: int = 0
+        self.hia_received: int = 0
+
+    @property
+    def nndp(self) -> NNDPController:
+        """The NNDP controller, for the management plane."""
+        return self._nndp
+
+    def reconfigure_nndp(  # pylint: disable=too-many-arguments
+        self,
+        *,
+        enabled: bool,
+        client_port: int,
+        server_port: int,
+        hia_interval: int,
+        inactive_tolerance: int,
+    ) -> None:
+        """Apply new NNDP settings, restarting the services when they changed."""
+        self.hia_tolerance = inactive_tolerance
+        ports = {"client": client_port, "server": server_port}
+        changed = (
+            ports != self._nndp.nndp_ports
+            or float(hia_interval) != self._nndp.interval
+            or enabled != self.nndp_enabled
+        )
+        self._nndp.nndp_ports = ports
+        self._nndp.interval = float(hia_interval)
+        self.nndp_enabled = enabled
+        if not changed:
+            return
+        was_running = self.is_running()
+        if was_running:
+            self.stop()
+        if enabled and was_running:
+            self.start()
+        logging.info(
+            "[NNDP] Reconfigured: %s, ports %d/%d, HIA every %ss",
+            "enabled" if enabled else "disabled",
+            client_port,
+            server_port,
+            hia_interval,
+        )
 
     def _nndp_cb_hia(self, hia_event: HereIAmReceivedEvent) -> None:
         """Callback for handling received "HIA" packets.
@@ -148,16 +197,26 @@ class Core:
         if hia_event.data.node_id == self.properties.node_id:
             return
 
-        tbi = int(os.getenv("NNDP_HIA_TROLERANCE_BEFORE_INACTIVE_IN_SEC", "5"))
+        self.hia_received += 1
+        self.neighbors[hia_event.data.node_id] = (hia_event.data, time.time())
 
-        self.tables.nit.append(
-            NodeIdentity(
-                ed25519_pub32=hia_event.data.ed25519_pub32,
-                node_id=hia_event.data.node_id,
-                node_ip=hia_event.data.ip,
-                ttl=int(tbi * 1000 + hia_event.data.next_hia_pkt_time),
-            )
+        identity = NodeIdentity(
+            ed25519_pub32=hia_event.data.ed25519_pub32,
+            node_id=hia_event.data.node_id,
+            node_ip=hia_event.data.ip,
+            ttl=int(self.hia_tolerance * 1000 + hia_event.data.next_hia_pkt_time),
         )
+        # One entry per (key, address) association [ARCH 4.3]: a new HIA
+        # refreshes it rather than adding a row every interval.
+        for index, known in enumerate(self.tables.nit):
+            if (
+                known.ed25519_pub32 == identity.ed25519_pub32
+                and known.node_ip == identity.node_ip
+            ):
+                self.tables.nit[index] = identity
+                break
+        else:
+            self.tables.nit.append(identity)
 
         logging.info(
             "[NNDP] Received HIA packet from %s, table updated", hia_event.data.node_id
@@ -187,9 +246,10 @@ class Core:
             >>> # Allow 1 second tolerance
             >>> assert abs(hia_data.next_hia_pkt_time - expected_time) < 1000
         """
+        self.hia_sent += 1
         return HereIAmData(
             node_id=self.properties.node_id,
-            next_hia_pkt_time=int((time.time() + 15.0) * 1000),
+            next_hia_pkt_time=int((time.time() + self._nndp.interval) * 1000),
             state=self.state,
             ed25519_pub32=self.properties.self_ed25519_keypair.pub32_b64u,
             ip=socket.gethostbyname(socket.gethostname()),
@@ -253,7 +313,7 @@ class Core:
             >>> # The run loop will exit when is_running() returns False
         """
         while True:
-            if not self.is_running():
+            if self.nndp_enabled and not self.is_running():
                 self.start()
 
             time.sleep(1)

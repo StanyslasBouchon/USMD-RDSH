@@ -122,9 +122,10 @@ class NNDPController:
         self._ed25519_keypair = ed25519_keypair
 
         self.nndp_ports = {
-            "client": int(os.getenv("NNDP_CLIENT_PORT")),
-            "server": int(os.getenv("NNDP_SERVER_PORT")),
+            "client": int(os.getenv("NNDP_CLIENT_PORT", "5222")),
+            "server": int(os.getenv("NNDP_SERVER_PORT", "5221")),
         }
+        self.interval: float = 15.0
 
         self._client: Optional[ClientMountService] = None
         self._server: Optional[ServerMountService] = None
@@ -146,6 +147,7 @@ class NNDPController:
             send_port=self.nndp_ports["client"],
             receive_port=self.nndp_ports["server"],
             ed25519_keypair=self._ed25519_keypair,
+            interval=self.interval,
         )
 
     def _create_server(self) -> None:

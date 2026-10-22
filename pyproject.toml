@@ -12,10 +12,14 @@ dependencies = [
     "ulid-py>=1.1.0",
     "pynacl>=1.6.2",
     "aioquic>=1.3.0",
+    "nan-actions @ file:///${PROJECT_ROOT}/../nan-actions",
 ]
 requires-python = ">=3.13"
 readme = "README.md"
 license = { text = "MIT" }
+
+[project.scripts]
+usmd = "usmd_rdsh.main:main"
 
 [build-system]
 requires = ["pdm-backend"]

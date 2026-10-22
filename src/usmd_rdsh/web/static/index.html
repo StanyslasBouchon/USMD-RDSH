@@ -1,0 +1,339 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>USMD-RDSH</title>
+<style>
+:root {
+  --bg: #f4f5f7; --panel: #ffffff; --text: #1d2330; --muted: #667085;
+  --line: #e3e6eb; --accent: #2457c5; --ok: #1b7f4b; --warn: #b26b00; --bad: #c0392b;
+  --term-bg: #0f1420; --term-text: #d6dde8;
+  --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #11151c; --panel: #181e27; --text: #e4e8ef; --muted: #8b95a5;
+    --line: #273040; --accent: #6b9bff; --ok: #3ccf87; --warn: #f0a940; --bad: #ff6b5e;
+    --term-bg: #0a0d13;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+header { display: flex; align-items: center; gap: 16px; padding: 12px 20px;
+  background: var(--panel); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+header h1 { font-size: 16px; margin: 0; }
+header .meta { color: var(--muted); font-size: 13px; }
+header .spacer { flex: 1; }
+nav { display: flex; gap: 4px; }
+nav button { background: none; border: 0; color: var(--muted); padding: 6px 10px;
+  border-radius: 6px; cursor: pointer; font: inherit; }
+nav button.on { background: var(--bg); color: var(--text); font-weight: 600; }
+main { padding: 20px; max-width: 1280px; margin: 0 auto; }
+.grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  padding: 16px; min-width: 0; }
+.panel h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em;
+  color: var(--muted); margin: 0 0 12px; }
+.wide { grid-column: 1 / -1; }
+dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; margin: 0; }
+dt { color: var(--muted); } dd { margin: 0; overflow-wrap: anywhere; }
+.mono { font-family: var(--mono); font-size: 12.5px; }
+.badge { display: inline-block; padding: 1px 8px; border-radius: 99px; font-size: 12px;
+  font-weight: 600; border: 1px solid currentColor; }
+.ok { color: var(--ok); } .warn { color: var(--warn); } .bad { color: var(--bad); }
+.bar { height: 8px; background: var(--line); border-radius: 4px; overflow: hidden; }
+.bar > i { display: block; height: 100%; background: var(--ok); }
+.bar.warn > i { background: var(--warn); } .bar.bad > i { background: var(--bad); }
+.gauge { display: grid; grid-template-columns: 80px 1fr 70px; gap: 10px;
+  align-items: center; margin-bottom: 10px; }
+.gauge span:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line);
+  white-space: nowrap; }
+th { color: var(--muted); font-weight: 600; }
+.empty { color: var(--muted); padding: 8px 0; }
+.logs { max-height: 520px; overflow: auto; }
+.toolbar { display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+select, input, button.btn { font: inherit; padding: 6px 10px; border-radius: 6px;
+  border: 1px solid var(--line); background: var(--panel); color: var(--text); }
+button.btn { cursor: pointer; } button.primary { background: var(--accent);
+  color: #fff; border-color: var(--accent); }
+.term { background: var(--term-bg); color: var(--term-text); border-radius: 10px;
+  padding: 12px; font-family: var(--mono); font-size: 13px; height: 520px;
+  overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.term .cmd { color: #8fb4ff; } .term .err { color: #ff8a80; }
+.term-input { display: flex; gap: 8px; margin-top: 10px; align-items: center; }
+.term-input label { font-family: var(--mono); color: var(--muted); white-space: nowrap; }
+.term-input input { flex: 1; font-family: var(--mono); min-width: 0; }
+#login { max-width: 460px; margin: 12vh auto; }
+#login p { color: var(--muted); }
+#login input { width: 100%; margin: 8px 0 12px; font-family: var(--mono); }
+.hidden { display: none !important; }
+.error { color: var(--bad); min-height: 1.4em; }
+@media (max-width: 640px) {
+  main { padding: 12px; } header { padding: 10px 12px; }
+  .gauge { grid-template-columns: 64px 1fr 60px; }
+}
+</style>
+</head>
+<body>
+
+<section id="login" class="panel hidden">
+  <h2>USMD-RDSH</h2>
+  <p>Entrez un jeton d'accès. Il se crée sur la console du nœud :
+     <span class="mono">execute api-token create name=&lt;nom&gt; profile=admin</span></p>
+  <input id="token" type="password" placeholder="nanapi_..." autocomplete="off">
+  <div class="error" id="login-error"></div>
+  <button class="btn primary" id="login-btn">Se connecter</button>
+</section>
+
+<div id="app" class="hidden">
+<header>
+  <h1 id="hostname">USMD-RDSH</h1>
+  <span id="state-badge" class="badge"></span>
+  <span class="meta" id="node-meta"></span>
+  <span class="spacer"></span>
+  <nav>
+    <button data-tab="overview" class="on">Supervision</button>
+    <button data-tab="logs">Journaux</button>
+    <button data-tab="console">Console</button>
+  </nav>
+  <button class="btn" id="logout">Déconnexion</button>
+</header>
+
+<main>
+  <section data-page="overview" class="grid">
+    <div class="panel">
+      <h2>Nœud</h2>
+      <dl id="node"></dl>
+    </div>
+    <div class="panel">
+      <h2>Charge de référence</h2>
+      <div id="load"></div>
+      <div class="meta" id="load-status"></div>
+    </div>
+    <div class="panel">
+      <h2>NNDP</h2>
+      <dl id="nndp"></dl>
+    </div>
+    <div class="panel wide">
+      <h2>Voisins NNDP</h2>
+      <div class="table-wrap" id="neighbors"></div>
+    </div>
+    <div class="panel wide">
+      <h2>Table d'identité (NIT)</h2>
+      <div class="table-wrap" id="nit"></div>
+    </div>
+  </section>
+
+  <section data-page="logs" class="panel hidden">
+    <div class="toolbar">
+      <select id="log-level">
+        <option value="7">debugging (7)</option><option value="6">informational (6)</option>
+        <option value="5">notifications (5)</option><option value="4" selected>warnings (4)</option>
+        <option value="3">errors (3)</option>
+      </select>
+      <input id="log-filter" placeholder="Filtrer (facility, texte)">
+    </div>
+    <div class="logs mono" id="logs"></div>
+  </section>
+
+  <section data-page="console" class="hidden">
+    <div class="term" id="term" aria-live="polite"></div>
+    <div class="term-input">
+      <label id="prompt" for="cmd">#</label>
+      <input id="cmd" autocomplete="off" spellcheck="false"
+             placeholder="show running-config, config usd, set name prod, end, help...">
+      <button class="btn primary" id="run">Exécuter</button>
+    </div>
+  </section>
+</main>
+</div>
+
+<script>
+"use strict";
+const REFRESH = {{REFRESH}} * 1000;
+const $ = (id) => document.getElementById(id);
+let token = null, timer = null, canWrite = false;
+const history = []; let historyAt = 0;
+
+function readToken() { try { return sessionStorage.getItem("usmd-token"); } catch { return null; } }
+function keepToken(t) { try { t ? sessionStorage.setItem("usmd-token", t)
+                                 : sessionStorage.removeItem("usmd-token"); } catch {} }
+
+async function call(method, path, body) {
+  const res = await fetch(path, {
+    method, headers: { "Authorization": "Bearer " + token,
+                       "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (res.status === 401) { logout("Jeton refusé ou révoqué."); throw new Error("401"); }
+  if (!res.ok) throw new Error(data.message || res.statusText);
+  return data;
+}
+
+function esc(v) {
+  return String(v ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",
+    '"':"&quot;","'":"&#39;"}[c]));
+}
+function dl(el, pairs) {
+  el.innerHTML = pairs.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${v}</dd>`).join("");
+}
+function table(el, rows, cols) {
+  if (!rows.length) { el.innerHTML = '<div class="empty">Aucune entrée.</div>'; return; }
+  el.innerHTML = "<table><thead><tr>" + cols.map(c => `<th>${esc(c[1])}</th>`).join("")
+    + "</tr></thead><tbody>" + rows.map(r => "<tr>" + cols.map(c =>
+      `<td class="${c[2] || ""}">${c[3] ? c[3](r[c[0]], r) : esc(r[c[0]])}</td>`).join("")
+      + "</tr>").join("") + "</tbody></table>";
+}
+function stateClass(code) {
+  if (!code) return "";
+  const family = parseInt(code, 16) >> 12;
+  return family === 2 ? "ok" : family === 4 ? "bad" : "warn";
+}
+
+function render(s) {
+  const n = s.node;
+  canWrite = s.can_write;
+  $("hostname").textContent = n.hostname;
+  const badge = $("state-badge");
+  badge.textContent = n.state || "?";
+  badge.className = "badge " + stateClass(n.state_code);
+  $("node-meta").textContent = `${s.user} · ${canWrite ? "lecture/écriture" : "lecture seule"}`;
+  dl($("node"), [
+    ["Identifiant", `<span class="mono">${esc(n.node_id)}</span>`],
+    ["Rôle", esc(n.role)], ["Adresse", esc(n.address)],
+    ["USD", esc(n.usd || "—")], ["USC", esc(n.usc || "—")],
+    ["Clé Ed25519", `<span class="mono">${esc(n.ed25519_public_key)}</span>`],
+    ["Uptime", esc(n.uptime)],
+  ]);
+  const l = s.load;
+  $("load").innerHTML = [["Mémoire", l.memory], ["CPU", l.cpu], ["Disque", l.disk],
+    ["Réseau", l.network], ["Référence", l.reference]].map(([k, v]) => {
+      const cls = v >= l.emergency_threshold ? "bad" : v >= l.weakened_threshold ? "warn" : "";
+      return `<div class="gauge"><span>${k}</span><div class="bar ${cls}"><i style="width:${
+        Math.min(100, v / 10)}%"></i></div><span>${v} ‰</span></div>`;
+    }).join("");
+  const status = { normal: "ok", weakened: "warn", emergency: "bad" }[l.status];
+  $("load-status").innerHTML = `État : <span class="${status}">${esc(l.status)}</span>
+    — seuils ${l.weakened_threshold} / ${l.emergency_threshold} ‰`;
+  const p = s.nndp;
+  dl($("nndp"), [
+    ["Service", `<span class="${p.running ? "ok" : "bad"}">${p.enabled ? "activé" : "désactivé"},
+      ${p.running ? "en cours" : "arrêté"}</span>`],
+    ["Ports", `${p.client_port} / ${p.server_port}`],
+    ["Intervalle HIA", `${p.hia_interval} s (inactif après ${2 * p.hia_interval} s)`],
+    ["Fenêtre de fraîcheur", `${p.freshness_window} s`],
+    ["HIA émis / reçus", `${p.hia_sent} / ${p.hia_received}`],
+    ["Voisins", p.neighbors],
+  ]);
+  table($("neighbors"), s.neighbors, [
+    ["node_id", "Identifiant", "mono"], ["address", "Adresse"],
+    ["state", "État déclaré", "", (v, r) => `<span class="${stateClass(r.state_code)}">${esc(v)}</span>`],
+    ["last_seen", "Vu il y a (s)"], ["expires_in", "Reste (s)"],
+    ["status", "Statut", "", v => `<span class="${v === "up" ? "ok" : "bad"}">${esc(v)}</span>`],
+  ]);
+  table($("nit"), s.nit, [["node_id", "Identifiant", "mono"], ["address", "Adresse"],
+    ["public_key", "Clé Ed25519", "mono"], ["ttl", "TTL (s)"]]);
+  lastLogs = s.logs; renderLogs();
+}
+
+let lastLogs = [];
+function renderLogs() {
+  const max = Number($("log-level").value);
+  const needle = $("log-filter").value.trim().toLowerCase();
+  const rows = lastLogs.filter(r => r.severity <= max && (!needle ||
+    (r.facility + " " + r.mnemonic + " " + r.message).toLowerCase().includes(needle)));
+  const cls = (sev) => sev <= 3 ? "bad" : sev === 4 ? "warn" : "";
+  $("logs").innerHTML = rows.length ? rows.slice().reverse().map(r =>
+    `<div class="${cls(r.severity)}">${esc(r.time.replace("T", " "))} %${esc(r.facility)}-${
+      r.severity}-${esc(r.mnemonic)}: ${esc(r.message)}</div>`).join("")
+    : '<div class="empty">Aucun message.</div>';
+}
+
+async function refresh() {
+  try { render(await call("GET", "/web/summary")); }
+  catch (e) { if (e.message !== "401") console.warn(e); }
+}
+
+function termWrite(text, cls) {
+  const div = document.createElement("div");
+  if (cls) div.className = cls;
+  div.textContent = text;
+  $("term").appendChild(div);
+  $("term").scrollTop = $("term").scrollHeight;
+}
+
+async function run(line, confirm = false) {
+  if (!confirm) termWrite($("prompt").textContent + line, "cmd");
+  try {
+    const r = await call("POST", "/web/cli", { line, confirm });
+    for (const out of r.output) termWrite(out, /^✗|refus|error|invalid/i.test(out) ? "err" : "");
+    $("prompt").textContent = r.prompt;
+    if (r.needs_confirm && window.confirm(`Confirmer « ${line} » ?`)) return run(line, true);
+    refresh();
+  } catch (e) { if (e.message !== "401") termWrite(e.message, "err"); }
+}
+
+// Lines run one after another, in the order typed: a session is a sequence
+// ("config usd", "set ...", "end"), and two requests in flight would reorder it.
+let queue = Promise.resolve();
+function submit() {
+  const line = $("cmd").value.trim();
+  if (!line) return;
+  history.push(line); historyAt = history.length;
+  $("cmd").value = "";
+  queue = queue.then(() => run(line));
+}
+
+function showTab(name) {
+  document.querySelectorAll("nav button").forEach(b => b.classList.toggle("on", b.dataset.tab === name));
+  document.querySelectorAll("[data-page]").forEach(p => p.classList.toggle("hidden", p.dataset.page !== name));
+  if (name === "console") $("cmd").focus();
+}
+
+function start() {
+  $("login").classList.add("hidden"); $("app").classList.remove("hidden");
+  refresh(); timer = setInterval(refresh, REFRESH);
+  if (!$("term").childElementCount) {
+    termWrite("Console web USMD-RDSH — mêmes commandes que la console locale ('help', '?' via 'help <commande>').");
+    queue = queue.then(() => call("POST", "/web/cli", { line: "" })
+      .then(r => $("prompt").textContent = r.prompt).catch(() => {}));
+  }
+}
+
+function logout(message) {
+  clearInterval(timer); token = null; keepToken(null);
+  $("app").classList.add("hidden"); $("login").classList.remove("hidden");
+  $("login-error").textContent = message || "";
+}
+
+async function login() {
+  token = $("token").value.trim();
+  try { await call("GET", "/web/summary"); keepToken(token); $("token").value = ""; start(); }
+  catch (e) { if (e.message !== "401") $("login-error").textContent = e.message; }
+}
+
+$("login-btn").onclick = login;
+$("token").addEventListener("keydown", e => { if (e.key === "Enter") login(); });
+$("logout").onclick = () => logout();
+$("run").onclick = submit;
+$("cmd").addEventListener("keydown", e => {
+  if (e.key === "Enter") submit();
+  else if (e.key === "ArrowUp" && historyAt > 0) { $("cmd").value = history[--historyAt]; e.preventDefault(); }
+  else if (e.key === "ArrowDown") { historyAt = Math.min(history.length, historyAt + 1);
+    $("cmd").value = history[historyAt] || ""; e.preventDefault(); }
+});
+$("log-level").onchange = renderLogs;
+$("log-filter").oninput = renderLogs;
+document.querySelectorAll("nav button").forEach(b => b.onclick = () => showTab(b.dataset.tab));
+
+token = readToken();
+if (token) start(); else $("login").classList.remove("hidden");
+</script>
+</body>
+</html>
