@@ -390,10 +390,31 @@ sibling repository (`../nan-actions`).
 
 ```bash
 pdm install
-pdm run usmd                 # node + console
-pdm run usmd --no-console    # node only
-pdm run pytest -q tests      # both implementations' tests
+pdm run usmd                          # node + console
+pdm run usmd --config usmd.yaml       # configuration file (layout of usmd.example.yaml)
+pdm run usmd --no-console             # node only
+pdm run python -m usmd_rdsh.dev --nodes 3 --reset   # 3 virtual nodes on this machine
+pdm run pytest -q tests               # both implementations' tests
 ```
+
+**Configuration file.** `usmd --config usmd.yaml` reads and writes a file in
+the layout of `usmd.example.yaml` (`node`, `usd`, `bootstrap`, `ports`, `web`),
+extended with every other setting of the configuration tree under its own
+path (`system: logging: ...`, `protocol: ncp: ...`, `mutation: ...`). Roles are
+the spec's: `usc-operator`, `usd-operator`, `node-operator`, `node-executor`
+(the daemon's names are read and reported). Values the drafts fix (NNDP
+ports, broadcast) are reported and kept. `bootstrap: true` creates a new USD:
+the node generates the authority keys and founds the USD. `web.username` /
+`web.password` enable a login form; an empty `ssl_cert` means a self-signed
+certificate.
+
+**Development cluster.** `python -m usmd_rdsh.dev --nodes N` starts N virtual
+nodes, each on its own loopback address (node *i* on 127.0.0.*i*+1) with its
+own state in `.usmd-dev/node`*i*; NNDP sends to the other virtual nodes instead
+of broadcasting, node 1 founds the USD and the others join it. Each node's web
+interface is at `http://127.0.0.`*i*+1`:8080/` (admin / admin). A single node:
+`usmd --dev 2 --dev-nodes 3`. The shared development authority makes this
+unsafe outside development.
 
 The acceptance checklist mapping every requirement of the drafts to the code
 and its tests is `readme/recette.md`.

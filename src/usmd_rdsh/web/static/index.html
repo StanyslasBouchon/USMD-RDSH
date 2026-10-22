@@ -109,6 +109,11 @@ button.btn { cursor: pointer; } button.primary { background: var(--accent);
   <h2>USMD-RDSH</h2>
   <p>Entrez un jeton d'accès. Il se crée sur la console du nœud :
      <span class="mono">execute api-token create name=&lt;nom&gt; profile=admin</span></p>
+  <div id="password-login" class="hidden">
+    <input id="username" type="text" placeholder="Identifiant" autocomplete="username">
+    <input id="password" type="password" placeholder="Mot de passe" autocomplete="current-password">
+    <p class="meta">ou un jeton d'accès :</p>
+  </div>
   <input id="token" type="password" placeholder="nanapi_..." autocomplete="off">
   <div class="error" id="login-error"></div>
   <button class="btn primary" id="login-btn">Se connecter</button>
@@ -607,6 +612,15 @@ function logout(message) {
 }
 
 async function login() {
+  const user = $("username").value.trim();
+  if (user && !$("token").value.trim()) {
+    const res = await fetch("/web/login", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: user, password: $("password").value }) });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { $("login-error").textContent = data.message || "Connexion refusée."; return; }
+    $("token").value = data.token;
+    $("password").value = "";
+  }
   token = $("token").value.trim();
   try { await call("GET", "/web/summary"); keepToken(token); $("token").value = ""; start(); }
   catch (e) { if (e.message !== "401") $("login-error").textContent = e.message; }
@@ -627,6 +641,10 @@ $("log-filter").oninput = renderLogs;
 document.querySelectorAll("nav button").forEach(b => b.onclick = () => showTab(b.dataset.tab));
 
 token = readToken();
+fetch("/web/login").then(r => r.json()).then(d => {
+  if (d.password_login) $("password-login").classList.remove("hidden");
+}).catch(() => {});
+$("password").addEventListener("keydown", e => { if (e.key === "Enter") login(); });
 if (token) start(); else $("login").classList.remove("hidden");
 </script>
 </body>

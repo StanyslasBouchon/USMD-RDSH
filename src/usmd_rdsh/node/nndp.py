@@ -392,6 +392,8 @@ class NndpService:  # pylint: disable=too-many-instance-attributes
         source_port: int = SOURCE_PORT,
         destination_port: int = DESTINATION_PORT,
         k: int = 3,
+        bind_address: str = "0.0.0.0",
+        broadcast_targets: list[str] | None = None,
     ) -> None:
         self._node_id = node_id
         self._signing = signing
@@ -402,6 +404,10 @@ class NndpService:  # pylint: disable=too-many-instance-attributes
         self.source_port = source_port
         self.destination_port = destination_port
         self.services = NearestServices(k)
+        # Development mode: several nodes on one host, each on its own loopback
+        # address; the limited broadcast is replaced by a send to each of them.
+        self.bind_address = bind_address
+        self.broadcast_targets = broadcast_targets
         self.neighbors: dict[tuple[bytes, str], Neighbor] = {}
         self._last_timestamp: dict[bytes, int] = {}
         self._seen: dict[tuple[bytes, int], int] = {}
@@ -426,11 +432,11 @@ class NndpService:  # pylint: disable=too-many-instance-attributes
         loop = asyncio.get_running_loop()
         recv_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         recv_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        recv_sock.bind(("0.0.0.0", self.destination_port))
+        recv_sock.bind((self.bind_address, self.destination_port))
         send_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         send_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         send_sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-        send_sock.bind(("0.0.0.0", self.source_port))
+        send_sock.bind((self.bind_address, self.source_port))
         self._recv_transport, _ = await loop.create_datagram_endpoint(
             lambda: _Protocol(self), sock=recv_sock
         )
@@ -489,8 +495,10 @@ class NndpService:  # pylint: disable=too-many-instance-attributes
         """Broadcast, then unicast to each reference node."""
         if self._send_transport is None:
             return
+        targets = self.broadcast_targets if self.broadcast_targets is not None else [BROADCAST]
         for datagram in self.build():
-            self._send_transport.sendto(datagram, (BROADCAST, self.destination_port))
+            for target in targets:
+                self._send_transport.sendto(datagram, (target, self.destination_port))
             self.sent += 1
         if self.hooks.state() == State.APPROVAL_REQUIRED:
             return

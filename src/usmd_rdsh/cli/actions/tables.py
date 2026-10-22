@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 from usmd_rdsh.cli.permissions import READ, WRITE
 from usmd_rdsh.cli.runtime import RUNTIME
+from usmd_rdsh.cli.actions.overview import with_reason
 from usmd_rdsh.cli.text import printer, table
 from usmd_rdsh.node import addresses
 from usmd_rdsh.node.crypto import b64u, unb64u
@@ -55,10 +56,10 @@ def nit_rows() -> list[dict]:
 
 
 @action(cli="show nit", description="Node Identity Table", permissions=[READ], rows=NitRow,
-        cli_output=printer(lambda rows: table(
+        cli_output=printer(with_reason(lambda rows: table(
             [{**r, "public_key": _short(r["public_key"])} for r in rows],
             [("node_id", "Node ID"), ("address", "Address"), ("public_key", "Ed25519 key"),
-             ("ttl", "TTL")]) + f"\n\nTotal entries: {len(rows)}"))
+             ("ttl", "TTL")]) + f"\n\nTotal entries: {len(rows)}")))
 async def show_nit() -> list[dict]:
     """Key, identifier, address and validity; a key may have several addresses."""
     return nit_rows()
@@ -72,11 +73,11 @@ class NalRow(BaseModel):
 
 
 @action(cli="show nal", description="Node Access List", permissions=[READ], rows=NalRow,
-        cli_output=printer(lambda rows: table(
+        cli_output=printer(with_reason(lambda rows: table(
             [{**r, "public_key": _short(r["public_key"]), "anchor": "anchor" if r["anchor"] else ""}
              for r in rows],
             [("public_key", "Ed25519 key"), ("node_id", "Node"), ("roles", "Roles"),
-             ("anchor", "")]) + f"\n\nTotal entries: {len(rows)}"))
+             ("anchor", "")]) + f"\n\nTotal entries: {len(rows)}")))
 async def show_nal() -> list[dict]:
     """Key and roles; trust anchors are permanent [ARCH 4.4]."""
     node = RUNTIME.node
@@ -99,9 +100,9 @@ class NelRow(BaseModel):
 
 @action(cli="show nel", description="Endorsement packets issued by this node [NCP 7.1]",
         permissions=[READ], rows=NelRow,
-        cli_output=printer(lambda rows: table(rows, [
+        cli_output=printer(with_reason(lambda rows: table(rows, [
             ("node_id", "Endorsed node"), ("serial", "Serial"), ("expiration", "Expires"),
-            ("roles", "Roles")]) + f"\n\nTotal entries: {len(rows)}"))
+            ("roles", "Roles")]) + f"\n\nTotal entries: {len(rows)}")))
 async def show_nel() -> list[dict]:
     node = RUNTIME.node
     return [{"node_id": p.node_id, "serial": p.serial.hex(), "expiration": _when(p.expiration),
@@ -151,11 +152,11 @@ def node_table_rows() -> list[dict]:
 
 @action(cli="show node-table", description="The USD's node table [NCP 7.8, 7.9]",
         permissions=[READ], rows=TableRow,
-        cli_output=printer(lambda rows: table(rows, [
+        cli_output=printer(with_reason(lambda rows: table(rows, [
             ("node_id", "Node ID"), ("address", "Address"), ("declared", "Declared"),
             ("observed", "Observed"), ("mutation", "Mutation"), ("sp_addresses", "SP addresses"),
             ("voter", "Voter"), ("load", "Load"), ("record_date", "Record date")])
-        + f"\n\nTotal nodes: {len(rows)}"))
+        + f"\n\nTotal nodes: {len(rows)}")))
 async def show_node_table() -> list[dict]:
     """Every node of the USD: its latest signed record and what we observe."""
     return node_table_rows()
@@ -193,9 +194,9 @@ async def clear_exclusions(data: ClearExclusion) -> dict:
 
 
 @action(cli="show references", description="Reference nodes and distances [ARCH 6]",
-        permissions=[READ], cli_output=printer(lambda r: table(r["rows"], [
+        permissions=[READ], cli_output=printer(with_reason(lambda r: table(r["rows"], [
             ("node_id", "Node ID"), ("distance", "Distance d"), ("rtt", "RTT(ms)"),
-            ("reference", "Our reference"), ("references_us", "References us")])))
+            ("reference", "Our reference"), ("references_us", "References us")]))))
 async def show_references() -> dict:
     """d = p + c + t/T + n for every measured node; NNR closest are references."""
     node = RUNTIME.node

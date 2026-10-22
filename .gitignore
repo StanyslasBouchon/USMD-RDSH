@@ -219,3 +219,6 @@ __marimo__/
 usmd_keys.json
 usmd.yaml
 usmd.sock
+
+# Development cluster (python -m usmd_rdsh.dev)
+.usmd-dev/

@@ -16,7 +16,8 @@ from nan_actions.cli.registry import Registry
 from nan_actions.cli.shell import Shell
 from nan_actions.errors import SdkError
 from nan_actions.ports import set_confirm_prompt
-from nan_actions.views import ViewSession, views
+from nan_actions.abbrev import AmbiguousToken
+from nan_actions.views import SHOW_FULL, SHOW_UNENCRYPTED, ViewSession, is_view_line, views
 from nan_runtime.log import LogLevel, emit, log
 
 from usmd_rdsh.cli import views as _views  # noqa: F401  # pylint: disable=unused-import
@@ -52,7 +53,36 @@ class _Refusing:
 
 
 class UsmdShell(Shell):
-    """``nan_actions`` shell reporting host refusals as one line."""
+    """``nan_actions`` shell reporting host refusals as one line.
+
+    ``show <configuration node>`` prints the node's values in force, defaults
+    included, as IOS does: the view engine's own ``show`` (what differs from
+    the defaults, FortiOS style) stays available as ``show running-config``.
+    """
+
+    async def execute_line(self, line: str) -> bool:  # type: ignore[override]
+        return await super().execute_line(self._full_show(line))
+
+    def _full_show(self, line: str) -> str:
+        stripped = line.strip()
+        if not stripped or "|" in stripped:
+            return line
+        try:
+            expanded = self._expand_verb(stripped)
+        except AmbiguousToken:
+            return line
+        words = expanded.split()
+        if words[0] != "show" or (len(words) > 1 and words[1] in (SHOW_FULL, SHOW_UNENCRYPTED)):
+            return line
+        views = self._views
+        if views is None:
+            return line
+        if len(words) == 1:
+            # Bare 'show' inside a node: that node in full; at the root: the delta.
+            return "show " + SHOW_FULL if views.active else line
+        if is_view_line(views.registry, expanded):
+            return "show " + SHOW_FULL + " " + " ".join(words[1:])
+        return line
 
     async def _execute(self, cmd, args, line, *, capture):  # type: ignore[override]
         return await super()._execute(_Refusing(cmd), args, line, capture=capture)

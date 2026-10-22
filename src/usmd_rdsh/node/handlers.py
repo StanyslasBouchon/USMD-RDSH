@@ -119,7 +119,9 @@ class NcpHandlers:  # pylint: disable=too-many-public-methods
         if command in RAFT:
             voters = self.raft.voters if self.raft else {}
             entry = self.tables.nodes.get(key)
-            if entry is None or entry.record.node_id not in voters:
+            # A node just added as voter has no configuration yet: it learns
+            # it from the master's first Raft_append_entries / snapshot.
+            if entry is None or (voters and entry.record.node_id not in voters):
                 return _error(ErrorCode.VOTERS_ONLY)
         if command in REFERENCE_ONLY and not self._am_reference_of(key, command):
             return _error(ErrorCode.NOT_AUTHORISED, "not a reference node of the sender")

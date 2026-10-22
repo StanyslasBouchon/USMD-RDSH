@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from usmd_rdsh.cli.permissions import READ, WRITE
 from usmd_rdsh.cli.runtime import RUNTIME
+from usmd_rdsh.cli.actions.overview import with_reason
 from usmd_rdsh.cli.text import fields, printer, table
 from usmd_rdsh.node import addresses
 from usmd_rdsh.node.states import State
@@ -85,11 +86,11 @@ def neighbor_rows() -> list[dict]:
 
 @action(cli="show nndp neighbors", description="Nodes heard by NNDP", permissions=[READ],
         rows=NeighborRow,
-        cli_output=printer(lambda rows: table(rows, [
+        cli_output=printer(with_reason(lambda rows: table(rows, [
             ("node_id", "Node ID"), ("address", "Address"), ("state", "Declared state"),
             ("hosted", "Hosted"), ("last_seen", "Seen(s)"), ("hold", "Hold(s)"),
             ("status", "Status"),
-        ]) + f"\n\nTotal neighbours: {len(rows)}"))
+        ]) + f"\n\nTotal neighbours: {len(rows)}")))
 async def show_nndp_neighbors() -> list[dict]:
     """Nodes heard by NNDP, and the time left before 0x3400 [NNDP 6.3]."""
     return neighbor_rows()
@@ -128,10 +129,10 @@ def nearest_rows() -> list[dict]:
 
 @action(cli="show nndp services", description="Nearest services table [NNDP 6.5]",
         permissions=[READ], rows=NearestRow,
-        cli_output=printer(lambda rows: table(rows, [
+        cli_output=printer(with_reason(lambda rows: table(rows, [
             ("service", "Service"), ("instance", "Instance"), ("distance", "D (permille)"),
             ("hops", "Hops"), ("learned_from", "Learned from"), ("expires", "Expires(s)"),
-        ])))
+        ]))))
 async def show_nndp_services() -> list[dict]:
     """K instances per service of our areas, with distance and hops."""
     return nearest_rows()

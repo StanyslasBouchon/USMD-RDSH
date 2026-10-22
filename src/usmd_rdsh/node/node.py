@@ -119,6 +119,7 @@ class LocalSettings:  # pylint: disable=too-many-instance-attributes
     usd_anchor: str = ""
     address: str = ""
     bind_address: str = "0.0.0.0"
+    dev_peers: list[str] | None = None  # development mode: the other virtual nodes
 
 
 @dataclass
@@ -136,10 +137,12 @@ class DelegationState:
 class Node(NcpHandlers):  # pylint: disable=too-many-instance-attributes,too-many-public-methods
     """A USMD-RDSH node."""
 
-    def __init__(self, state_dir: StateDirectory) -> None:
+    def __init__(self, state_dir: StateDirectory, *, identity_file: str = "",
+                 authority_dir: StateDirectory | None = None) -> None:
         self.state_dir = state_dir
-        self.identity: Identity = load_identity(state_dir)
-        self.authority = Authority(state_dir)
+        self.identity_file = identity_file
+        self.identity: Identity = load_identity(state_dir, identity_file or None)
+        self.authority = Authority(authority_dir or state_dir)
         self.settings = LocalSettings()
         self.tables = Tables()
         self.signed = SignedConfig.load(state_dir)
@@ -165,6 +168,7 @@ class Node(NcpHandlers):  # pylint: disable=too-many-instance-attributes,too-man
         self.started = time.time()
         self.known_voters: list[str] = []
         self._background: set[asyncio.Task] = set()
+        self._measuring = False
         self.transfer_rate: float = 0.0  # bytes/s measured towards references
         self.loads: dict[str, int] = {}  # reference load of each measured node [ARCH 3.2]
         self.updating: dict[str, MutationProperties] = {}  # previous version during update
@@ -360,6 +364,8 @@ class Node(NcpHandlers):  # pylint: disable=too-many-instance-attributes,too-man
             source_port=self.settings.nndp_source_port,
             destination_port=self.settings.nndp_destination_port,
             k=parameter(self.signed.usd, 0x000A) or 3,
+            bind_address=self.settings.bind_address,
+            broadcast_targets=self.settings.dev_peers,
         )
         if self.settings.nndp_enabled:
             try:
@@ -657,7 +663,7 @@ class Node(NcpHandlers):  # pylint: disable=too-many-instance-attributes,too-man
         except NcpRemoteError as exc:
             if exc.code == 0x0008:
                 self.identity.regenerate_id()
-                save_identity(self.state_dir, self.identity)
+                save_identity(self.state_dir, self.identity, self.identity_file or None)
                 self.event("Identifier already used: new ULID generated")
             else:
                 self.event(f"Admission refused by {address}: {exc}", logging.WARNING)
@@ -887,8 +893,21 @@ class Node(NcpHandlers):  # pylint: disable=too-many-instance-attributes,too-man
                     return False  # [NCP 7.8, 10]
         if self.tables.nodes.merge(entry.token, record):
             self._learn_entry(entry.token, record)
+            if record.state == State.ACTIVE and self.state == State.ACTIVE and \
+                    len(self.references) < (parameter(self.signed.usd, 0x0001) or 5) and \
+                    not self._measuring:
+                # A new active node and free reference slots: choose now [ARCH 6.3].
+                self._measuring = True
+                self._soon(self._measure_once())
             return True
         return False
+
+    async def _measure_once(self) -> None:
+        try:
+            await asyncio.sleep(1)
+            await self.measure_distances()
+        finally:
+            self._measuring = False
 
     def check_token(self, token: CreationToken, *, for_admission: bool,
                     requester: bytes | None = None) -> None:
@@ -1069,7 +1088,7 @@ class Node(NcpHandlers):  # pylint: disable=too-many-instance-attributes,too-man
             await self.delegate_all(State.INACTIVE)
         self.identity.signing = SigningKey.generate()
         self.identity.agreement = AgreementKey.generate()
-        save_identity(self.state_dir, self.identity)
+        save_identity(self.state_dir, self.identity, self.identity_file or None)
         # Every protocol switches to the new keys now, not at the next restart.
         if self.ncp is not None:
             self.ncp.close()
@@ -1684,7 +1703,7 @@ class Node(NcpHandlers):  # pylint: disable=too-many-instance-attributes,too-man
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         _set_dont_fragment(sock)
         try:
-            sock.bind(("0.0.0.0", port))
+            sock.bind((self.settings.bind_address, port))
         except OSError as exc:
             self.event(f"SP could not bind UDP {port}: {exc}", logging.ERROR)
             return

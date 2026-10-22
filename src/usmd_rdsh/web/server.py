@@ -110,6 +110,8 @@ class WebRouter:
         self._api = ApiDispatcher()
         self._shells = shells
         self.refresh = refresh
+        self.username = ""
+        self.password = ""
 
     async def handle(  # pylint: disable=too-many-arguments
         self,
@@ -126,6 +128,10 @@ class WebRouter:
             return await self._api.handle(method, path, headers, body, client=client)
         if route in ("/", "/index.html") and method == "GET":
             return self._page()
+        if route == "/web/login" and method == "POST":
+            return self._login(body, client)
+        if route == "/web/login" and method == "GET":
+            return ApiResponse(200, {"password_login": bool(self.username)})
         if route.startswith("/web/"):
             actor = await self._actor(headers)
             if isinstance(actor, ApiResponse):
@@ -140,6 +146,24 @@ class WebRouter:
             if route == "/web/config" and method == "POST":
                 return await self._config(actor, body)
         return ApiResponse.error(404, "not_found", "Nothing is served here.")
+
+    def _login(self, body: bytes, client: str | None) -> ApiResponse:
+        """Username and password of ``system web-interface`` -> a session token."""
+        import hmac  # pylint: disable=import-outside-toplevel
+
+        try:
+            request = json.loads(body or b"{}")
+            username, password = str(request["username"]), str(request["password"])
+        except (ValueError, KeyError, TypeError):
+            return ApiResponse.error(400, "bad_request", 'Send {"username": .., "password": ..}.')
+        allowed = bool(self.username) and hmac.compare_digest(username, self.username) and \
+            hmac.compare_digest(password, self.password)
+        if not allowed:
+            log.warning("[WEB] Failed login for '%s' from %s", username, client)
+            return ApiResponse.error(401, "invalid_credentials", "Wrong username or password.")
+        token = RUNTIME.tokens.mint_session(username)
+        log.info("[WEB] %s logged in from %s", username, client)
+        return ApiResponse(200, {"token": token.plaintext})
 
     def _page(self) -> PageResponse:
         html = (
@@ -257,6 +281,44 @@ class WebRouter:
         })
 
 
+def self_signed_certificate(address: str) -> tuple[str, str]:
+    """A self-signed certificate in the state directory, made once [usmd.example.yaml]."""
+    import datetime  # pylint: disable=import-outside-toplevel
+    import ipaddress  # pylint: disable=import-outside-toplevel
+
+    from cryptography import x509  # pylint: disable=import-outside-toplevel
+    from cryptography.hazmat.primitives import hashes, serialization  # pylint: disable=import-outside-toplevel
+    from cryptography.hazmat.primitives.asymmetric import ec  # pylint: disable=import-outside-toplevel
+    from cryptography.x509.oid import NameOID  # pylint: disable=import-outside-toplevel
+
+    from usmd_rdsh.cli.store import state_directory  # pylint: disable=import-outside-toplevel
+
+    state = state_directory()
+    cert_path, key_path = state.path("web-cert.pem"), state.path("web-key.pem")
+    if cert_path.exists() and key_path.exists():
+        return str(cert_path), str(key_path)
+    key = ec.generate_private_key(ec.SECP256R1())
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "usmd-rdsh")])
+    now = datetime.datetime.now(datetime.timezone.utc)
+    alt = [x509.DNSName("localhost")]
+    try:
+        alt.append(x509.IPAddress(ipaddress.ip_address(address)))
+    except ValueError:
+        pass
+    cert = (x509.CertificateBuilder().subject_name(name).issuer_name(name)
+            .public_key(key.public_key()).serial_number(x509.random_serial_number())
+            .not_valid_before(now - datetime.timedelta(minutes=5))
+            .not_valid_after(now + datetime.timedelta(days=825))
+            .add_extension(x509.SubjectAlternativeName(alt), critical=False)
+            .sign(key, hashes.SHA256()))
+    state.write_bytes(key.private_bytes(serialization.Encoding.PEM,
+                                        serialization.PrivateFormat.PKCS8,
+                                        serialization.NoEncryption()), "web-key.pem", mode=0o600)
+    state.write_bytes(cert.public_bytes(serialization.Encoding.PEM), "web-cert.pem")
+    log.warning("[WEB] Generated a self-signed certificate: %s", cert_path)
+    return str(cert_path), str(key_path)
+
+
 class WebServer:
     """Starts, stops and reconfigures the web interface."""
 
@@ -296,15 +358,20 @@ class WebServer:
         """Apply a committed ``system web-interface``: stop, then start if enabled."""
         async with self._lock:
             self._router.refresh = config.refresh_interval
+            self._router.username, self._router.password = config.username, config.password
             await self._stop()
             self._switch.enabled = config.status
             if not config.status:
                 log.info("[WEB] Web interface disabled")
                 return
             context = None
-            if config.tls_certificate:
+            mode = str(getattr(config, "tls_mode", "off"))
+            certificate, key = config.tls_certificate, config.tls_private_key
+            if mode == "self-signed":
+                certificate, key = self_signed_certificate(config.listen_address)
+            if mode in ("self-signed", "files") or certificate:
                 context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
-                context.load_cert_chain(config.tls_certificate, config.tls_private_key)
+                context.load_cert_chain(certificate, key)
             server = _Transport(
                 self._router,  # type: ignore[arg-type]
                 config.listen_address,

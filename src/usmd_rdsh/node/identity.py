@@ -79,23 +79,29 @@ def _prototype(state: StateDirectory) -> tuple[str, SigningKey] | None:
         return None
 
 
-def load_identity(state: StateDirectory) -> Identity:
-    """Load the identity, migrating or creating it on first use."""
-    stored = state.read_json(_FILE, default=None)
+def load_identity(state: StateDirectory, filename: str | None = None) -> Identity:
+    """Load the identity, migrating or creating it on first use.
+
+    *filename* is ``keys_file`` of ``usmd.yaml`` (default ``identity.json``).
+    """
+    name = filename or _FILE
+    stored = state.read_json(name, default=None)
     if stored:
         return Identity.from_json(stored)
     migrated = _prototype(state)
     if migrated and is_ulid(migrated[0]):
         identity = Identity(migrated[0], migrated[1], AgreementKey.generate())
+        save_identity(state, identity, name)
+        return identity
     else:
         identity = Identity(ulid.new().str, SigningKey.generate(), AgreementKey.generate())
-    save_identity(state, identity)
+    save_identity(state, identity, name)
     return identity
 
 
-def save_identity(state: StateDirectory, identity: Identity) -> Path:
+def save_identity(state: StateDirectory, identity: Identity, filename: str | None = None) -> Path:
     """Write the identity, owner-only."""
-    path = state.write_json(identity.to_json(), _FILE, mode=0o600)
+    path = state.write_json(identity.to_json(), filename or _FILE, mode=0o600)
     if os.name != "nt":
         os.chmod(path, 0o600)
     return path
