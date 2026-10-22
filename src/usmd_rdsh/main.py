@@ -13,7 +13,6 @@ import argparse
 import asyncio
 import logging
 import sys
-import threading
 
 import dotenv
 
@@ -22,9 +21,11 @@ dotenv.load_dotenv()
 # pylint: disable=wrong-import-position
 from prompt_toolkit.patch_stdout import patch_stdout  # noqa: E402
 
+from usmd_rdsh.cli import bridge  # noqa: E402
 from usmd_rdsh.cli.runtime import RUNTIME  # noqa: E402
 from usmd_rdsh.cli.shell import ShellFactory, banner  # noqa: E402
-from usmd_rdsh.self.core import Core  # noqa: E402
+from usmd_rdsh.cli.store import state_directory  # noqa: E402
+from usmd_rdsh.node.node import Node  # noqa: E402
 from usmd_rdsh.web.server import WebServer  # noqa: E402
 
 
@@ -37,6 +38,10 @@ def _arguments(argv: list[str] | None) -> argparse.Namespace:
         "-c", "--command", action="append", default=[], metavar="LINE",
         help="run a console line and exit (repeatable)",
     )
+    parser.add_argument(
+        "-y", "--yes", action="store_true",
+        help="with -c: answer yes to every confirmation (scripts)",
+    )
     return parser.parse_args(argv)
 
 
@@ -47,12 +52,12 @@ async def _run_commands(factory: ShellFactory, lines: list[str]) -> None:
 
 
 async def _serve(factory: ShellFactory, console: bool) -> None:
-    core = RUNTIME.core
-    assert core is not None
-    threading.Thread(target=core.run, name="usmd-core", daemon=True).start()
+    node = RUNTIME.node
+    assert node is not None
+    await node.start()
 
     if not console:
-        logging.warning("[SYS] Node %s started without console", core.properties.node_id)
+        logging.warning("[SYS] Node %s started without console", node.node_id)
         await asyncio.Event().wait()
         return
 
@@ -67,8 +72,19 @@ async def _serve(factory: ShellFactory, console: bool) -> None:
 async def _main(args: argparse.Namespace) -> None:
     factory = ShellFactory()
     one_shot = bool(args.command)
+    if one_shot and args.yes:
+        from nan_actions.ports import set_confirm_prompt  # pylint: disable=import-outside-toplevel
+
+        class _Yes:
+            async def ask(self, message: str) -> bool:
+                logging.warning("[CLI] %s -> yes (--yes)", message)
+                return True
+
+        set_confirm_prompt(_Yes())
     if not one_shot:
         RUNTIME.web = WebServer(factory)
+    # What is in force (signed objects) is what the tree shows.
+    bridge.reflect()
     await RUNTIME.apply_all()
     try:
         if one_shot:
@@ -78,8 +94,8 @@ async def _main(args: argparse.Namespace) -> None:
     finally:
         if RUNTIME.web is not None:
             await RUNTIME.web.stop()
-        if RUNTIME.core is not None and RUNTIME.core.is_running():
-            RUNTIME.core.stop()
+        if RUNTIME.node is not None and not one_shot:
+            await RUNTIME.node.stop()
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -96,7 +112,8 @@ def main(argv: list[str] | None = None) -> None:
     RUNTIME.logbuffer.attach()
     RUNTIME.logbuffer.set_console(print)
     RUNTIME.document = RUNTIME.config_store.load()
-    RUNTIME.core = Core()
+    RUNTIME.node = Node(state_directory())
+    RUNTIME.node.on_signed_change = bridge.reflect
 
     try:
         asyncio.run(_main(args))

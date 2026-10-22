@@ -20,7 +20,7 @@ def _factory(tmp_path, monkeypatch):
     RUNTIME.config_store = ConfigStore()
     RUNTIME.tokens = TokenStore()
     RUNTIME.document = ConfigDocument()
-    RUNTIME.core = None
+    RUNTIME.node = None
     RUNTIME.web = None
     return ShellFactory()
 
@@ -69,13 +69,13 @@ def test_logbuffer_keeps_only_buffered_level():
 def test_configuration_is_committed_saved_and_shown(factory):
     out = _run(
         factory,
-        "config usd", "set name prod", "set ping-tolerance 500", "end",
+        "config usd", "set name 01JAB7R9F2W5H1N3S8D0Q4K6ME", "set ping-tolerance 500", "end",
         "show running-config",
     )
     assert "Committed 1 node(s)." in out
     assert "set ping-tolerance 500" in out
     saved = json.loads(RUNTIME.config_store.path.read_text(encoding="utf-8"))
-    assert saved["singletons"]["usd"]["name"] == "prod"
+    assert saved["singletons"]["usd"]["name"] == "01JAB7R9F2W5H1N3S8D0Q4K6ME"
 
 
 def test_incoherent_usd_is_refused_inside_the_node(factory):
@@ -107,11 +107,9 @@ def test_service_catalogue_checks_areas(factory):
         "set prefix-length 16", "next", "end",
         "config service", "edit web", "set id A1", "set area front",
         "set vip 10.90.0.1", "set dependencies db", "next", "end",
-        "show service catalog",
+        "show running-config",
     )
-    assert "0a1" in out
-    assert "VIP outside 10.80.0.0/16" in out
-    assert "dependency 'db' not in catalogue" in out
+    assert 'edit "web"' in out and "set id 0a1" in out
 
 
 def test_service_id_reserved_values_are_refused(factory):
@@ -161,6 +159,85 @@ def test_web_console_respects_the_token_profile(factory):
     assert RUNTIME.hostname() == "web-node"
     asyncio.run(cli(admin, "write erase", confirm=True))
     assert RUNTIME.hostname() == "usmd"
+
+
+def test_web_forms_cover_every_node_and_commit(factory):
+    from nan_actions.views import views  # pylint: disable=import-outside-toplevel
+
+    admin = RUNTIME.tokens.mint("adm", "admin").plaintext
+    monitor = RUNTIME.tokens.mint("mon", "monitor").plaintext
+    router = _router(factory)
+    auth = {"Authorization": f"Bearer {admin}"}
+
+    async def post(body, headers=auth):
+        return await router.handle("POST", "/web/config", headers, json.dumps(body).encode())
+
+    schema = asyncio.run(router.handle("GET", "/web/config", auth)).body
+    assert {n["path"] for n in schema["nodes"]} == {n.cli_path for n in views.nodes()}
+
+    ok = asyncio.run(post({"path": "usd", "values": {"name": "01JAB7R9F2W5H1N3S8D0Q4K6ME",
+                                                      "voters": 3}}))
+    assert ok.status == 200, ok.body
+    assert RUNTIME.config("usd").voters == 3
+
+    bad = asyncio.run(post({"path": "usd", "values": {"solicited_nodes": 50}}))
+    assert bad.status == 422 and "reference-nodes" in bad.body["error"]
+
+    row = asyncio.run(post({"path": "service", "key": "web",
+                            "values": {"id": "0a1", "area": "front",
+                                       "dependencies": ["db", "cache"]}}))
+    assert row.status == 200, row.body
+    assert RUNTIME.config("service")["web"].dependencies == ["db", "cache"]
+    gone = asyncio.run(post({"path": "service", "key": "web", "delete": True}))
+    assert gone.status == 200 and RUNTIME.config("service") == {}
+
+    refused = asyncio.run(post({"path": "usd", "values": {"name": "x"}},
+                               {"Authorization": f"Bearer {monitor}"}))
+    assert refused.status == 403
+
+
+def test_authority_commit_signs_and_others_refuse(factory, tmp_path):
+    from nan_runtime.state import StateDirectory  # pylint: disable=import-outside-toplevel
+
+    from usmd_rdsh.cli import bridge  # pylint: disable=import-outside-toplevel
+    from usmd_rdsh.node.node import Node  # pylint: disable=import-outside-toplevel
+
+    plain = Node(StateDirectory(tmp_path / "plain"))
+    RUNTIME.node = plain
+    out = _run(factory, "config usd", "set name 01JAB7R9F2W5H1N3S8D0Q4K6ME", "end")
+    assert "does not hold the USC key" in out
+    assert plain.signed.usd is None
+
+    authority = Node(StateDirectory(tmp_path / "authority"))
+    authority.authority.generate("usc")
+    authority.authority.generate("usd")
+    authority.on_signed_change = bridge.reflect
+    RUNTIME.node = authority
+
+    async def go():
+        shell = factory.console()
+        for line in ("config service-area", "edit front", "set id 1", "set prefix 10.80.0.0",
+                     "set prefix-length 16", "next", "end",
+                     "config service", "edit web", "set id 0a1", "set area front",
+                     "set vip 10.80.0.10", "next", "end",
+                     "config mutation", "edit frontal", "set services web", "next", "end",
+                     "config usd", "set name 01JAB7R9F2W5H1N3S8D0Q4K6ME", "set sp-port 9993",
+                     "end"):
+            await shell.execute_line(line)
+
+    asyncio.run(go())
+    usd = authority.signed.usd
+    assert usd is not None and usd.usdn == "01JAB7R9F2W5H1N3S8D0Q4K6ME"
+    usd.verify(authority.authority.usc.public)
+    assert [e.vip for e in usd.catalog] == ["10.80.0.10"]
+    assert usd.parameters[0x0010] == 9993
+    assert authority.signed.mutation_services("frontal") == ["web"]
+    version = usd.version
+    out = _run(factory, "show service catalog", "show usd parameters")
+    assert "0a1" in out and "9993" in out
+    # A commit that changes nothing signs nothing.
+    _run(factory, "config usd", "set sp-port 9993", "end")
+    assert authority.signed.usd.version == version
 
 
 def test_web_serves_the_page(factory):

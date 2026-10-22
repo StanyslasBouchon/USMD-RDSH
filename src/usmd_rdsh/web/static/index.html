@@ -71,6 +71,30 @@ button.btn { cursor: pointer; } button.primary { background: var(--accent);
 #login { max-width: 460px; margin: 12vh auto; }
 #login p { color: var(--muted); }
 #login input { width: 100%; margin: 8px 0 12px; font-family: var(--mono); }
+.config-layout { display: grid; grid-template-columns: 240px 1fr; gap: 16px; align-items: start; }
+.config-nav { padding: 8px; position: sticky; top: 12px; }
+.config-nav .group { color: var(--muted); font-size: 12px; text-transform: uppercase;
+  letter-spacing: .04em; padding: 10px 8px 4px; }
+.config-nav button { display: block; width: 100%; text-align: left; background: none; border: 0;
+  color: var(--text); padding: 6px 8px; border-radius: 6px; cursor: pointer; font: inherit; }
+.config-nav button.on { background: var(--bg); font-weight: 600; }
+.form-grid { display: grid; grid-template-columns: minmax(160px, 220px) 1fr; gap: 10px 16px;
+  align-items: start; }
+.form-grid label { padding-top: 6px; font-family: var(--mono); font-size: 13px; }
+.form-grid .help { color: var(--muted); font-size: 12px; margin-top: 2px; }
+.form-grid input[type=text], .form-grid input[type=number], .form-grid select,
+.form-grid input[type=password], .form-grid textarea { width: 100%; }
+.form-grid textarea { font: inherit; font-family: var(--mono); min-height: 34px;
+  padding: 6px 10px; border-radius: 6px; border: 1px solid var(--line);
+  background: var(--panel); color: var(--text); }
+.changed { border-color: var(--accent) !important; }
+.actions { display: flex; gap: 8px; margin-top: 16px; flex-wrap: wrap; align-items: center; }
+.result { margin-top: 12px; font-family: var(--mono); font-size: 12.5px; white-space: pre-wrap; }
+.rows td.act { text-align: right; }
+.link { background: none; border: 0; color: var(--accent); cursor: pointer; font: inherit; padding: 0 4px; }
+@media (max-width: 760px) { .config-layout { grid-template-columns: 1fr; }
+  .config-nav { position: static; } .form-grid { grid-template-columns: 1fr; }
+  .form-grid label { padding-top: 0; } }
 .hidden { display: none !important; }
 .error { color: var(--bad); min-height: 1.4em; }
 @media (max-width: 640px) {
@@ -98,6 +122,7 @@ button.btn { cursor: pointer; } button.primary { background: var(--accent);
   <span class="spacer"></span>
   <nav>
     <button data-tab="overview" class="on">Supervision</button>
+    <button data-tab="config">Configuration</button>
     <button data-tab="logs">Journaux</button>
     <button data-tab="console">Console</button>
   </nav>
@@ -119,14 +144,55 @@ button.btn { cursor: pointer; } button.primary { background: var(--accent);
       <h2>NNDP</h2>
       <dl id="nndp"></dl>
     </div>
+    <div class="panel">
+      <h2>Maître USD (Raft)</h2>
+      <dl id="master"></dl>
+    </div>
+    <div class="panel">
+      <h2>Mutation</h2>
+      <dl id="mutation"></dl>
+    </div>
+    <div class="panel">
+      <h2>SP</h2>
+      <dl id="sp"></dl>
+    </div>
+    <div class="panel wide">
+      <h2>Table des nœuds de l'USD</h2>
+      <div class="table-wrap" id="table"></div>
+    </div>
+    <div class="panel wide">
+      <h2>Nœuds de référence et distances</h2>
+      <div class="table-wrap" id="references"></div>
+    </div>
     <div class="panel wide">
       <h2>Voisins NNDP</h2>
       <div class="table-wrap" id="neighbors"></div>
     </div>
     <div class="panel wide">
+      <h2>Services les plus proches</h2>
+      <div class="table-wrap" id="nearest"></div>
+    </div>
+    <div class="panel wide">
+      <h2>Catalogue des services</h2>
+      <div class="table-wrap" id="catalog"></div>
+    </div>
+    <div class="panel wide">
+      <h2>Sessions SP</h2>
+      <div class="table-wrap" id="sessions"></div>
+    </div>
+    <div class="panel wide">
       <h2>Table d'identité (NIT)</h2>
       <div class="table-wrap" id="nit"></div>
     </div>
+    <div class="panel wide">
+      <h2>Événements du nœud</h2>
+      <div class="logs mono" id="events"></div>
+    </div>
+  </section>
+
+  <section data-page="config" class="hidden config-layout">
+    <aside class="panel config-nav" id="config-nav"></aside>
+    <div class="panel" id="config-form"><div class="empty">Choisissez un nœud de configuration.</div></div>
   </section>
 
   <section data-page="logs" class="panel hidden">
@@ -206,11 +272,44 @@ function render(s) {
   $("node-meta").textContent = `${s.user} · ${canWrite ? "lecture/écriture" : "lecture seule"}`;
   dl($("node"), [
     ["Identifiant", `<span class="mono">${esc(n.node_id)}</span>`],
+    ["Admis", n.admitted ? "oui" : "non"],
     ["Rôle", esc(n.role)], ["Adresse", esc(n.address)],
-    ["USD", esc(n.usd || "—")], ["USC", esc(n.usc || "—")],
+    ["Mutation", esc(n.mutation || "—")],
+    ["Services hébergés", esc((n.hosted || []).join(", ") || "—")],
+    ["Adresses SP", `<span class="mono">${esc((n.sp_addresses || []).join(" ") || "—")}</span>`],
+    ["USD", `<span class="mono">${esc(n.usd || "—")}</span>`],
     ["Clé Ed25519", `<span class="mono">${esc(n.ed25519_public_key)}</span>`],
-    ["Uptime", esc(n.uptime)],
+    ["Clé X25519", `<span class="mono">${esc(n.x25519_public_key)}</span>`],
+    ["Jeton", esc(n.token)], ["Uptime", esc(n.uptime)],
   ]);
+  const m = s.master;
+  dl($("master"), [["Maître", `<span class="mono">${esc(m.leader || "inconnu")}</span>`],
+    ["Ce nœud", esc(m.role)], ["Terme", m.term], ["Validé / dernier", `${m.commit} / ${m.last}`],
+    ["Électeurs", `<span class="mono">${esc(m.voters.join(" ") || "—")}</span>`],
+    ["Nv", m.nv], ["Attributions", m.assignments]]);
+  const mu = s.mutation;
+  dl($("mutation"), [["Mutation", esc(mu.mutation || "—")], ["Version", esc(mu.version)],
+    ["Instances", mu.instances], ["Bornes", esc(mu.bounds || "—")],
+    ["Échecs de santé", mu.health_failures],
+    ["Transmutations", esc((mu.history || []).slice(-3).join(" | ") || "—")]]);
+  dl($("sp"), [["État", esc(s.sp.status)], ["Port", esc(s.sp.udp_port)],
+    ["Interface", esc(s.sp.interface)], ["MTU", esc(s.sp.mtu)],
+    ["VIP", esc(s.sp.vips || "—")], ["Routes", esc(s.sp.routes || "—")]]);
+  table($("table"), s.table, [["node_id", "Nœud", "mono"], ["address", "Adresse"],
+    ["declared", "Déclaré"], ["observed", "Observé", "", v => v ? `<span class="warn">${esc(v)}</span>` : ""],
+    ["mutation", "Mutation"], ["sp_addresses", "Adresses SP", "mono"],
+    ["voter", "Électeur", "", v => v ? "oui" : ""], ["record_date", "Fiche"]]);
+  table($("references"), s.references, [["node_id", "Nœud", "mono"], ["distance", "d"],
+    ["rtt", "RTT (ms)"], ["reference", "Notre référence"], ["references_us", "Nous référence"]]);
+  table($("nearest"), s.nearest, [["service", "Service"], ["instance", "Instance", "mono"],
+    ["distance", "D (‰)"], ["hops", "Sauts"], ["learned_from", "Appris de", "mono"], ["expires", "Expire (s)"]]);
+  table($("catalog"), s.catalog, [["id", "Id", "mono"], ["name", "Service"], ["area", "Aire"],
+    ["vip", "VIP"], ["group", "Groupe"], ["instances", "Instances"],
+    ["problems", "Contrôle", "", v => `<span class="${v === "ok" ? "ok" : "bad"}">${esc(v)}</span>`]]);
+  table($("sessions"), s.sessions, [["index", "Index", "mono"], ["peer", "Pair", "mono"],
+    ["address", "Adresse"], ["role", "Rôle"], ["age", "Âge (s)"], ["sent", "Trames émises"]]);
+  $("events").innerHTML = (s.events || []).slice().reverse().map(e => `<div>${esc(e.event)}</div>`).join("")
+    || '<div class="empty">Aucun événement.</div>';
   const l = s.load;
   $("load").innerHTML = [["Mémoire", l.memory], ["CPU", l.cpu], ["Disque", l.disk],
     ["Réseau", l.network], ["Référence", l.reference]].map(([k, v]) => {
@@ -225,20 +324,20 @@ function render(s) {
   dl($("nndp"), [
     ["Service", `<span class="${p.running ? "ok" : "bad"}">${p.enabled ? "activé" : "désactivé"},
       ${p.running ? "en cours" : "arrêté"}</span>`],
-    ["Ports", `${p.client_port} / ${p.server_port}`],
+    ["Ports", `${p.source_port} → ${p.destination_port}`],
     ["Intervalle HIA", `${p.hia_interval} s (inactif après ${2 * p.hia_interval} s)`],
     ["Fenêtre de fraîcheur", `${p.freshness_window} s`],
-    ["HIA émis / reçus", `${p.hia_sent} / ${p.hia_received}`],
+    ["HIA émis / acceptés / rejetés", `${p.sent} / ${p.received} / ${p.rejected}`],
     ["Voisins", p.neighbors],
   ]);
   table($("neighbors"), s.neighbors, [
     ["node_id", "Identifiant", "mono"], ["address", "Adresse"],
     ["state", "État déclaré", "", (v, r) => `<span class="${stateClass(r.state_code)}">${esc(v)}</span>`],
-    ["last_seen", "Vu il y a (s)"], ["expires_in", "Reste (s)"],
+    ["hosted", "Hébergés", "mono"], ["last_seen", "Vu il y a (s)"], ["hold", "Reste (s)"],
     ["status", "Statut", "", v => `<span class="${v === "up" ? "ok" : "bad"}">${esc(v)}</span>`],
   ]);
   table($("nit"), s.nit, [["node_id", "Identifiant", "mono"], ["address", "Adresse"],
-    ["public_key", "Clé Ed25519", "mono"], ["ttl", "TTL (s)"]]);
+    ["public_key", "Clé Ed25519", "mono"], ["ttl", "TTL"]]);
   lastLogs = s.logs; renderLogs();
 }
 
@@ -290,7 +389,202 @@ function submit() {
   queue = queue.then(() => run(line));
 }
 
+// ---- Configuration forms, generated from the node tree (/web/config) ----
+let configSchema = null, configPath = null, configKey = null;
+
+async function loadConfig() {
+  try { configSchema = await call("GET", "/web/config"); }
+  catch (e) { if (e.message !== "401") $("config-form").textContent = e.message; return; }
+  const nav = $("config-nav"); nav.innerHTML = "";
+  let group = null;
+  // Top-level nodes (usc, usd, service-area, mutation, service) are the
+  // authority's objects: shown together, whatever their declaration order.
+  const headOf = n => n.path.includes(" ") ? n.path.split(" ")[0] : "domaine (autorité)";
+  const order = [...new Set(configSchema.nodes.map(headOf))];
+  const nodes = [...configSchema.nodes].sort((a, b) => order.indexOf(headOf(a)) - order.indexOf(headOf(b)));
+  for (const node of nodes) {
+    const head = headOf(node);
+    if (head !== group) {
+      group = head;
+      const g = document.createElement("div"); g.className = "group"; g.textContent = head;
+      nav.appendChild(g);
+    }
+    const b = document.createElement("button");
+    b.textContent = node.path.includes(" ") ? node.path.split(" ").slice(1).join(" ") : node.path;
+    b.title = node.description;
+    b.classList.toggle("on", node.path === configPath);
+    b.onclick = () => { configPath = node.path; configKey = null; loadConfigNode(); };
+    nav.appendChild(b);
+  }
+  if (configPath) renderNode();
+}
+function loadConfigNode() {
+  document.querySelectorAll("#config-nav button").forEach(b =>
+    b.classList.toggle("on", b.textContent === (configPath.includes(" ")
+      ? configPath.split(" ").slice(1).join(" ") : configPath)));
+  renderNode();
+}
+function nodeOf(path) { return configSchema.nodes.find(n => n.path === path); }
+
+function input(field, value, writable) {
+  let el;
+  if (field.kind === "bool") {
+    el = document.createElement("select");
+    el.innerHTML = '<option value="true">enable</option><option value="false">disable</option>';
+    el.value = String(Boolean(value));
+  } else if (field.kind === "choice") {
+    el = document.createElement("select");
+    el.innerHTML = (field.required ? "" : '<option value=""></option>') +
+      field.choices.map(c => `<option>${esc(c)}</option>`).join("");
+    el.value = value ?? "";
+  } else if (field.kind === "list") {
+    el = document.createElement("textarea");
+    el.value = (value || []).join(" ");
+    el.placeholder = "valeurs séparées par des espaces";
+  } else {
+    el = document.createElement("input");
+    el.type = field.secret ? "password" : (field.kind === "int" || field.kind === "float") ? "number" : "text";
+    if (field.kind === "float") el.step = "any";
+    el.value = value ?? "";
+  }
+  el.disabled = !writable;
+  el.dataset.field = field.name;
+  el.dataset.original = el.value;
+  el.addEventListener("input", () => el.classList.toggle("changed", el.value !== el.dataset.original));
+  el.addEventListener("change", () => el.classList.toggle("changed", el.value !== el.dataset.original));
+  return el;
+}
+
+function readValue(field, el) {
+  if (field.kind === "bool") return el.value === "true";
+  if (field.kind === "list") return el.value.split(/\s+/).filter(Boolean);
+  if (el.value === "") return null;
+  if (field.kind === "int") return parseInt(el.value, 10);
+  if (field.kind === "float") return parseFloat(el.value);
+  return el.value;
+}
+
+function renderNode() {
+  const node = nodeOf(configPath), box = $("config-form");
+  if (!node) { box.innerHTML = '<div class="empty">Nœud inconnu.</div>'; return; }
+  const writable = node.writable && configSchema.can_write;
+  box.innerHTML = `<h2>${esc(node.path)}</h2><p class="meta">${esc(node.description)}</p>`;
+  if (node.table && configKey === null) return renderRows(node, box, writable);
+  const values = node.table ? (node.rows[configKey] || {}) : node.values;
+  const isNew = node.table && !(configKey in node.rows);
+  if (node.table) {
+    const back = document.createElement("button");
+    back.className = "link"; back.textContent = "← toutes les entrées";
+    back.onclick = () => { configKey = null; renderNode(); };
+    box.appendChild(back);
+  }
+  const grid = document.createElement("div"); grid.className = "form-grid";
+  const inputs = [];
+  for (const f of node.fields) {
+    const isKey = node.table && f.cli === node.key;
+    const label = document.createElement("label"); label.textContent = f.cli;
+    const cell = document.createElement("div");
+    let el;
+    if (isKey) {
+      el = document.createElement("input"); el.type = "text";
+      el.value = isNew ? "" : configKey; el.disabled = !isNew || !writable;
+      el.dataset.key = "1";
+    } else {
+      el = input(f, isNew ? f.default : values[f.name], writable);
+      inputs.push([f, el]);
+    }
+    cell.appendChild(el);
+    const help = document.createElement("div"); help.className = "help";
+    help.textContent = f.description + (f.default !== null && f.default !== undefined && f.default !== "" && !isKey
+      ? ` (défaut : ${Array.isArray(f.default) ? f.default.join(" ") || "vide" : f.default})` : "");
+    cell.appendChild(help);
+    grid.append(label, cell);
+  }
+  box.appendChild(grid);
+  const actions = document.createElement("div"); actions.className = "actions";
+  const result = document.createElement("div"); result.className = "result";
+  if (writable) {
+    const save = document.createElement("button"); save.className = "btn primary";
+    save.textContent = "Appliquer";
+    save.onclick = async () => {
+      const key = node.table ? grid.querySelector("[data-key]").value.trim() : null;
+      if (node.table && !key) { result.innerHTML = '<span class="bad">La clé est obligatoire.</span>'; return; }
+      const sent = {};
+      for (const [f, el] of inputs) if (isNew || el.value !== el.dataset.original) sent[f.name] = readValue(f, el);
+      if (!node.table && !Object.keys(sent).length) { result.textContent = "Aucune modification."; return; }
+      await submitConfig({ path: node.path, key, values: sent }, result, key);
+    };
+    actions.appendChild(save);
+    if (!node.table) {
+      const reset = document.createElement("button"); reset.className = "btn";
+      reset.textContent = "Tout remettre par défaut";
+      reset.onclick = async () => {
+        if (!window.confirm(`Remettre ${node.path} aux valeurs par défaut ?`)) return;
+        const sent = {}; for (const [f] of inputs) sent[f.name] = null;
+        await submitConfig({ path: node.path, values: sent }, result);
+      };
+      actions.appendChild(reset);
+    } else if (!isNew) {
+      const del = document.createElement("button"); del.className = "btn";
+      del.textContent = "Supprimer l'entrée";
+      del.onclick = async () => {
+        if (!window.confirm(`Supprimer ${configKey} de ${node.path} ?`)) return;
+        await submitConfig({ path: node.path, key: configKey, delete: true }, result, null);
+      };
+      actions.appendChild(del);
+    }
+  } else {
+    actions.innerHTML = '<span class="meta">Lecture seule pour ce jeton.</span>';
+  }
+  box.append(actions, result);
+}
+
+function renderRows(node, box, writable) {
+  const keys = Object.keys(node.rows);
+  const shown = node.fields.filter(f => f.cli !== node.key).slice(0, 4);
+  const wrap = document.createElement("div"); wrap.className = "table-wrap rows";
+  if (!keys.length) wrap.innerHTML = '<div class="empty">Aucune entrée.</div>';
+  else {
+    wrap.innerHTML = "<table><thead><tr><th>" + esc(node.key) + "</th>" +
+      shown.map(f => `<th>${esc(f.cli)}</th>`).join("") + "<th></th></tr></thead><tbody>" +
+      keys.map(k => "<tr><td class='mono'>" + esc(k) + "</td>" + shown.map(f => {
+        const v = node.rows[k][f.name];
+        return `<td>${esc(Array.isArray(v) ? v.join(" ") : v)}</td>`;
+      }).join("") + `<td class="act"><button class="link" data-k="${esc(k)}">${writable ? "modifier" : "voir"}</button></td></tr>`)
+      .join("") + "</tbody></table>";
+  }
+  box.appendChild(wrap);
+  wrap.querySelectorAll("button[data-k]").forEach(b => b.onclick = () => { configKey = b.dataset.k; renderNode(); });
+  if (writable) {
+    const add = document.createElement("button"); add.className = "btn primary";
+    add.style.marginTop = "12px"; add.textContent = "Nouvelle entrée";
+    add.onclick = () => { configKey = "\u0000new"; renderNode(); };
+    box.appendChild(add);
+  }
+}
+
+async function submitConfig(request, result, nextKey) {
+  result.textContent = "Application…";
+  try {
+    const res = await fetch("/web/config", { method: "POST",
+      headers: { "Authorization": "Bearer " + token, "Content-Type": "application/json" },
+      body: JSON.stringify(request) });
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 401) return logout("Jeton refusé ou révoqué.");
+    if (!res.ok || data.ok === false) {
+      result.innerHTML = `<span class="bad">${esc(data.error || data.message || res.statusText)}</span>`;
+      return;
+    }
+    if (nextKey !== undefined) configKey = nextKey;
+    await loadConfig();
+    result.textContent = (data.output || []).join("\n") || "Appliqué.";
+    $("config-form").appendChild(result);
+    refresh();
+  } catch (e) { result.innerHTML = `<span class="bad">${esc(e.message)}</span>`; }
+}
+
 function showTab(name) {
+  if (name === "config") loadConfig();
   document.querySelectorAll("nav button").forEach(b => b.classList.toggle("on", b.dataset.tab === name));
   document.querySelectorAll("[data-page]").forEach(p => p.classList.toggle("hidden", p.dataset.page !== name));
   if (name === "console") $("cmd").focus();

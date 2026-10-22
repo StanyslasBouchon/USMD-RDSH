@@ -37,6 +37,16 @@ def _port(value: int) -> int:
     return value
 
 
+def _ulid_or_empty(value: str) -> str:
+    from usmd_rdsh.node.wire import is_ulid  # pylint: disable=import-outside-toplevel
+
+    if value and not is_ulid(value.upper()):
+        raise ValueError("expected a ULID: 26 characters of Crockford base 32")
+    return value.upper()
+
+
+#: USCN, USDN, node ids: ULIDs on the wire [NCP-02 6.1].
+Ulid = Annotated[str, AfterValidator(_ulid_or_empty)]
 #: An IPv4 address, or empty for "not set". The series is IPv4-only [ARCH 3.5].
 IPv4 = Annotated[str, AfterValidator(_ipv4_or_empty)]
 Port = Annotated[int, AfterValidator(_port)]

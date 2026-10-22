@@ -6,6 +6,7 @@ from typing import Self
 from nan_actions.views import ConfigNode, view
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from usmd_rdsh.cli.bridge import AUTHORITY
 from usmd_rdsh.cli.views.common import NODE_ACCESS, IPv4
 
 
@@ -27,7 +28,13 @@ class MutationConfig(BaseModel):
 
 @view("mutation", model=MutationConfig, table=True, key="name", **NODE_ACCESS)
 class MutationView(ConfigNode):
-    """Mutations: services and instance bounds."""
+    """Mutations: services and instance bounds (signed by the authority)."""
+
+    async def apply(self, config) -> None:
+        AUTHORITY.record("mutation", config)
+
+    async def settle(self) -> None:
+        await AUTHORITY.settle()
 
 
 class ServiceType(StrEnum):
@@ -78,11 +85,15 @@ class ServiceConfig(BaseModel):
 class ServiceView(ConfigNode):
     """Service catalogue and service files: id, area, VIP, type, dependencies."""
 
+    async def settle(self) -> None:
+        await AUTHORITY.settle()
+
     async def apply(self, config: dict[str, ServiceConfig]) -> None:
+        AUTHORITY.record("service", config)
         # Uniqueness spans rows; the area and dependency checks span nodes and
         # are reported by 'show service catalog' rather than refused here,
         # because the areas may be committed in the same block.
-        for attribute in ("id", "vip"):
+        for attribute in ("id", "vip", "group"):
             seen: dict[str, str] = {}
             for service in config.values():
                 value = getattr(service, attribute)

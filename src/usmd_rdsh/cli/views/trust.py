@@ -3,10 +3,8 @@
 from nan_actions.views import ConfigNode, view
 from pydantic import BaseModel, Field
 
-from usmd_rdsh.cli.runtime import RUNTIME
+from usmd_rdsh.cli.bridge import apply_local
 from usmd_rdsh.cli.views.common import NODE_ACCESS, Role
-from usmd_rdsh.sys.nal import NodeAccess
-from usmd_rdsh.sys.nal import Role as NalRole
 
 
 class NalEntryConfig(BaseModel):
@@ -18,23 +16,7 @@ class NalEntryConfig(BaseModel):
 
 @view("trust nal", model=NalEntryConfig, table=True, key="public-key", **NODE_ACCESS)
 class NalView(ConfigNode):
-    """Node Access List entries configured by the administrator."""
-
-    #: Keys this node put in the NAL at the previous apply.
-    _keys: frozenset[str] = frozenset()
+    """Node Access List entries configured by the administrator (permanent)."""
 
     async def apply(self, config: dict[str, NalEntryConfig]) -> None:
-        if RUNTIME.core is None:
-            return
-        # Configured entries replace the configured ones of the previous commit;
-        # entries learnt from endorsements are left alone.
-        nal = RUNTIME.core.tables.nal
-        nal[:] = [entry for entry in nal if entry.ed25519_pub_key_32 not in self._keys]
-        for key, entry in config.items():
-            nal.append(
-                NodeAccess(
-                    ed25519_pub_key_32=key,
-                    roles=[NalRole[role.name] for role in entry.roles],
-                )
-            )
-        self._keys = frozenset(config)
+        await apply_local("trust nal", config)

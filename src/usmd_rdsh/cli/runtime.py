@@ -21,7 +21,7 @@ from usmd_rdsh.cli.logbuffer import LogBuffer
 from usmd_rdsh.cli.store import ConfigStore, TokenStore
 
 if TYPE_CHECKING:  # pragma: no cover
-    from usmd_rdsh.self.core import Core
+    from usmd_rdsh.node.node import Node
     from usmd_rdsh.web.server import WebServer
 
 log = logging.getLogger("usmd_rdsh.cli")
@@ -35,7 +35,7 @@ class Runtime:  # pylint: disable=too-many-instance-attributes
     tokens: TokenStore = field(default_factory=TokenStore)
     logbuffer: LogBuffer = field(default_factory=LogBuffer)
     document: ConfigDocument = field(default_factory=ConfigDocument)
-    core: "Core | None" = None
+    node: "Node | None" = None
     web: "WebServer | None" = None
     started_at: float = field(default_factory=time.time)
 
@@ -78,10 +78,18 @@ class Runtime:  # pylint: disable=too-many-instance-attributes
                 log.error("[CONFIG] Saved '%s' is invalid, defaults used: %s",
                           node.cli_path, exc.message)
                 value = {} if node.table else node.model()
-            await node.node.apply(value)
+            try:
+                await node.node.apply(value)
+            except Exception as exc:  # pylint: disable=broad-except
+                # A saved value the node refuses must not keep it from starting.
+                log.error("[CONFIG] '%s' not applied at startup: %s", node.cli_path, exc)
+                continue
             applied.append(node)
         for node in applied:
-            await node.node.settle()
+            try:
+                await node.node.settle()
+            except Exception as exc:  # pylint: disable=broad-except
+                log.error("[CONFIG] '%s' not settled at startup: %s", node.cli_path, exc)
 
     # -- identity ----------------------------------------------------------
 
@@ -91,8 +99,8 @@ class Runtime:  # pylint: disable=too-many-instance-attributes
         name = getattr(configured, "hostname", "")
         if name:
             return name
-        if self.core is not None:
-            return f"usmd-{self.core.properties.node_id[-6:].lower()}"
+        if self.node is not None:
+            return f"usmd-{self.node.node_id[-6:].lower()}"
         return "usmd"
 
     def uptime(self) -> float:
@@ -100,7 +108,7 @@ class Runtime:  # pylint: disable=too-many-instance-attributes
         return time.time() - self.started_at
 
 
-#: The one runtime of this process. ``main`` fills in ``core`` and ``web``.
+#: The one runtime of this process. ``main`` fills in ``node`` and ``web``.
 RUNTIME = Runtime()
 
 

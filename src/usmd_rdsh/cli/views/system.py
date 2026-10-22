@@ -60,6 +60,33 @@ class WebInterfaceConfig(BaseModel):
     refresh_interval: int = Field(5, ge=1, le=3600, description="Dashboard refresh, seconds")
 
 
+class ServiceHostConfig(BaseModel):
+    """How this node runs the commands of service files."""
+
+    run_as: str = Field("", description="Unprivileged user running service commands (POSIX)")
+    data_paths: list[str] = Field(
+        [], description="service=path pairs: data of dynamic services (V of Tm)")
+    volumes: list[str] = Field([], description="Volumes the services use (disk rate)")
+
+
+@view("system service-host", model=ServiceHostConfig, **NODE_ACCESS)
+class ServiceHostView(ConfigNode):
+    """Privileges, data paths and volumes of hosted services [ARCH 6.1, 7.1, 14]."""
+
+    async def apply(self, config: ServiceHostConfig) -> None:
+        node = RUNTIME.node
+        pairs = {}
+        for item in config.data_paths:
+            name, sep, path = item.partition("=")
+            if not sep or not name or not path:
+                raise ValueError(f"'{item}' is not service=path")
+            pairs[name] = path
+        if node is not None:
+            node.settings.service_data = pairs
+            node.runner.run_as = config.run_as or None
+            node.load.volumes = list(config.volumes) or ["/"]
+
+
 @view("system web-interface", model=WebInterfaceConfig, **NODE_ACCESS)
 class WebInterfaceView(ConfigNode):
     """Web management and monitoring interface; disable with 'set status disable'."""

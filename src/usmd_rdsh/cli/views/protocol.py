@@ -10,23 +10,20 @@ from typing import Self
 from nan_actions.views import ConfigNode, view
 from pydantic import BaseModel, Field, model_validator
 
-from usmd_rdsh.cli.runtime import RUNTIME
+from usmd_rdsh.cli.bridge import apply_local
 from usmd_rdsh.cli.views.common import NODE_ACCESS, Port
 
 
 class NndpConfig(BaseModel):
     """Neighbour discovery, [NNDP-01] section 7.
 
-    The inactivity delay is 2 x I and not configurable. The ports are fixed by
-    the specification; they stay settable only to run several nodes on one
-    host while testing.
+    The inactivity delay is 2 x I and the ports are fixed (5221 -> 5222):
+    neither is configurable [7].
     """
 
     status: bool = Field(True, description="Announce and listen for HIA")
     hia_interval: int = Field(15, ge=1, le=3600, description="I, seconds between two HIA")
     freshness_window: int = Field(30, ge=1, le=600, description="F, accepted clock skew, s")
-    client_port: Port = Field(5222, description="Destination port (5222, fixed by NNDP)")
-    server_port: Port = Field(5221, description="Source port (5221, fixed by NNDP)")
 
 
 @view("protocol nndp", model=NndpConfig, **NODE_ACCESS)
@@ -34,18 +31,7 @@ class NndpView(ConfigNode):
     """Neighbour discovery: HIA interval, freshness window, ports."""
 
     async def apply(self, config: NndpConfig) -> None:
-        if config.client_port == config.server_port:
-            raise ValueError("client-port and server-port must differ")
-        if RUNTIME.core is not None:
-            RUNTIME.core.reconfigure_nndp(
-                enabled=config.status,
-                client_port=config.client_port,
-                server_port=config.server_port,
-                hia_interval=config.hia_interval,
-                # [NNDP-01 7]: inactive 2 x I after the previous HIA, that is
-                # I after the announced time of the next one.
-                inactive_tolerance=config.hia_interval,
-            )
+        await apply_local("protocol nndp", config)
 
 
 class NcpConfig(BaseModel):
@@ -82,6 +68,9 @@ class NcpConfig(BaseModel):
 class NcpView(ConfigNode):
     """Control protocol transport and timers."""
 
+    async def apply(self, config: NcpConfig) -> None:
+        await apply_local("protocol ncp", config)
+
 
 class SpConfig(BaseModel):
     """Service protocol, the parameters [SP] section 10 marks as local."""
@@ -91,8 +80,12 @@ class SpConfig(BaseModel):
     pending_per_peer: int = Field(32, ge=1, description="Packets queued per peer")
     ineligible_after_failure: int = Field(30, ge=1, description="Seconds")
     replay_window: int = Field(2048, ge=2048, description="Frames")
+    broadcast_rate: int = Field(1000, ge=1, description="Broadcast packets per second and service")
 
 
 @view("protocol sp", model=SpConfig, **NODE_ACCESS)
 class SpView(ConfigNode):
     """Service protocol local parameters."""
+
+    async def apply(self, config: SpConfig) -> None:
+        await apply_local("protocol sp", config)

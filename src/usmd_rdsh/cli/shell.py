@@ -115,7 +115,7 @@ class ShellFactory:
 def banner() -> None:
     """What the console prints before its first prompt."""
     text = RUNTIME.config("system global").banner
-    node_id = RUNTIME.core.properties.node_id if RUNTIME.core else "?"
+    node_id = RUNTIME.node.node_id if RUNTIME.node else "?"
     emit("")
     if text:
         emit(text)

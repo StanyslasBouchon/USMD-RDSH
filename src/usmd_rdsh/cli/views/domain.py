@@ -1,10 +1,10 @@
 """``config usc``, ``config usd`` and ``config service-area``: the cluster and
 the domain [ARCH-02 9.1, 9.2, 11.2].
 
-In a running USD these properties are signed by the authority and propagated
-by NCP; what is configured here is the local copy, which an authority node
-injects and any node may inspect or override while the propagation is not
-implemented.
+These properties are signed by the authority (the USC key) and propagated by
+NCP [ARCH-02 3.3, 9.3]. On a node holding the USC key a commit signs a new
+version and injects it; everywhere else the tree mirrors what is in force and
+any change is refused, since no node decides them [ARCH 3.3].
 """
 
 import ipaddress
@@ -13,26 +13,34 @@ from typing import Self
 from nan_actions.views import ConfigNode, view
 from pydantic import BaseModel, Field, model_validator
 
-from usmd_rdsh.cli.views.common import NODE_ACCESS, IPv4, Port
+from usmd_rdsh.cli.bridge import AUTHORITY
+from usmd_rdsh.cli.views.common import NODE_ACCESS, IPv4, Port, Ulid
 
 
 class UscConfig(BaseModel):
     """USC properties."""
 
-    name: str = Field("", description="USCN")
+    name: Ulid = Field("", description="USCN (a ULID, 26 characters)")
     public_key: str = Field("", description="Ed25519 key of the USC (base64url)")
-    usd: list[str] = Field([], description="USDN of each member USD")
+    usd: list[Ulid] = Field([], description="USDN of each member USD")
 
 
 @view("usc", model=UscConfig, **NODE_ACCESS)
 class UscView(ConfigNode):
-    """Unified System Cluster properties."""
+    """Unified System Cluster properties (signed by the authority)."""
+
+    _path = "usc"
+    async def apply(self, config) -> None:
+        AUTHORITY.record(self._path, config)
+
+    async def settle(self) -> None:
+        await AUTHORITY.settle()
 
 
 class UsdConfig(BaseModel):
     """USD properties; each parameter carries its registry code [ARCH-02 9.2]."""
 
-    name: str = Field("", description="USDN")
+    name: Ulid = Field("", description="USDN (a ULID, 26 characters)")
     public_key: str = Field("", description="Ed25519 key of the USD (base64url)")
     reference_nodes: int = Field(5, ge=1, le=64, description="0x0001 NNR, nodes")
     ping_tolerance: int = Field(1000, ge=1, description="0x0002 T, ms")
@@ -87,7 +95,14 @@ USD_PARAMETER_CODES: dict[str, int] = {
 
 @view("usd", model=UsdConfig, **NODE_ACCESS)
 class UsdView(ConfigNode):
-    """Unified System Domain properties and parameters."""
+    """Unified System Domain properties and parameters (signed by the authority)."""
+
+    _path = "usd"
+    async def apply(self, config) -> None:
+        AUTHORITY.record(self._path, config)
+
+    async def settle(self) -> None:
+        await AUTHORITY.settle()
 
 
 class ServiceAreaConfig(BaseModel):
@@ -96,7 +111,7 @@ class ServiceAreaConfig(BaseModel):
     name: str = Field(description="Area name")
     id: int = Field(ge=0, le=255, description="8-bit identifier, unique in the USD")
     prefix: IPv4 = Field(description="IPv4 prefix address; every address is usable")
-    prefix_length: int = Field(24, ge=1, le=32, description="Mask length")
+    prefix_length: int = Field(24, ge=8, le=32, description="Mask length, 8..32 [ARCH 11.2]")
 
     def network(self) -> ipaddress.IPv4Network:
         """The area's prefix."""
@@ -107,7 +122,13 @@ class ServiceAreaConfig(BaseModel):
 class ServiceAreaView(ConfigNode):
     """Service areas: identifier and prefix of each isolated addressing plane."""
 
+    _path = "service-area"
+
+    async def settle(self) -> None:
+        await AUTHORITY.settle()
+
     async def apply(self, config: dict[str, ServiceAreaConfig]) -> None:
+        AUTHORITY.record(self._path, config)
         # Rules that span rows, which a single row's model cannot check.
         seen_ids: dict[int, str] = {}
         areas = list(config.values())

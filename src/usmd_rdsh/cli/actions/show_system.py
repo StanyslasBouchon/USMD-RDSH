@@ -1,12 +1,10 @@
-"""``show version``, ``show clock``, ``show node``, ``show node states``, ``show load``."""
+"""``show version``, ``show clock``, ``show node``, ``show node states``,
+``show node events``, ``show load``."""
 
 from __future__ import annotations
 
-import asyncio
 import platform
-import socket
 import sys
-import time
 from datetime import datetime
 from importlib import metadata
 
@@ -16,21 +14,27 @@ from nan_actions import action
 from usmd_rdsh.cli.permissions import READ
 from usmd_rdsh.cli.runtime import RUNTIME, format_duration
 from usmd_rdsh.cli.text import fields, printer, table
-from usmd_rdsh.proto.base.env import NNDP_VERSION, PROTO_MAGIC
-from usmd_rdsh.utils.node_state import NodeState
+from usmd_rdsh.node.crypto import b64u
+from usmd_rdsh.node.signed import parameter
+from usmd_rdsh.node.states import LABELS, State
+from usmd_rdsh.node.wire import MAGIC, VERSION
 
 
 def _version() -> str:
+    """Four components major.feature.security.fix [ARCH 10.2]."""
     try:
-        return metadata.version("USMD-RDSH")
+        text = metadata.version("USMD-RDSH")
     except metadata.PackageNotFoundError:
-        return "0.0.0"
+        text = "0.0.0.0"
+    parts = (text.split(".") + ["0", "0", "0", "0"])[:4]
+    return ".".join(parts)
 
 
 @action(cli="show version", description="Software, platform and uptime", permissions=[READ],
         cli_output=printer(lambda r: (
             f"USMD-RDSH Software, Version {r['version']}\n"
-            f"Frame magic 0x{r['magic']:04X}, NNDP version {r['nndp_version']}\n\n"
+            f"Frame magic 0x{r['magic']:04X}, protocol version {r['protocol_version']} "
+            f"(NNDP-01, NCP-02, SP-01, ARCH-02)\n\n"
             f"{r['hostname']} uptime is {r['uptime']}\n"
             f"Node ID {r['node_id']}\n"
             f"Running on {r['platform']}, Python {r['python']}\n"
@@ -39,13 +43,14 @@ def _version() -> str:
         )))
 async def show_version() -> dict:
     """Software, platform and uptime."""
+    node = RUNTIME.node
     return {
         "version": _version(),
-        "magic": PROTO_MAGIC,
-        "nndp_version": NNDP_VERSION,
+        "magic": MAGIC,
+        "protocol_version": VERSION,
         "hostname": RUNTIME.hostname(),
         "uptime": format_duration(RUNTIME.uptime()),
-        "node_id": RUNTIME.core.properties.node_id if RUNTIME.core else None,
+        "node_id": node.node_id if node else None,
         "platform": f"{platform.system()} {platform.release()} ({platform.machine()})",
         "python": sys.version.split()[0],
         "cpus": psutil.cpu_count(),
@@ -54,7 +59,7 @@ async def show_version() -> dict:
     }
 
 
-@action(cli="show clock", description="Local time (all protocols need it within 30 s)",
+@action(cli="show clock", description="Local time (protocols require it within 30 s)",
         permissions=[READ], cli_output=printer(lambda r: r["display"]))
 async def show_clock() -> dict:
     """Local time."""
@@ -66,121 +71,108 @@ async def show_clock() -> dict:
     }
 
 
-def _state_label(state: NodeState) -> str:
+def state_text(state: State) -> str:
     return f"{state.name} (0x{state.value:04X})"
 
 
-def _local_ip() -> str:
-    try:
-        return socket.gethostbyname(socket.gethostname())
-    except OSError:
-        return "unknown"
-
-
-@action(cli="show node", description="Identity, declared state and keys of this node",
+@action(cli="show node", description="Identity, state, keys and roles of this node",
         permissions=[READ], cli_output=printer(lambda r: fields([
             ("Hostname", r["hostname"]),
             ("Node ID", r["node_id"]),
             ("State", r["state"]),
+            ("Admitted", "yes" if r["admitted"] else "no"),
+            ("Endorser", r["endorser"] or "-"),
             ("Role", r["role"]),
             ("Address", r["address"]),
+            ("Mutation", r["mutation"] or "(none)"),
+            ("Hosted services", ", ".join(r["hosted"]) or "(none)"),
+            ("SP addresses", ", ".join(r["sp_addresses"]) or "(none)"),
+            ("Reference nodes", ", ".join(r["references"]) or "(none)"),
             ("USD", r["usd"] or "(not configured)"),
             ("USC", r["usc"] or "(not configured)"),
             ("Ed25519 public key", r["ed25519_public_key"]),
-            ("NNDP", r["nndp"]),
-            ("Neighbours", r["neighbors"]),
+            ("X25519 public key", r["x25519_public_key"]),
+            ("Creation token", r["token"]),
             ("Uptime", r["uptime"]),
         ])))
 async def show_node() -> dict:
     """Identity, declared state and keys of this node."""
-    core = RUNTIME.core
-    bootstrap = RUNTIME.config("system bootstrap")
+    node = RUNTIME.node
+    if node is None:
+        return {"hostname": RUNTIME.hostname(), "node_id": None}
+    from usmd_rdsh.node import addresses  # pylint: disable=import-outside-toplevel
+
+    catalog = node.signed.catalog()
+    token = node.token
     return {
         "hostname": RUNTIME.hostname(),
-        "node_id": core.properties.node_id if core else None,
-        "state": _state_label(core.state) if core else None,
-        "state_code": f"0x{core.state.value:04X}" if core else None,
-        "role": str(bootstrap.role),
-        "address": _local_ip(),
-        "usd": RUNTIME.config("usd").name,
-        "usc": RUNTIME.config("usc").name,
-        "ed25519_public_key": core.properties.self_ed25519_keypair.pub32_b64u if core else None,
-        "nndp": ("running" if core and core.is_running() else "stopped") if core else None,
-        "neighbors": len(core.neighbors) if core else 0,
+        "node_id": node.node_id,
+        "state": state_text(node.state),
+        "state_code": f"0x{node.state.value:04X}",
+        "admitted": node.admitted,
+        "endorser": b64u(node.endorser) if node.endorser else None,
+        "role": node.settings.role.name.lower().replace("_", "-"),
+        "address": node.settings.address,
+        "mutation": node.mutation,
+        "hosted": sorted(catalog[s].name for s in node.hosted if s in catalog),
+        "sp_addresses": [addresses.to_text(addresses.pack(s, m))
+                         for s, m in sorted(node.management.items())],
+        "references": list(node.references),
+        "usd": node.signed.usd.usdn if node.signed.usd else "",
+        "usc": node.signed.usc.uscn if node.signed.usc else "",
+        "ed25519_public_key": b64u(node.key),
+        "x25519_public_key": b64u(node.identity.x25519_public),
+        "token": ("none" if token is None else
+                  f"{'founder, ' if token.founder else ''}expires "
+                  f"{datetime.fromtimestamp(token.expires / 1000):%Y-%m-%d %H:%M}"),
         "uptime": format_duration(RUNTIME.uptime()),
     }
-
-
-#: [ARCH 5.5]: D = declared by the node, O = observed by a peer.
-_ORIGIN = {
-    NodeState.INACTIVE_TIMEOUT: "O",
-    NodeState.INACTIVE_NNDP_HERE_I_AM_TIMEOUT: "O",
-}
-
-
-def state_origin(state: NodeState) -> str:
-    """D or O, per the registry of [ARCH] section 5.5."""
-    if state.value >= 0x4000:
-        return "O"
-    return _ORIGIN.get(state, "D")
 
 
 @action(cli="show node states", description="Node state registry [ARCH 5.5]",
         permissions=[READ], cli_output=printer(lambda rows: table(
             rows, [("code", "Code"), ("name", "State"), ("origin", "Origin"),
-                   ("current", "")])))
+                   ("label", "Meaning"), ("current", "")])))
 async def show_node_states() -> list[dict]:
     """Node state registry."""
-    current = RUNTIME.core.state if RUNTIME.core else None
+    current = RUNTIME.node.state if RUNTIME.node else None
     return [
         {
             "code": f"0x{state.value:04X}",
             "name": state.name,
-            "origin": state_origin(state),
+            "origin": "O" if state.observed else "D",
+            "label": LABELS[state],
             "current": "<- current" if state is current else "",
         }
-        for state in NodeState
+        for state in State
     ]
 
 
-def _network_per_mille() -> int:
-    """Observed throughput over the nominal speed of the busiest interface."""
-    before = psutil.net_io_counters(pernic=True)
-    stats = psutil.net_if_stats()
-    time.sleep(0.2)
-    after = psutil.net_io_counters(pernic=True)
-    best = 0
-    for nic, counters in after.items():
-        speed = stats.get(nic).speed if stats.get(nic) else 0
-        if not speed or nic not in before:
-            continue
-        delta = (counters.bytes_sent + counters.bytes_recv
-                 - before[nic].bytes_sent - before[nic].bytes_recv)
-        bits_per_s = delta * 8 / 0.2
-        best = max(best, int(bits_per_s / (speed * 1_000_000) * 1000))
-    return min(best, 1000)
+@action(cli="show node events", description="What the node did lately (procedures)",
+        permissions=[READ], cli_output=printer(lambda rows: "\n".join(r["event"] for r in rows)))
+async def show_node_events() -> list[dict]:
+    """The node's recent procedure events."""
+    return [{"event": e} for e in (RUNTIME.node.events if RUNTIME.node else [])]
 
 
-def measure_load() -> dict:
-    """The four rates of [ARCH 6.1], per mille, and the reference load."""
-    rates = {
-        "memory": int(psutil.virtual_memory().percent * 10),
-        "cpu": int(psutil.cpu_percent(interval=0.2) * 10),
-        "disk": int(psutil.disk_usage("/").percent * 10),
-        "network": _network_per_mille(),
-    }
-    usd = RUNTIME.config("usd")
-    reference = max(rates.values())
-    status = "normal"
-    if reference >= usd.emergency_threshold:
-        status = "emergency"
-    elif reference >= usd.weakened_threshold:
-        status = "weakened"
+def load_view() -> dict:
+    """The monitor's smoothed rates and the node's judgement [ARCH 6.1, 7.1]."""
+    node = RUNTIME.node
+    monitor = node.load if node else None
+    sample = monitor.smoothed() if monitor else None
+    usd = node.signed.usd if node else None
+    weak, urgent = parameter(usd, 0x0004) or 800, parameter(usd, 0x0005) or 950
+    reference = sample.reference if sample else 0
+    status = "emergency" if reference >= urgent else "weakened" if reference >= weak else "normal"
     return {
-        **rates,
+        "memory": sample.memory if sample else 0,
+        "cpu": sample.cpu if sample else 0,
+        "disk": sample.disk if sample else 0,
+        "network": sample.network if sample else 0,
         "reference": reference,
-        "weakened_threshold": usd.weakened_threshold,
-        "emergency_threshold": usd.emergency_threshold,
+        "samples": [int(r) for r in (monitor.references if monitor else [])],
+        "weakened_threshold": weak,
+        "emergency_threshold": urgent,
         "status": status,
     }
 
@@ -191,11 +183,11 @@ def measure_load() -> dict:
             ("CPU", f"{r['cpu']} permille"),
             ("Disk", f"{r['disk']} permille"),
             ("Network", f"{r['network']} permille"),
-            ("Reference load", f"{r['reference']} permille"),
+            ("Reference load", f"{r['reference']} permille (last samples {r['samples']})"),
             ("Thresholds", f"weakened {r['weakened_threshold']}, "
                            f"emergency {r['emergency_threshold']}"),
             ("Status", r["status"]),
         ])))
 async def show_load() -> dict:
-    """Instantaneous measure; the protocol smooths over the last three samples."""
-    return await asyncio.to_thread(measure_load)
+    """Smoothed over the last three samples, taken every 0x0007 seconds."""
+    return load_view()

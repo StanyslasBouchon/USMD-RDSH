@@ -52,6 +52,10 @@ class ConfigStore:
 
     async def save(self, document: ConfigDocument) -> None:
         """Write *document*; the ``on_commit`` hook of every view session."""
+        self.save_now(document)
+
+    def save_now(self, document: ConfigDocument) -> None:
+        """Synchronous form, for a caller outside the event loop's coroutines."""
         self._state.write_text(document.to_json() + "\n", _CONFIG_FILE)
 
 

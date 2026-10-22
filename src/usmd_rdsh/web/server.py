@@ -39,7 +39,10 @@ from nan_actions.api.response import ApiResponse
 from nan_actions.api.token import ApiToken
 from nan_runtime.log import set_log_sink, reset_log_sink, strip_level_prefix
 
+from nan_actions.views.errors import ViewError
+
 from usmd_rdsh.cli.confirm import reset_web_confirmation, web_confirmation
+from usmd_rdsh.web import config_forms
 from usmd_rdsh.cli.permissions import READ, WRITE
 from usmd_rdsh.cli.runtime import RUNTIME
 
@@ -131,6 +134,11 @@ class WebRouter:
                 return await self._summary(actor)
             if route == "/web/cli" and method == "POST":
                 return await self._cli(actor, body)
+            if route == "/web/config" and method == "GET":
+                return ApiResponse(200, {**config_forms.schema(actor),
+                                         "can_write": action_is_available([WRITE], actor)})
+            if route == "/web/config" and method == "POST":
+                return await self._config(actor, body)
         return ApiResponse.error(404, "not_found", "Nothing is served here.")
 
     def _page(self) -> PageResponse:
@@ -164,6 +172,8 @@ class WebRouter:
         # Imported here: the action modules import the runtime, which this
         # module is imported beside; at call time everything is loaded.
         from usmd_rdsh.cli.actions import (  # pylint: disable=import-outside-toplevel
+            catalog,
+            domain,
             nndp,
             show_logging,
             show_system,
@@ -178,10 +188,19 @@ class WebRouter:
             )
             summary = {
                 "node": await show_system.show_node(),
-                "load": await show_system.show_load(),
+                "load": show_system.load_view(),
                 "nndp": await nndp.show_nndp(),
                 "neighbors": nndp.neighbor_rows(),
+                "nearest": nndp.nearest_rows(),
                 "nit": tables.nit_rows(),
+                "table": tables.node_table_rows(),
+                "references": (await tables.show_references())["rows"],
+                "master": await catalog.show_usd_master(),
+                "mutation": await catalog.show_mutation_status(),
+                "catalog": catalog.catalog_rows(),
+                "sp": await domain.show_sp(),
+                "sessions": await domain.show_sp_sessions(),
+                "events": (await show_system.show_node_events())[-50:],
                 "web": await web.show_web_interface(),
                 "logs": [{k: v for k, v in r.items() if k != "line"} for r in logs],
                 "can_write": action_is_available([WRITE], actor),
@@ -190,6 +209,25 @@ class WebRouter:
         finally:
             reset_current_action_actor(context)
         return ApiResponse(200, summary)
+
+    @staticmethod
+    async def _config(actor: ActionActor, body: bytes) -> ApiResponse:
+        if not action_is_available([WRITE], actor):
+            return ApiResponse.error(403, "missing_permissions", f"'{WRITE}' is required.")
+        try:
+            request = json.loads(body or b"{}")
+            if not isinstance(request, dict):
+                raise ValueError
+        except ValueError:
+            return ApiResponse.error(400, "bad_request", "Send a JSON object.")
+        try:
+            result = await config_forms.apply(actor, request)
+        except ViewError as exc:
+            return ApiResponse.error(422, "invalid_input", exc.message)
+        log.info("[WEB] %s changed '%s'%s: %s", actor.username, request.get("path"),
+                 f" [{request.get('key')}]" if request.get("key") else "",
+                 "committed" if result["ok"] else "refused")
+        return ApiResponse(200 if result["ok"] else 422, result)
 
     async def _cli(self, actor: ActionActor, body: bytes) -> ApiResponse:
         try:
