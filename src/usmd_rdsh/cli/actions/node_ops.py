@@ -21,7 +21,7 @@ from enum import StrEnum
 from nan_actions import action
 from nan_actions.api.permissions import ApiPermission
 from nan_actions.errors import SdkError
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from usmd_rdsh.cli.permissions import READ, WRITE
 from usmd_rdsh.cli.runtime import RUNTIME
@@ -65,7 +65,8 @@ async def execute_node_token_install(data: TokenInput) -> dict:
         raise SdkError(str(exc)) from exc
     RUNTIME.document.set_field(("system", "bootstrap"), "creation_token", data.token)
     await RUNTIME.config_store.save(RUNTIME.document)
-    return {"founder": token.founder, "roles": token.roles, "expires": token.expires}
+    return {"founder": token.founder, "expires": token.expires,
+            "roles": [Role(r).name.lower().replace("_", "-") for r in token.roles]}
 
 
 class TransmuteInput(BaseModel):
@@ -220,10 +221,19 @@ class RoleName(StrEnum):
 class TokenCreate(BaseModel):
     node_key: str = Field(description="The node's Ed25519 public key (base64url)")
     usdn: str = Field("", description="USDN (default: the USD in force)")
-    roles: list[RoleName] = Field([RoleName.NODE_EXECUTOR], description="Authorised roles")
+    roles: list[RoleName] = Field([RoleName.NODE_EXECUTOR],
+                                  description="Authorised roles, e.g. usc-operator,usd-operator")
     validity_hours: int = Field(24, ge=1, le=168, description="At most 7 days")
     founder: bool = Field(False, description="First node of the USD [NCP 7.7]")
     second_founder: bool = Field(False, description="Allow another founder token (one SHOULD exist)")
+
+    @field_validator("roles", mode="before")
+    @classmethod
+    def _split(cls, value):
+        # The console passes every argument as text: roles=usc-operator,usd-operator
+        if isinstance(value, str):
+            return value.replace(",", " ").split()
+        return value
 
 
 @action(cli="execute authority token create", description="Mint a creation token [NCP 7.7]",
