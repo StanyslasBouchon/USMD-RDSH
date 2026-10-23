@@ -190,24 +190,42 @@ def running_node() -> Path | None:
     return path if _answers(path) else None
 
 
+#: What the node prints when a command asking for confirmation was not confirmed.
+_CANCELLED = (_NOT_CONFIRMED, "Operation cancelled.")
+
+
 def _print(answer: dict) -> None:
     for text in answer.get("output", []):
-        if answer.get("needs_confirm") and text == _NOT_CONFIRMED:
-            continue
         print(text)
 
 
 def _run(client: ControlClient, line: str, ask) -> dict:
-    """One line; a confirmation asked by the node is asked here, then resent."""
+    """One line; a confirmation asked by the node is asked here, then resent.
+
+    The node answers the first attempt with its question and its refusal: the
+    question is shown, the refusal is not. Confirmed, the line runs again and
+    the node asks its question again: shown once is enough.
+    """
     answer = client.request({"line": line})
-    _print(answer)
-    if answer.get("needs_confirm"):
-        if ask():
-            answer = client.request({"line": line, "confirm": True})
-            _print(answer)
-        else:
-            print(_NOT_CONFIRMED)
+    if not answer.get("needs_confirm"):
+        _print(answer)
+        return answer
+    question = [text for text in answer.get("output", []) if text not in _CANCELLED]
+    for text in question:
+        print(text)
+    if not ask():
+        print(_NOT_CONFIRMED)
+        return answer
+    answer = client.request({"line": line, "confirm": True})
+    for text in answer.get("output", []):
+        if text not in question:
+            print(text)
     return answer
+
+
+def _lines(typed: str) -> list[str]:
+    """A paste of several lines is several commands, as on the local console."""
+    return typed.splitlines() or [""]
 
 
 def run_lines(path: Path, lines: list[str], *, yes: bool) -> None:
@@ -264,14 +282,21 @@ def attach(path: Path) -> None:
     try:
         while True:
             try:
-                line = session.prompt(prompt)
+                typed = session.prompt(prompt)
             except KeyboardInterrupt:
                 continue
             except EOFError:
                 break
-            answer = _run(client, line, ask)
-            prompt = answer.get("prompt", prompt)
-            if answer.get("exit"):
+            leave = False
+            for number, line in enumerate(_lines(typed)):
+                if number:
+                    print(prompt + line)  # each pasted line, as if typed at its prompt
+                answer = _run(client, line, ask)
+                prompt = answer.get("prompt", prompt)
+                if answer.get("exit"):
+                    leave = True
+                    break
+            if leave:
                 break
     except ConnectionError as exc:
         print(f"% {exc}")

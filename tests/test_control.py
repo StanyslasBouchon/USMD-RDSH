@@ -50,6 +50,38 @@ def test_answers_lines_prompts_completion_and_confirmation(factory):
     assert left["exit"] is True
 
 
+class _Node:
+    """What the node answers a confirmed command (transmute) through the socket."""
+
+    def __init__(self):
+        self.sent = []
+
+    def request(self, message):
+        self.sent.append(message)
+        question = "Transmute this node to 'bdd'?"
+        if message.get("confirm"):
+            return {"output": [question, "  ok       : yes"], "prompt": "node1#"}
+        return {"output": [question, "Operation cancelled."], "prompt": "node1#",
+                "needs_confirm": True}
+
+
+def test_a_confirmation_is_shown_once_without_the_refusal(capsys):
+    node = _Node()
+    control._run(node, "execute node transmute mutation=bdd", lambda: True)  # pylint: disable=protected-access
+    assert capsys.readouterr().out.splitlines() == ["Transmute this node to 'bdd'?",
+                                                    "  ok       : yes"]
+    assert node.sent[-1]["confirm"] is True
+    control._run(node, "execute node transmute mutation=bdd", lambda: False)  # pylint: disable=protected-access
+    assert capsys.readouterr().out.splitlines() == ["Transmute this node to 'bdd'?",
+                                                    control._NOT_CONFIRMED]  # pylint: disable=protected-access
+
+
+def test_a_paste_of_several_lines_is_several_commands():
+    lines = control._lines("config usd\r\nset sp-port 9993\nend\n")  # pylint: disable=protected-access
+    assert lines == ["config usd", "set sp-port 9993", "end"]
+    assert control._lines("") == [""]  # pylint: disable=protected-access
+
+
 def test_socket_path_follows_the_service_then_the_state(tmp_path, monkeypatch):
     monkeypatch.setenv(control.SOCKET_ENV_VAR, str(tmp_path / "x.sock"))
     assert control.socket_path() == tmp_path / "x.sock"
