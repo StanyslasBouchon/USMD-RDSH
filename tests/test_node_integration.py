@@ -18,6 +18,7 @@ from usmd_rdsh.node.ncp.codec import (
     UsdProperties,
 )
 from usmd_rdsh.node.node import Node
+from usmd_rdsh.node.services import ServiceSpec
 from usmd_rdsh.node.states import State
 from usmd_rdsh.node.wire import now_ms
 
@@ -121,6 +122,12 @@ async def _scenario(tmp_path):
         assert await b.transmute("frontal", reason="test")
         assert b.management.get(0x0A1) == 1 and 0x0A1 in b.hosted
         assert a.raft.state.management_of(b.node_id, 0x0A1) == 1
+        # The sequences got the instance's SP address and data directory [ARCH-03 8.7].
+        env = b.service_environment(ServiceSpec("web"), "build")
+        assert env["USMD_SP_ADDRESS"] == "0a1.0001" and env["USMD_DATA_ID_PREFIX"] == "00a10001"
+        assert env["USMD_VIP"] == "192.168.1.10" and env["USMD_AREA"] == "front"
+        assert (tmp_path / "b" / "services" / "web").is_dir()
+        assert b.service_environment(ServiceSpec("unknown"), "build") is None
 
         # A stale or unsigned USD properties object is refused.
         stale = UsdProperties(usd.usdn, usd.version, usd.public_key, usd.areas, usd.catalog,

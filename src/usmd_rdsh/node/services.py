@@ -17,6 +17,11 @@ in the catalogue: an ``sp`` key is accepted and ignored.
 Nothing is executed unless the authority's signature on the mutation
 properties carrying the file has been checked [8.3] - the caller's duty,
 enforced by :class:`ServiceRunner` refusing an unverified mutation.
+
+Every command gets the instance's ``USMD_*`` variables (SP address, data
+identifier prefix, VIP, data directory...); build, update and check_health
+are refused without an SP address, and the sequences of one service never
+overlap [ARCH-03 8.7].
 """
 
 from __future__ import annotations
@@ -27,6 +32,7 @@ import os
 import re
 import time
 from dataclasses import dataclass, field
+from typing import Callable
 
 import yaml
 
@@ -188,47 +194,76 @@ class RunResult:
     duration: float
 
 
+#: Sequences that need the instance's SP address [ARCH-03 8.7].
+NEEDS_ADDRESS = ("build", "update", "check_health")
+
+#: (service, sequence) -> the USMD_* variables, or None without an SP address.
+Environment = Callable[[ServiceSpec, str], "dict[str, str] | None"]
+
+
 class ServiceRunner:
     """Runs sequences with the node's privileges, step by step."""
 
-    def __init__(self, *, shell: bool = True, run_as: str | None = None) -> None:
+    def __init__(self, *, shell: bool = True, run_as: str | None = None,
+                 environment: Environment | None = None) -> None:
         self.shell = shell
         #: Commands run with the least privileges needed [ARCH 14]: on POSIX,
         #: as this user instead of the node's own account.
         self.run_as = run_as
+        self.environment = environment
         self.last: dict[tuple[str, str], RunResult] = {}
+        self._locks: dict[str, asyncio.Lock] = {}
 
-    async def run(self, service: ServiceSpec, sequence: str, *, depth: int = 0) -> RunResult:
-        started = time.monotonic()
-        lines: list[str] = []
-        ok = True
-        if depth > 2:
-            return RunResult(False, ["action recursion too deep"], 0.0)
-        for step in service.sequences.get(sequence, []):
-            if step.action:
-                inner = await self.run(service, step.action, depth=depth + 1)
-                lines.extend(inner.log)
-                if not inner.ok:
-                    ok = False
-                    break
-                continue
-            ok, output = await self._command(step.command or "", step.timeout)
-            lines.append(f"$ {step.command} -> {'ok' if ok else 'FAILED'}")
-            lines.extend(output)
-            if not ok:
-                break
-        result = RunResult(ok, lines, time.monotonic() - started)
+    async def run(self, service: ServiceSpec, sequence: str) -> RunResult:
+        """One sequence; two sequences of a service never overlap [ARCH-03 8.7]."""
+        lock = self._locks.setdefault(service.name, asyncio.Lock())
+        async with lock:
+            started = time.monotonic()
+            variables = self.environment(service, sequence) if self.environment else {}
+            if variables is None:
+                if sequence in NEEDS_ADDRESS:
+                    result = RunResult(False, [f"no SP address for {service.name}: "
+                                               f"{sequence} refused"], 0.0)
+                    self.last[(service.name, sequence)] = result
+                    log.error("[SERVICE] %s %s refused: no management id", service.name,
+                              sequence)
+                    return result
+                variables = {}
+            env = {**os.environ, **variables} if variables else None
+            ok, lines = await self._sequence(service, sequence, env, depth=0)
+            result = RunResult(ok, lines, time.monotonic() - started)
         self.last[(service.name, sequence)] = result
         log.log(logging.INFO if ok else logging.ERROR, "[SERVICE] %s %s %s in %.1fs",
                 service.name, sequence, "succeeded" if ok else "failed", result.duration)
         return result
 
-    async def _command(self, command: str, timeout: int) -> tuple[bool, list[str]]:
+    async def _sequence(self, service: ServiceSpec, sequence: str, env: dict | None, *,
+                        depth: int) -> tuple[bool, list[str]]:
+        lines: list[str] = []
+        ok = True
+        if depth > 2:
+            return False, ["action recursion too deep"]
+        for step in service.sequences.get(sequence, []):
+            if step.action:  # runs inside the calling sequence
+                ok, inner = await self._sequence(service, step.action, env, depth=depth + 1)
+                lines.extend(inner)
+                if not ok:
+                    break
+                continue
+            ok, output = await self._command(step.command or "", step.timeout, env)
+            lines.append(f"$ {step.command} -> {'ok' if ok else 'FAILED'}")
+            lines.extend(output)
+            if not ok:
+                break
+        return ok, lines
+
+    async def _command(self, command: str, timeout: int,
+                       env: dict | None = None) -> tuple[bool, list[str]]:
         try:
             extra = {"user": self.run_as} if self.run_as and os.name != "nt" else {}
             process = await asyncio.create_subprocess_shell(
                 command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
-                **extra,
+                env=env, **extra,
             )
         except OSError as exc:
             return False, [str(exc)]

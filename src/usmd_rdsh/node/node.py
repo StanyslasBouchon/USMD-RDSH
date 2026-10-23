@@ -27,11 +27,12 @@ import ssl
 import time
 import urllib.request
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from nan_runtime.state import StateDirectory
 
-from usmd_rdsh.node import addresses, distance
+from usmd_rdsh.node import addresses, dataid, distance
 from usmd_rdsh.node.authority import Authority
 from usmd_rdsh.node.crypto import CryptoError, unb64u
 from usmd_rdsh.node.handlers import NcpHandlers
@@ -147,7 +148,7 @@ class Node(NcpHandlers):  # pylint: disable=too-many-instance-attributes,too-man
         self.tables = Tables()
         self.signed = SignedConfig.load(state_dir)
         self.load = LoadMonitor()
-        self.runner = ServiceRunner()
+        self.runner = ServiceRunner(environment=self.service_environment)
         self.state: State = State.APPROVAL_REQUIRED
         self.state_validity: int | None = None
         self.mutation: str = ""
@@ -1367,6 +1368,44 @@ class Node(NcpHandlers):  # pylint: disable=too-many-instance-attributes,too-man
         if not ok:
             await self.emergency(State.INACTIVE_EMERGENCY_HEALTH_CHECK)
         return ok
+
+    def service_address(self, name: str) -> int | None:
+        """This node's SP address for a service, None without a management id."""
+        entry = self.signed.service_by_name(name)
+        if entry is None or entry.service_id not in self.management:
+            return None
+        return addresses.pack(entry.service_id, self.management[entry.service_id])
+
+    def service_data_dir(self, name: str) -> Path:
+        """Kept across unbuilds and transmutations [ARCH-03 8.7]."""
+        configured = self.settings.service_data.get(name)
+        return Path(configured) if configured else self.state_dir.path("services", name)
+
+    def service_environment(self, spec: ServiceSpec, sequence: str) -> dict[str, str] | None:
+        """The ``USMD_*`` variables of a sequence; None without an SP address
+        [ARCH-03 8.7]."""
+        address = self.service_address(spec.name)
+        if address is None:
+            return None
+        entry = self.signed.service_by_name(spec.name)
+        areas = {a.area_id: a.name for a in (self.signed.usd.areas if self.signed.usd else [])}
+        data = self.service_data_dir(spec.name)
+        data.mkdir(parents=True, exist_ok=True)
+        return {
+            "USMD_SERVICE": spec.name,
+            "USMD_SERVICE_ID": f"{entry.service_id:03x}",
+            "USMD_MANAGEMENT_ID": f"{address & 0xFFFF:04x}",
+            "USMD_SP_ADDRESS": addresses.to_text(address),
+            "USMD_DATA_ID_PREFIX": dataid.prefix(address),
+            "USMD_VIP": entry.vip,
+            "USMD_GROUP": "" if entry.group == "0.0.0.0" else entry.group,
+            "USMD_AREA": areas.get(entry.area_id, ""),
+            "USMD_USDN": self.signed.usd.usdn if self.signed.usd else "",
+            "USMD_NODE_ID": self.node_id,
+            "USMD_MUTATION": self.mutation,
+            "USMD_SEQUENCE": sequence,
+            "USMD_DATA_DIR": str(data.resolve()),
+        }
 
     def _host(self, name: str) -> None:
         entry = self.signed.service_by_name(name)

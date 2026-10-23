@@ -381,7 +381,7 @@ The test suite covers NCP and NNDP protocols, frame serialization, the command h
 ## Draft-conformant node (`src/usmd_rdsh`)
 
 This repository also holds a second implementation, written against the
-current Internet-Draft series in `readme/drafts` (ARCH-02, NCP-02, NNDP-01,
+current Internet-Draft series in `readme/drafts` (ARCH-03, NCP-02, NNDP-01,
 SP-01): `src/usmd_rdsh/node` implements NNDP, the encrypted UDP NCP with Raft,
 SP with its TUN interface, and every procedure of the architecture draft. Its
 console (Cisco-like `show` / `execute`, `config` / `set` / `end`) and its web
@@ -415,6 +415,22 @@ of broadcasting, node 1 founds the USD and the others join it. Each node's web
 interface is at `http://127.0.0.`*i*+1`:8080/` (admin / admin). A single node:
 `usmd --dev 2 --dev-nodes 3`. The shared development authority makes this
 unsafe outside development.
+
+**Stateful services and data identifiers.** Every command of a service
+sequence gets the instance's identity in `USMD_*` variables: `USMD_SP_ADDRESS`
+(`0b2.0003`), `USMD_DATA_ID_PREFIX` (`00b20003`), `USMD_VIP`, `USMD_GROUP`,
+`USMD_AREA`, `USMD_DATA_DIR` (kept across unbuilds and transmutations) and
+more; `build`, `update` and `check_health` are refused until the node holds a
+management id for the service, and two sequences of one service never overlap
+[ARCH-03 8.7]. Data identifiers are Snowflake-like version 8 UUIDs whose first
+32 bits are the instance's SP address, followed by the creation time in
+milliseconds, a sequence and random bits [ARCH-03 11.6]: an identifier created
+by instance `0b2.0003` reads `00b20003-…`. For PostgreSQL,
+`show data-id postgresql service=db database=app` prints the `usmd_id()`
+function; a build sequence loads it and sets the prefix
+(`ALTER DATABASE app SET usmd.data_id_prefix = '$USMD_DATA_ID_PREFIX'`), and
+tables use `id uuid PRIMARY KEY DEFAULT usmd_id()`. `show data-id id=<uuid>`
+tells which instance created a row, and when.
 
 The acceptance checklist mapping every requirement of the drafts to the code
 and its tests is `readme/recette.md`.

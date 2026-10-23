@@ -244,3 +244,15 @@ def test_web_serves_the_page(factory):
     response = asyncio.run(_router(factory).handle("GET", "/", {}))
     assert response.status == 200
     assert b"{{REFRESH}}" not in response.payload
+
+
+def test_data_id_commands(factory):
+    """[ARCH-03 11.6]: decode, PostgreSQL generator, no instance without a node."""
+    out = _run(factory, "show data-id id=00b20003-0192-8d3a-8000-000004000001",
+               "show data-id postgresql", "show data-id id=not-a-uuid",
+               "execute data-id generate service=web")
+    assert "0b2.0003" in out and " UTC" in out
+    assert "FUNCTION usmd_id()" in out
+    assert "not a USMD-RDSH data identifier" in out
+    assert "node is not running" in out
+    assert "Traceback" not in out

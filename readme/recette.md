@@ -1,6 +1,6 @@
 # Cahier de recette USMD-RDSH
 
-Référentiel : les drafts courants de `readme/drafts` — `draft-usmd-rdsh-architecture-02`, `draft-usmd-ncp-02`, `draft-usmd-nndp-01`, `draft-usmd-sp-01`.
+Référentiel : les drafts courants de `readme/drafts` — `draft-usmd-rdsh-architecture-03`, `draft-usmd-ncp-02`, `draft-usmd-nndp-01`, `draft-usmd-sp-01`.
 
 Chaque ligne est une exigence (DOIT, DEVRAIT, PEUT) ou une définition normative (DEF) d'un draft. Son état dit où en est le code (`src/usmd_rdsh/node/**`, `src/usmd_rdsh/cli/**`, `src/usmd_rdsh/web/**`) :
 
@@ -16,21 +16,21 @@ Une exigence est cochée quand son état est **done**. Les tests se lancent avec
 
 | Partie | Draft | done | partial | missing | config-only | open | n/a |
 |---|---|---|---|---|---|---|---|
-| [1 — Architecture](#partie-1--architecture) | draft-usmd-rdsh-architecture-02 | 311 | 3 | 0 | 0 | 10 | 10 |
+| [1 — Architecture](#partie-1--architecture) | draft-usmd-rdsh-architecture-03 | 328 | 3 | 0 | 0 | 12 | 11 |
 | [2 — NCP](#partie-2--ncp) | draft-usmd-ncp-02 | 281 | 0 | 0 | 0 | 0 | 12 |
 | [3 — NNDP](#partie-3--nndp) | draft-usmd-nndp-01 | 125 | 0 | 0 | 0 | 1 | 4 |
 | [4 — SP](#partie-4--sp) | draft-usmd-sp-01 | 187 | 3 | 0 | 0 | 0 | 1 |
-| **Total** | | **904** | **6** | **0** | **0** | **11** | **27** |
+| **Total** | | **921** | **6** | **0** | **0** | **13** | **28** |
 
-Exigences applicables (hors open et n/a) : 910, dont 904 cochées (99.3 %).
+Exigences applicables (hors open et n/a) : 927, dont 921 cochées (99.4 %).
 
 ---
 
 # Partie 1 — Architecture
 
-## Cahier de recette — draft-usmd-rdsh-architecture-02 (ARCH)
+## Cahier de recette — draft-usmd-rdsh-architecture-03 (ARCH)
 
-Source : `draft-usmd-rdsh-architecture-02.txt` (22 octobre 2026).
+Source : `draft-usmd-rdsh-architecture-03.docx` (23 octobre 2026) ; les sections 8.7 et 11.6 et le point B-10 sont nouveaux dans cette révision, le reste est inchangé depuis -02.
 Code examiné : `src/usmd_rdsh/node/**` (nouvelle implémentation : `node.py`, `handlers.py`, `tables.py`, `signed.py`, `authority.py`, `identity.py`, `crypto.py`, `wire.py`, `states.py`, `addresses.py`, `nndp.py`, `ncp/codec.py`, `ncp/transport.py`, `load.py`, `distance.py`, `services.py`, `raft.py`, `sp/*.py`), `src/usmd_rdsh/cli/**` (`bridge.py`, `views/**`, `actions/**`), `src/usmd_rdsh/web/**`, `src/usmd_rdsh/main.py`, et les tests `tests/test_nndp01.py`, `test_sp01.py`, `test_sp01_engine.py`, `test_node_integration.py`, `test_cli.py`, `test_authority_services.py`, `test_ncp02_transport.py` (80 tests passants) — branche `feature/cli-web-interface`, arbre de travail non commité. L'ancien prototype (`proto/`, `self/`, `sys/`, `security/`, `utils/node_state.py`) n'est plus utilisé par l'application (seul `identity._prototype` lit `security/ed25519` pour migrer une ancienne identité).
 
 Légende des niveaux : DOIT (DOIT / NE DOIT PAS / OBLIGATOIRE), DEVRAIT (DEVRAIT / NE DEVRAIT PAS / RECOMMANDÉ), PEUT (PEUT / FACULTATIF), DEF (définition normative impliquant un comportement : formule, défaut, registre, table, transition, format, procédure).
@@ -431,6 +431,20 @@ Constats transverses (à lire avant les tableaux) :
 | ARCH-8.6-2 | DOIT | NE DOIT PAS accepter une délégation qui dépasserait la borne maximale | done | `handlers._can_take` (Request_help/emergency et Confirm_delegation) |
 | ARCH-8.6-3 | DEF | Après cicatrisation, si le nombre d'instances dépasse la borne max, les nœuds en excédent d'identifiant lexicographiquement le plus grand déconstruisent leur instance | done | `Node.enforce_instance_bounds` (appelé par `_healing_loop`) |
 
+#### 8.7 Environnement d'exécution des séquences (ARCH-03)
+
+| ID | Niveau | Exigence | État | Remarque |
+|---|---|---|---|---|
+| ARCH-8.7-1 | DEF | Chaque commande reçoit USMD_SERVICE, USMD_SERVICE_ID, USMD_MANAGEMENT_ID, USMD_SP_ADDRESS, USMD_DATA_ID_PREFIX, USMD_VIP, USMD_GROUP, USMD_AREA, USMD_USDN, USMD_NODE_ID, USMD_MUTATION, USMD_SEQUENCE, USMD_DATA_DIR | done | `Node.service_environment` → `ServiceRunner(environment=…)` ; tests `test_data_ids.py::test_sequences_get_the_usmd_variables`, `test_node_integration.py` ; `show service environment service=<nom>` |
+| ARCH-8.7-2 | DOIT | NE DOIT PAS exécuter build, update ou check_health d'un service sans identifiant de gestion | done | `ServiceRunner.run` (`NEEDS_ADDRESS`) ; test `test_data_ids.py::test_no_sp_address_refuses_build_update_and_health` |
+| ARCH-8.7-3 | DEF | unbuild et emergency restent exécutées, avec la dernière adresse SP connue | done | Même test ; `Node.management` n'est jamais effacé par une transmutation |
+| ARCH-8.7-4 | DEF | Répertoire de données propre au service sur le nœud, créé avant build | done | `Node.service_data_dir` (`services/<nom>` de l'état, ou `service_data`) créé par `service_environment` |
+| ARCH-8.7-5 | DOIT | NE DOIT PAS effacer le répertoire de données lors d'un unbuild, d'une transmutation ou d'une urgence | done | Aucun chemin du nœud ne le supprime |
+| ARCH-8.7-6 | DEF | Le répertoire est réutilisé quand le nœud reconstruit le même service | done | Chemin stable par nom de service ; identifiant de gestion durable (ARCH-11.4-3) |
+| ARCH-8.7-7 | DOIT | NE DOIT PAS exécuter deux séquences d'un même service en même temps ; une étape « action » s'exécute dans la séquence appelante | done | Verrou par service dans `ServiceRunner.run`, `_sequence` pour les actions ; test `test_data_ids.py::test_sequences_of_one_service_never_overlap` |
+| ARCH-8.7-8 | DEF | Les variables USMD_* fixées par le nœud remplacent celles de son environnement | done | `{**os.environ, **variables}` |
+| ARCH-8.7-9 | DEVRAIT | Un service dynamique DEVRAIT identifier ses données par les identifiants de la section 11.6 | n/a | Exigence sur l'auteur du fichier de service ; outillage : `show data-id postgresql` |
+
 ### 9. Configuration
 
 #### 9.1 Propriétés de l'USC
@@ -578,6 +592,21 @@ Constats transverses (à lire avant les tableaux) :
 | ARCH-11.5-9 | DEF | La table sert au choix de la destination SP [SP 6] et au contrôle des dépendances (8.4) | done | `_NodeSpContext.nearest` → `SpEngine.select` ; `Node._dependency_loop` |
 | ARCH-11.5-10 | DEF | Distance de service distincte de la distance entre nœuds de la section 6 | done | `nndp.NearestServices` (D en ‰) vs `distance.distance` (d ∈ [0,5]) |
 
+#### 11.6 Identifiants de données des services (ARCH-03)
+
+| ID | Niveau | Exigence | État | Remarque |
+|---|---|---|---|---|
+| ARCH-11.6-1 | DEF | UUID de version 8 [RFC 9562] : adresse SP (32 bits) \| horodatage ms 48 bits réparti autour de la version et de la variante \| séquence 16 bits \| aléa 26 bits ; le texte commence par l'adresse SP (00b20003-…) | done | `dataid.encode/decode` ; test `test_data_ids.py::test_identifier_starts_with_the_sp_address_and_is_a_version_8_uuid` |
+| ARCH-11.6-2 | DEF | L'ordre des octets range par instance puis par date de création | done | test `test_data_ids.py::test_order_is_instance_then_time` |
+| ARCH-11.6-3 | DOIT | Adresse SP attribuée à l'instance, identifiant de gestion 0x0001 à 0xFFFE ; sss.0000 et sss.ffff interdits | done | `dataid.check_address` ; test `test_only_instance_addresses_make_identifiers` |
+| ARCH-11.6-4 | DOIT | L'horodatage d'un générateur NE DOIT PAS décroître, même si l'horloge recule | done | `DataIdGenerator.next` ; test `test_generator_never_goes_back_and_carries_over_the_sequence` |
+| ARCH-11.6-5 | DEF | Séquence +1 dans la même milliseconde, repart d'une valeur aléatoire 0..0x7FFF à chaque nouvelle milliseconde, passage à la milliseconde suivante au-delà de 0xFFFF | done | Même test ; `test_generator_identifiers_are_unique_and_sorted` (50 000 identifiants) |
+| ARCH-11.6-6 | DOIT | Aléa d'un générateur cryptographique ou à graine non partagée entre processus | done | `secrets.randbits` ; SQL : `random()` de chaque processus serveur PostgreSQL |
+| ARCH-11.6-7 | DEVRAIT | Plusieurs processus d'une instance DEVRAIENT partager la séquence | done | SQL : séquence `usmd_id_seq` (0..65535, CYCLE) ; vérifié sur PostgreSQL 17 (20 000 identifiants uniques, décodage SQL = Python) |
+| ARCH-11.6-8 | DEF | Tout nœud retrouve instance et date ; version ≠ 8, variante ≠ 0b10 ou 4 premiers bits non nuls → pas un identifiant USMD-RDSH | done | `dataid.decode`, `show data-id id=<uuid>` ; tests `test_other_uuids_are_not_data_identifiers`, `test_cli.py::test_data_id_commands` |
+| ARCH-11.6-9 | DEVRAIT | Le maître DEVRAIT réattribuer en dernier les identifiants de gestion libérés | open | Aucune libération n'existe encore (ARCH-B-2) ; voir ARCH-B-10 |
+| ARCH-11.6-10 | PEUT | Le nœud PEUT fournir le texte SQL et un générateur équivalent | done | `show data-id postgresql [service=…] [database=…]` (`usmd_id()`, `usmd_id_sp_address()`, `usmd_id_created()`), `execute data-id generate service=… count=…` |
+
 ### 12. Maître USD
 
 #### 12.1 Rôle
@@ -679,6 +708,7 @@ Constats transverses (à lire avant les tableaux) :
 | ARCH-B-7 | DEF | Reprise sans confirmation (7.5) : règle de départage entre nœuds de récupération concurrents | open | `_delegation_deadline` fait reprendre chaque nœud favorable, sans départage (borne max seule limite) |
 | ARCH-B-8 | DEF | Borne minimale : qui déclenche la création d'instances sous la borne min | open | `min_instances` utilisé seulement par `Node.take_over` (reprise d'un nœud muet tant que le nombre d'instances est sous max(min, 1)) ; aucune création d'instance hors de ce cas |
 | ARCH-B-9 | DEF | Maintien de l'EDB (par l'administrateur ou par les nœuds) | open | — |
+| ARCH-B-10 | DEF | Réattribution d'un identifiant de gestion libéré : délai minimal ou horodatage minimal imposé au nouveau titulaire, pour que ses identifiants de données ne rencontrent pas ceux de l'ancien (ARCH-03) | open | Dépend de ARCH-B-2 |
 
 ---
 
