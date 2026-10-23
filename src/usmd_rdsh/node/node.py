@@ -345,7 +345,46 @@ class Node(NcpHandlers):  # pylint: disable=too-many-instance-attributes,too-man
                  self._properties_loop, self._reconcile_loop, self._healing_loop,
                  self._health_loop, self._dependency_loop, self._maintenance_loop]
         self._tasks = [asyncio.create_task(loop(), name=loop.__name__) for loop in loops]
+        if self.mutation:
+            self._tasks.append(asyncio.create_task(self.resume_mutation(), name="resume_mutation"))
         self.event(f"Node {self.node_id} started in state {self.state.name}")
+
+    async def resume_mutation(self, *, wait_s: float = 120.0) -> bool:
+        """A restarted node builds its mutation's services again [ARCH 8.1]:
+        the processes they had started stopped with the node. Once the node is
+        Active again: build, check_health, then the instances are announced.
+        A build that fails is left to the health checks, as after a transmutation."""
+        mutation = self.mutation
+        if not mutation or mutation not in self.signed.mutations:
+            return False
+        waited = 0.0
+        while self.state != State.ACTIVE:
+            if waited >= wait_s or self.mutation != mutation:
+                return False
+            await asyncio.sleep(1.0)
+            waited += 1.0
+        await self.request_management_ids()
+        ok = True
+        for spec in self.mutation_specs(mutation):
+            if not (await self.runner.run(spec, "build")).ok:
+                ok = False
+                break
+        if ok:
+            for spec in self.mutation_specs(mutation):
+                if (await self.runner.run(spec, "check_health")).ok:
+                    self._host(spec.name)
+                else:
+                    ok = False
+        self.event(f"Mutation {mutation} {'resumed' if ok else 'not resumed'} after the restart",
+                   logging.INFO if ok else logging.ERROR)
+        return ok
+
+    async def stop_services(self) -> None:
+        """The node is stopping: its services stop cleanly with it (unbuild)
+        instead of being killed, and the mutation is kept for the next start."""
+        for spec in reversed(self.mutation_specs(self.mutation) if self.mutation else []):
+            await self.runner.run(spec, "unbuild")
+        self.hosted.clear()
 
     async def stop(self) -> None:
         for task in self._tasks:

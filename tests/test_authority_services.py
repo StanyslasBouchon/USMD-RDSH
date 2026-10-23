@@ -232,6 +232,43 @@ def test_a_node_without_the_key_accepts_service_files_it_cannot_see(authority_no
                                                      min_instances=2)})
 
 
+def test_restart_rebuilds_the_mutation_and_stop_unbuilds_it(authority_node, tmp_path):
+    """A restarted node builds its services again; a stopping one unbuilds them
+    and keeps its mutation for the next start."""
+    import sys  # pylint: disable=import-outside-toplevel
+
+    import yaml  # pylint: disable=import-outside-toplevel
+
+    from usmd_rdsh.node.states import State  # pylint: disable=import-outside-toplevel
+
+    marker = tmp_path / "mark.py"
+    marker.write_text("import os, pathlib, sys\n"
+                      "pathlib.Path(os.environ['USMD_DATA_DIR'], sys.argv[1]).touch()\n")
+    run = f'"{sys.executable}" "{marker}"'
+    service_file = tmp_path / "web.yaml"
+    service_file.write_text(yaml.safe_dump({
+        "name": "web",
+        "build": [{"command": f"{run} built"}],
+        "check_health": [{"command": f'"{sys.executable}" -c "pass"'}],
+        "unbuild": [{"command": f"{run} unbuilt"}],
+    }))
+    _commit(services={"web": ServiceConfig(name="web", id="0a1", area="front", vip="10.80.0.10",
+                                           service_file=str(service_file))})
+    node = authority_node
+    node.settings.address = "192.168.1.11"
+    node.management[0x0A1] = 0x0001
+    node.mutation = "frontal"  # as restored from the saved admission state
+    node.set_state(State.ACTIVE, reason="test", force=True)
+    data = node.service_data_dir("web")
+
+    assert asyncio.run(node.resume_mutation(wait_s=0))
+    assert (data / "built").exists() and 0x0A1 in node.hosted
+    asyncio.run(node.stop_services())
+    assert (data / "unbuilt").exists() and not node.hosted and node.mutation == "frontal"
+    node.mutation = ""
+    assert not asyncio.run(node.resume_mutation(wait_s=0))
+
+
 def test_service_file_names_and_sizes_are_checked():
     with pytest.raises(ValueError, match="not a file name"):
         parse_service_file("name: web\nfiles:\n  ../etc/passwd: aGk=\n")

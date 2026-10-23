@@ -19,6 +19,7 @@ import argparse
 import asyncio
 import logging
 import os
+import signal
 import sys
 from pathlib import Path
 
@@ -113,6 +114,13 @@ async def _main(args: argparse.Namespace) -> None:
     # What is in force (signed objects) is what the tree shows.
     bridge.reflect()
     await RUNTIME.apply_all()
+    if not one_shot and hasattr(signal, "SIGTERM") and sys.platform != "win32":
+        # systemd stops the service with SIGTERM: leave through the 'finally'
+        # below, which stops the services cleanly, not by dying mid-way.
+        main_task = asyncio.current_task()
+        loop = asyncio.get_running_loop()
+        for number in (signal.SIGTERM, signal.SIGHUP):
+            loop.add_signal_handler(number, main_task.cancel)
     try:
         if one_shot:
             await _run_commands(factory, args.command)
@@ -125,6 +133,7 @@ async def _main(args: argparse.Namespace) -> None:
         if RUNTIME.web is not None:
             await RUNTIME.web.stop()
         if RUNTIME.node is not None and not one_shot:
+            await RUNTIME.node.stop_services()
             await RUNTIME.node.stop()
 
 
@@ -187,6 +196,8 @@ def main(argv: list[str] | None = None) -> None:
         asyncio.run(_main(args))
     except KeyboardInterrupt:
         sys.exit(1)
+    except asyncio.CancelledError:
+        logging.warning("[SYS] Stopped by a signal; services stopped cleanly")
 
 
 if __name__ == "__main__":

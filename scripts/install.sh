@@ -368,7 +368,9 @@ ExecReload=/bin/kill -HUP \$MAINPID
 
 Restart=on-failure
 RestartSec=5
-TimeoutStopSec=30
+# Stopping, the node unbuilds its services (a database shuts down cleanly):
+# give the unbuild steps time before systemd kills what is left.
+TimeoutStopSec=120
 
 # Logging via journald
 StandardOutput=journal
