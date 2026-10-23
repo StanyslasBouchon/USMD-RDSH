@@ -298,7 +298,7 @@ class AuthorityBridge:
         held = node.signed.mutations
         if {m.name for m in mutations} != set(held):
             return bool(mutations) or bool(held)
-        return any(_changed(held[m.name], m) for m in mutations)
+        return any(_mutation_differs(held[m.name], m) for m in mutations)
 
     # -- tree -> signed objects ------------------------------------------------
 
@@ -340,6 +340,19 @@ class AuthorityBridge:
             for name, m in sorted(mutations_cfg.items())
         ]
         return usc, usd, mutations
+
+
+def _mutation_differs(held: MutationProperties, built: MutationProperties) -> bool:
+    """What a node without the USC key can tell of a mutation: its bounds, its
+    transmutation time and the services it runs. The service file's content
+    (sequences, attached files) exists only on the authority; every other node
+    rebuilds an empty one, which says nothing about what is in force."""
+    def names(props: MutationProperties) -> list[str]:
+        return [spec.name for spec in parse_service_file(props.service_file)]
+
+    return (held.min_instances, held.max_instances, held.average_transmutation_ms,
+            names(held)) != (built.min_instances, built.max_instances,
+                             built.average_transmutation_ms, names(built))
 
 
 def _check_node_addresses(node, usd: UsdProperties) -> None:

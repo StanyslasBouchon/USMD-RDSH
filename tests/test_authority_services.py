@@ -215,6 +215,23 @@ def test_service_instances_come_from_the_node_table(authority_node):
     assert row["node_id"].endswith("(self)")
 
 
+def test_a_node_without_the_key_accepts_service_files_it_cannot_see(authority_node, tmp_path):
+    """node2/node3: the tree in force, without the service file only the authority
+    holds, is not a change to refuse; a real change still is."""
+    service_file = tmp_path / "web.yaml"
+    service_file.write_text("name: web\nbuild:\n  - command: 'true'\n")
+    services = {"web": ServiceConfig(name="web", id="0a1", area="front", vip="10.80.0.10",
+                                     service_file=str(service_file))}
+    _commit(services=services)
+    authority_node.authority.usc = None  # now an executor that received what was signed
+    follower = {"web": ServiceConfig(name="web", id="0a1", area="front", vip="10.80.0.10")}
+    _commit(services=follower)  # nothing differs: no error
+    with pytest.raises(ValueError, match="does not hold the USC key"):
+        _commit(services=follower,
+                mutations={"frontal": MutationConfig(name="frontal", services=["web"],
+                                                     min_instances=2)})
+
+
 def test_service_file_names_and_sizes_are_checked():
     with pytest.raises(ValueError, match="not a file name"):
         parse_service_file("name: web\nfiles:\n  ../etc/passwd: aGk=\n")
