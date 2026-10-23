@@ -65,11 +65,13 @@ sudo bash scripts/install.sh
 
 The installer performs the following:
 
-- Creates the `usmd` system user (no shell, no interactive login)
-- Creates `/opt/usmd/venv` — Python virtualenv with the package installed
-- Creates `/etc/usmd/usmd.yaml` — default configuration (not overwritten if already present)
-- Creates `/var/lib/usmd/` — data directory (keys, state)
-- Installs and enables `/etc/systemd/system/usmd.service`
+- Creates the `usmd` system user (no shell, no interactive login); the node runs as this account
+- Creates `/opt/usmd/venv` — Python virtualenv with the package installed (Python ≥ 3.13, `nan-actions` cloned beside the repository)
+- Creates `/etc/usmd/usmd.yaml` — default configuration (not overwritten if already present), owned by `usmd`: the node rewrites it on each commit
+- Creates `/var/lib/usmd/` — data directory (identity, keys, state in `/var/lib/usmd/.usmd`)
+- Installs and enables `/etc/systemd/system/usmd.service`, sandboxed, with `CAP_NET_ADMIN` for the SP interface
+- Installs `/usr/local/bin/usmd` — the console of the running node (`sudo usmd`, `sudo usmd -c "show node"`)
+- Installs the system command relay for services: `/usr/local/sbin/usmd-root`, the list `/etc/usmd-root/commands` and `/etc/sudoers.d/usmd`
 
 **Installer options:**
 
@@ -77,9 +79,29 @@ The installer performs the following:
 # Use a different source directory
 sudo bash scripts/install.sh --source /path/to/USMD-RDSH
 
+# This node founds a new USD (USC and USD keys, the four roles)
+sudo bash scripts/install.sh --found --usd-label prod --address 192.168.1.11
+
+# Take over a node that was run by hand in a terminal (state in ~/.usmd)
+sudo bash scripts/install.sh --import-state /home/me/.usmd
+
+# Rewrite /etc/usmd/usmd.yaml (the identity is kept)
+sudo bash scripts/install.sh --reset-config
+
 # Install without starting the service immediately
 sudo bash scripts/install.sh --no-start
 ```
+
+**System commands in service files.** The sequences of a service run as `usmd`, inside the service's sandbox (read-only system). A step that must change the system goes through the relay, which systemd runs as root outside the sandbox, for the commands listed in `/etc/usmd-root/commands` only:
+
+```yaml
+build:
+  - command: sudo usmd-root apt-get install -y nginx
+  - command: sudo usmd-root install -m 644 "$USMD_FILES_DIR/site.conf" /etc/nginx/conf.d/
+  - command: sudo usmd-root systemctl restart nginx
+```
+
+The installer lists `systemctl`, `journalctl`, `apt-get`, `apt`, `dpkg`, `ip`, `sysctl` and `install` the first time; the list is root's to edit, and an upgrade keeps it. Each command listed gives root to whoever writes a service file the authority signs: list only what the services need.
 
 **Useful commands after installation:**
 

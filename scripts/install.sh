@@ -12,6 +12,10 @@
 #                                  create the SP interface (CAP_NET_ADMIN)
 #   - The console command        : /usr/local/bin/usmd — the console of the
 #                                  running node (Tab, '?', 'usmd -c "<line>"')
+#   - System commands for services: the sequences of a service may run, as
+#                                  root, the commands of /etc/usmd-root/commands
+#                                  (systemctl, apt-get, ip...): 'sudo usmd-root
+#                                  <command> ...' (sudoers: /etc/sudoers.d/usmd)
 #
 # Usage :
 #   sudo bash scripts/install.sh [--source <path>] [--address <ipv4>]
@@ -72,6 +76,12 @@ DATA_DIR="/var/lib/usmd"
 STATE_DIR="${DATA_DIR}/.usmd"      # the node's state: ~/.usmd of the usmd user
 SERVICE_FILE="/etc/systemd/system/usmd.service"
 COMMAND_FILE="/usr/local/bin/usmd"
+ROOT_RELAY="/usr/local/sbin/usmd-root"
+ROOT_COMMANDS_DIR="/etc/usmd-root"
+ROOT_COMMANDS="${ROOT_COMMANDS_DIR}/commands"
+SUDOERS_FILE="/etc/sudoers.d/usmd"
+#: Commands the services' sequences may run as root unless the list exists already.
+DEFAULT_ROOT_COMMANDS="systemctl journalctl apt-get apt dpkg ip sysctl install"
 SERVICE_USER="usmd"
 PYTHON_MIN="3.13"   # requires-python of pyproject.toml
 
@@ -315,18 +325,21 @@ SyslogIdentifier=usmd
 RuntimeDirectory=usmd
 RuntimeDirectoryMode=0755
 
-# The SP interface (tun, its addresses and routes) needs CAP_NET_ADMIN;
-# nothing else is granted.
+# The SP interface (tun, its addresses and routes) needs CAP_NET_ADMIN: the
+# node holds it and nothing else. The bounding set also lets 'sudo' change
+# user, so that a sequence can reach ${ROOT_RELAY} (sudoers: ${SUDOERS_FILE}).
 AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
-CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_SETUID CAP_SETGID CAP_AUDIT_WRITE
 
 # Security hardening: the node and the services it runs write only its
 # configuration and its data (services keep theirs in \$USMD_DATA_DIR).
-NoNewPrivileges=yes
+# A system change goes through 'sudo usmd-root <command>', which systemd runs
+# outside this sandbox, and only for the commands of ${ROOT_COMMANDS}.
+# NoNewPrivileges is off: it would stop sudo, a setuid program.
 PrivateTmp=yes
 ProtectSystem=strict
 ProtectHome=yes
-ReadWritePaths=${DATA_DIR} ${CONFIG_DIR}
+ReadWritePaths=${DATA_DIR} ${CONFIG_DIR} -/run/sudo
 
 [Install]
 WantedBy=multi-user.target
@@ -357,6 +370,90 @@ if [[ -n "${SUDO_USER:-}" && "${SUDO_USER}" != "root" ]]; then
     fi
 fi
 success "Console command installed."
+
+# ---------------------------------------------------------------------------
+# System commands for the services: sudo -> usmd-root -> systemd-run
+# ---------------------------------------------------------------------------
+# A command started by the node inherits its sandbox (read-only system, its
+# capabilities only), sudo or not: 'sudo apt-get' would find /usr read-only.
+# usmd-root asks systemd to run the command as a transient unit instead,
+# outside the sandbox, and only if root listed it in ${ROOT_COMMANDS}.
+info "Installing the system command relay ${ROOT_RELAY}..."
+cat > "${ROOT_RELAY}" <<'EOF'
+#!/bin/sh
+# Runs one system command for the services of the USMD-RDSH node: as root and
+# outside the node's sandbox (a transient systemd unit, logged in the journal),
+# only if /etc/usmd-root/commands lists it (absolute paths, one per line).
+#   sudo usmd-root <command> [args...]    e.g. sudo usmd-root systemctl restart nginx
+# Written by scripts/install.sh; the list is root's to edit.
+set -eu
+LIST=/etc/usmd-root/commands
+[ "$(id -u)" -eq 0 ] || { echo "usmd-root: run it with sudo" >&2; exit 126; }
+[ "$#" -ge 1 ] || { echo "usage: sudo usmd-root <command> [args...]" >&2; exit 2; }
+# The list decides what root runs: it must be root's alone.
+[ "$(stat -c %u "$LIST")" = 0 ] && [ -z "$(find "$LIST" -perm /022)" ] \
+    || { echo "usmd-root: $LIST must be owned by root and writable by root only" >&2; exit 126; }
+name=$1
+shift
+path=""
+while IFS= read -r line || [ -n "$line" ]; do
+    line=${line%%#*}
+    line=$(printf '%s' "$line" | tr -d '[:space:]')
+    [ -n "$line" ] || continue
+    case "$name" in
+        /*) [ "$line" = "$name" ] && path=$line ;;
+        *) [ "${line##*/}" = "$name" ] && path=$line ;;
+    esac
+    [ -z "$path" ] || break
+done < "$LIST"
+[ -n "$path" ] || { echo "usmd-root: '$name' is not in $LIST" >&2; exit 126; }
+[ -x "$path" ] || { echo "usmd-root: $path is not installed" >&2; exit 127; }
+exec systemd-run --quiet --wait --pipe --collect --service-type=exec \
+    --description="USMD service command: $name" \
+    --setenv=DEBIAN_FRONTEND=noninteractive \
+    -- "$path" "$@"
+EOF
+chown root:root "${ROOT_RELAY}"
+chmod 755 "${ROOT_RELAY}"
+
+install -d -m 755 -o root -g root "${ROOT_COMMANDS_DIR}"
+if [[ -f "${ROOT_COMMANDS}" ]]; then
+    warn "Existing list kept: ${ROOT_COMMANDS}"
+else
+    {
+        echo "# Commands the sequences of USMD-RDSH services may run as root:"
+        echo "#   sudo usmd-root <name or path> [args...]"
+        echo "# One absolute path per line. Every command listed gives root to whoever"
+        echo "# writes a service file the authority signs: list only what services need."
+        for name in ${DEFAULT_ROOT_COMMANDS}; do
+            path="$(command -v "${name}" || true)"
+            [[ -n "${path}" ]] && echo "${path}"
+        done
+    } > "${ROOT_COMMANDS}"
+    success "Commands allowed: ${ROOT_COMMANDS} ($(grep -c '^/' "${ROOT_COMMANDS}") listed)"
+fi
+chown root:root "${ROOT_COMMANDS}"
+chmod 644 "${ROOT_COMMANDS}"
+
+if command -v sudo &>/dev/null && command -v visudo &>/dev/null; then
+    SUDOERS_TMP="$(mktemp)"
+    cat > "${SUDOERS_TMP}" <<EOF
+# Written by USMD-RDSH scripts/install.sh.
+# The node's account may run usmd-root, and through it only the commands of
+# ${ROOT_COMMANDS}.
+Defaults:${SERVICE_USER} !lecture
+${SERVICE_USER} ALL=(root) NOPASSWD: ${ROOT_RELAY}
+EOF
+    if visudo -cqf "${SUDOERS_TMP}"; then
+        install -m 440 -o root -g root "${SUDOERS_TMP}" "${SUDOERS_FILE}"
+        success "sudoers rule installed: ${SUDOERS_FILE}"
+    else
+        warn "sudoers rule refused by visudo: services cannot run system commands."
+    fi
+    rm -f "${SUDOERS_TMP}"
+else
+    warn "sudo is not installed: services cannot run system commands ('apt install sudo', then install again)."
+fi
 
 # ---------------------------------------------------------------------------
 # Enable and start service
@@ -398,4 +495,7 @@ echo -e "    ${YELLOW}sudo usmd -c \"show node\"${NC}       — one console line
 echo -e "    ${YELLOW}systemctl status usmd${NC}          — service status"
 echo -e "    ${YELLOW}journalctl -u usmd -f${NC}          — live logs"
 echo -e "    ${YELLOW}systemctl restart usmd${NC}         — restart"
+echo
+echo -e "  In a service file, a system command: ${YELLOW}sudo usmd-root systemctl restart nginx${NC}"
+echo -e "  Allowed commands (root edits it): ${CYAN}${ROOT_COMMANDS}${NC}"
 echo

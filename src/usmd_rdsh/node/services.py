@@ -17,6 +17,17 @@ command succeeds when it ends in time with exit code 0; the first failure
 stops the sequence, which fails. Since ARCH-02 the VIP and group address live
 in the catalogue: an ``sp`` key is accepted and ignored.
 
+Commands run with the node's account, inside its sandbox. On a node installed
+by ``scripts/install.sh``, a step changes the system through the root relay,
+for the commands root listed in ``/etc/usmd-root/commands``::
+
+    - command: sudo usmd-root apt-get install -y nginx
+    - command: sudo usmd-root install -m 644 "$USMD_FILES_DIR/site.conf" /etc/nginx/conf.d/
+    - command: sudo usmd-root systemctl restart nginx
+
+Such a command runs outside the sandbox: it sees the system's /tmp, not the
+node's private one, so files are passed from $USMD_FILES_DIR or $USMD_DATA_DIR.
+
 Nothing is executed unless the authority's signature on the mutation
 properties carrying the file has been checked [8.3] - the caller's duty,
 enforced by :class:`ServiceRunner` refusing an unverified mutation.
