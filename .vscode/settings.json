@@ -1,5 +1,6 @@
 {
   "files.associations": {
     "pdm.lock": "toml"
-  }
+  },
+  "python.terminal.useEnvFile": true
 }

@@ -8,7 +8,7 @@
 # -----------------------------------------------------------------------
 node:
   address: auto # "auto" = detect outbound interface; or "192.168.1.5"
-  role: executor # executor | operator | usd_operator | ucd_operator
+  role: ucd_operator # executor | operator | usd_operator | ucd_operator
 
 # -----------------------------------------------------------------------
 # Unified System Domain (USD) parameters
