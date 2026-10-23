@@ -2,18 +2,39 @@
 # =============================================================================
 # USMD-RDSH — Node Installer
 # =============================================================================
-# Installs the USMD-RDSH daemon on a Linux machine by creating:
+# Installs the USMD-RDSH node on a Linux machine:
 #   - A dedicated system user    : usmd
 #   - A Python virtualenv        : /opt/usmd/venv
-#   - Default configuration      : /etc/usmd/usmd.yaml
-#   - A data directory           : /var/lib/usmd
-#   - A systemd service          : usmd.service (auto-start)
+#   - The configuration          : /etc/usmd/usmd.yaml (the node rewrites it
+#                                  on each commit, so it owns /etc/usmd)
+#   - A data directory           : /var/lib/usmd (identity, keys, services)
+#   - A systemd service          : usmd.service (auto-start), allowed to
+#                                  create the SP interface (CAP_NET_ADMIN)
+#   - The console command        : /usr/local/bin/usmd — the console of the
+#                                  running node (Tab, '?', 'usmd -c "<line>"')
 #
 # Usage :
-#   sudo bash scripts/install.sh [--source <path>] [--no-start]
+#   sudo bash scripts/install.sh [--source <path>] [--address <ipv4>]
+#                                [--found [--usd-label <name>]]
+#                                [--reset-config] [--import-state <dir>]
+#                                [--no-start]
 #
-#   --source <path>   Source directory containing setup.py (default: .)
-#   --no-start        Install without starting the service
+#   --source <path>      Source directory (default: this repository)
+#   --address <ipv4>     The node's IPv4 address (default: auto, the outbound one)
+#   --found              This node founds a new USD: it generates the USC and
+#                        USD keys and holds the four roles (usc-operator,
+#                        usd-operator, node-operator, node-executor)
+#   --usd-label <name>   With --found: the readable name of the USD (default: usd)
+#   --reset-config       Rewrite /etc/usmd/usmd.yaml (kept otherwise); the
+#                        node's identity in /var/lib/usmd is kept
+#   --import-state <dir> Take over a node that was run by hand ('usmd' in a
+#                        terminal, state in <dir>, e.g. /home/me/.usmd): its
+#                        identity, USD, tokens, tables and configuration become
+#                        the service's. Stop that node first ('exit').
+#   --no-start           Install without starting the service
+#
+# Run again to upgrade: the package, the service and the console command are
+# rewritten, the configuration and the data are kept.
 # =============================================================================
 
 set -euo pipefail
@@ -37,29 +58,35 @@ die()     { echo -e "${RED}[USMD] ✘${NC} $*" >&2; exit 1; }
 # ---------------------------------------------------------------------------
 SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 NO_START=false
+FOUND=false
+RESET_CONFIG=false
+ADDRESS="auto"
+USD_LABEL="usd"
+IMPORT_STATE=""
 
 INSTALL_DIR="/opt/usmd"
 VENV_DIR="${INSTALL_DIR}/venv"
 CONFIG_DIR="/etc/usmd"
 CONFIG_FILE="${CONFIG_DIR}/usmd.yaml"
 DATA_DIR="/var/lib/usmd"
+STATE_DIR="${DATA_DIR}/.usmd"      # the node's state: ~/.usmd of the usmd user
 SERVICE_FILE="/etc/systemd/system/usmd.service"
+COMMAND_FILE="/usr/local/bin/usmd"
 SERVICE_USER="usmd"
-PYTHON_MIN="3.11"
+PYTHON_MIN="3.13"   # requires-python of pyproject.toml
 
 # ---------------------------------------------------------------------------
 # Argument parsing
 # ---------------------------------------------------------------------------
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --source)
-            SOURCE_DIR="$(realpath "$2")"
-            shift 2
-            ;;
-        --no-start)
-            NO_START=true
-            shift
-            ;;
+        --source)       SOURCE_DIR="$(realpath "$2")"; shift 2 ;;
+        --address)      ADDRESS="$2"; shift 2 ;;
+        --found)        FOUND=true; shift ;;
+        --usd-label)    USD_LABEL="$2"; shift 2 ;;
+        --reset-config) RESET_CONFIG=true; shift ;;
+        --import-state) IMPORT_STATE="$(realpath "$2")"; shift 2 ;;
+        --no-start)     NO_START=true; shift ;;
         -h|--help)
             sed -n '/^# Usage/,/^# ===/p' "$0" | head -n -1 | sed 's/^# \?//'
             exit 0
@@ -76,18 +103,46 @@ done
 [[ $EUID -eq 0 ]] || die "This script must be run as root (sudo)."
 
 command -v systemctl &>/dev/null || die "systemd is required but was not found."
+command -v ip &>/dev/null || die "'ip' (iproute2) is required: the node configures its SP interface with it."
+[[ -e /dev/net/tun ]] || warn "/dev/net/tun is missing: SP (the services' data plane) will not start."
 
-[[ -f "${SOURCE_DIR}/setup.py" ]] \
-    || die "setup.py not found in '${SOURCE_DIR}'. Use --source <path>."
+[[ -f "${SOURCE_DIR}/pyproject.toml" ]] \
+    || die "No pyproject.toml in '${SOURCE_DIR}'. Use --source <path>."
+# pyproject.toml takes nan-actions from the directory beside the repository.
+[[ -f "${SOURCE_DIR}/../nan-actions/pyproject.toml" ]] \
+    || die "nan-actions is needed beside the repository: clone it as '$(dirname "${SOURCE_DIR}")/nan-actions'."
+
+if [[ "${ADDRESS}" != "auto" ]]; then
+    [[ "${ADDRESS}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || die "--address: an IPv4 address, e.g. 192.168.1.11"
+fi
+[[ "${USD_LABEL}" =~ ^[A-Za-z0-9._-]{1,64}$ ]] || die "--usd-label: letters, digits, . _ - (64 at most)"
+
+if [[ -f "${CONFIG_FILE}" && "${RESET_CONFIG}" == "false" && -z "${IMPORT_STATE}" ]]; then
+    if [[ "${FOUND}" == "true" || "${ADDRESS}" != "auto" ]]; then
+        die "${CONFIG_FILE} exists: --found and --address only write a new one. Add --reset-config."
+    fi
+fi
+if [[ -n "${IMPORT_STATE}" ]]; then
+    [[ "${FOUND}" == "false" ]] || die "--import-state takes over a node: it cannot also --found."
+    [[ -f "${IMPORT_STATE}/identity.json" ]] \
+        || die "--import-state: no identity.json in '${IMPORT_STATE}' (the node's state directory)."
+    [[ -f "${IMPORT_STATE}/config.json" || -f "${IMPORT_STATE}/usmd.yaml" ]] \
+        || die "--import-state: no config.json in '${IMPORT_STATE}'."
+    # The node run by hand must be stopped: two nodes cannot hold one identity.
+    if ss -Hlun 2>/dev/null | awk '{print $4}' | grep -Eq ':(9992|5222)$' \
+            && ! systemctl is-active --quiet usmd.service; then
+        die "A node still runs on this machine (UDP 9992/5222): 'exit' its console first."
+    fi
+fi
 
 # Find Python 3.11+
 PYTHON=""
-for candidate in python3.13 python3.12 python3.11 python3; do
+for candidate in python3.14 python3.13 python3; do
     if command -v "$candidate" &>/dev/null; then
         ver=$("$candidate" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
         major="${ver%%.*}"
         minor="${ver#*.}"
-        if [[ $major -ge 3 && $minor -ge 11 ]]; then
+        if [[ $major -ge 3 && $minor -ge 13 ]]; then
             PYTHON="$candidate"
             break
         fi
@@ -100,7 +155,7 @@ info "Python detected: $("$PYTHON" --version)"
 # System user creation
 # ---------------------------------------------------------------------------
 if id "${SERVICE_USER}" &>/dev/null; then
-    warn "User '${SERVICE_USER}' already exists — skipped."
+    warn "User '${SERVICE_USER}' already exists — kept."
 else
     info "Creating system user '${SERVICE_USER}'..."
     useradd \
@@ -114,19 +169,24 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Directory creation
+# Directories — the node writes its configuration back on every commit
 # ---------------------------------------------------------------------------
 info "Creating directories..."
 
-install -d -m 755 -o root      -g root      "${INSTALL_DIR}"
-install -d -m 755 -o root      -g root      "${CONFIG_DIR}"
-install -d -m 750 -o "${SERVICE_USER}" -g "${SERVICE_USER}" "${DATA_DIR}"
+install -d -m 755 -o root               -g root               "${INSTALL_DIR}"
+install -d -m 750 -o "${SERVICE_USER}"  -g "${SERVICE_USER}"  "${CONFIG_DIR}"
+install -d -m 750 -o "${SERVICE_USER}"  -g "${SERVICE_USER}"  "${DATA_DIR}"
 
 success "Directories created."
 
 # ---------------------------------------------------------------------------
 # Virtualenv + package install
 # ---------------------------------------------------------------------------
+if systemctl is-active --quiet usmd.service; then
+    info "Stopping the running node for the upgrade..."
+    systemctl stop usmd.service
+fi
+
 info "Creating virtualenv in '${VENV_DIR}'..."
 "$PYTHON" -m venv "${VENV_DIR}"
 
@@ -134,10 +194,7 @@ info "Upgrading pip..."
 "${VENV_DIR}/bin/pip" install --quiet --upgrade pip
 
 info "Installing usmd-rdsh from '${SOURCE_DIR}'..."
-"${VENV_DIR}/bin/pip" install --quiet "${SOURCE_DIR}"
-info "Installing optional web dashboard dependencies..."
-"${VENV_DIR}/bin/pip" install --quiet "django>=4.2" "uvicorn[standard]>=0.29" || \
-    warn "Web dashboard deps (django, uvicorn) could not be installed — dashboard disabled."
+"${VENV_DIR}/bin/pip" install --quiet --upgrade "${SOURCE_DIR}"
 
 chown -R root:root "${INSTALL_DIR}"
 chmod -R o-w "${INSTALL_DIR}"
@@ -145,69 +202,80 @@ chmod -R o-w "${INSTALL_DIR}"
 success "Package installed. Version: $("${VENV_DIR}/bin/python" -c 'import importlib.metadata; print(importlib.metadata.version("usmd-rdsh"))' 2>/dev/null || echo '(unknown)')"
 
 # ---------------------------------------------------------------------------
-# Configuration file (do not overwrite if already present)
+# Configuration file (kept unless --reset-config or --import-state)
 # ---------------------------------------------------------------------------
-if [[ -f "${CONFIG_FILE}" ]]; then
+STAMP="$(date +%Y%m%d%H%M%S)"
+if [[ -n "${IMPORT_STATE}" ]]; then
+    info "Taking over the node of '${IMPORT_STATE}'..."
+    if [[ -d "${STATE_DIR}" ]]; then
+        mv "${STATE_DIR}" "${STATE_DIR}.${STAMP}.bak"
+        info "Previous service state saved as ${STATE_DIR}.${STAMP}.bak"
+    fi
+    cp -a "${IMPORT_STATE}" "${STATE_DIR}"
+    rm -f "${STATE_DIR}/usmd.sock"
+    chown -R "${SERVICE_USER}:${SERVICE_USER}" "${STATE_DIR}"
+    [[ -f "${CONFIG_FILE}" ]] && cp -p "${CONFIG_FILE}" "${CONFIG_FILE}.${STAMP}.bak"
+    if [[ -f "${IMPORT_STATE}/usmd.yaml" ]]; then
+        cp "${IMPORT_STATE}/usmd.yaml" "${CONFIG_FILE}"
+    else
+        # The configuration the node saved (config.json), in the usmd.yaml layout;
+        # already founded or admitted: no bootstrap, the identity stays identity.json.
+        USMD_STATE_DIR="${STATE_DIR}" "${VENV_DIR}/bin/python" - > "${CONFIG_FILE}" <<'EOF'
+from usmd_rdsh.cli import yaml_config
+from usmd_rdsh.cli.store import ConfigStore
+
+print("# /etc/usmd/usmd.yaml — taken over from a node run by hand (install.sh --import-state)")
+print(yaml_config.dump(ConfigStore().load()), end="")
+EOF
+    fi
+    success "Node taken over: identity, USD and configuration in ${STATE_DIR} and ${CONFIG_FILE}."
+    info "'${IMPORT_STATE}' is left as it was; remove it once the service runs."
+elif [[ -f "${CONFIG_FILE}" && "${RESET_CONFIG}" == "false" ]]; then
     warn "Existing configuration kept: ${CONFIG_FILE}"
 else
-    info "Writing default configuration..."
-    cat > "${CONFIG_FILE}" <<'EOF'
+    if [[ -f "${CONFIG_FILE}" ]]; then
+        cp -p "${CONFIG_FILE}" "${CONFIG_FILE}.${STAMP}.bak"
+        info "Previous configuration saved beside it (.bak)."
+    fi
+    if [[ "${FOUND}" == "true" ]]; then
+        ROLES="[usc-operator, usd-operator, node-operator, node-executor]"
+        BOOTSTRAP="true"
+    else
+        ROLES="[node-executor]"
+        BOOTSTRAP="false"
+    fi
+    info "Writing the configuration..."
+    cat > "${CONFIG_FILE}" <<EOF
 # /etc/usmd/usmd.yaml — USMD-RDSH node configuration
-# Edit this file then restart: systemctl restart usmd
+#
+# The node rewrites this file on every commit: configure it from its
+# console ('usmd'), not here, while it runs.
 
-# -----------------------------------------------------------------------
-# Network identity
-# -----------------------------------------------------------------------
 node:
-  address: auto          # "auto" = detect outgoing interface; or "192.168.1.5"
-  role: executor         # executor | operator | usd_operator | ucd_operator
+  address: ${ADDRESS}          # this node's IPv4, or auto (the outbound interface)
+  roles: ${ROLES}
 
-# -----------------------------------------------------------------------
-# USD domain
-# -----------------------------------------------------------------------
 usd:
-  name: my-domain        # Domain name (USDN)
-  cluster_name: ""       # USCN — leave empty if no cluster
-  edb_address: null      # Easy Deployment Base DNS/IP (optional)
-  max_reference_nodes: 5
-  load_threshold: 0.8
-  ping_tolerance_ms: 200
-  load_check_interval: 30
-  emergency_threshold: 0.9
+  name: ${USD_LABEL}           # with bootstrap: the USD's label; its USDN is generated
 
-# -----------------------------------------------------------------------
-# Startup behavior
-# -----------------------------------------------------------------------
-bootstrap: false         # true = create a new USD; false = join existing
-keys_file: /var/lib/usmd/usmd_keys.json
-nndp_ttl: 30
-ctl_socket: /run/usmd/usmd.sock
+# true: this node founds a new USD (USC and USD keys, founder token);
+# false: it joins one with a creation token ('config system bootstrap').
+bootstrap: ${BOOTSTRAP}
+nndp_ttl: 15
 
-# -----------------------------------------------------------------------
-# Ports (spec values — change only on conflict)
-# -----------------------------------------------------------------------
 ports:
-  ncp: 5626
-  nndp_listen: 5221
-  nndp_send: 5222
-  broadcast: auto        # "auto" = diffuse sur toutes les interfaces ; ou "192.168.1.255"
+  ncp: 9992                    # NCP-02 section 4; the same on every node
 
-# -----------------------------------------------------------------------
-# Tableau de bord web (optionnel)
-# -----------------------------------------------------------------------
 web:
-  enabled: false         # true pour activer le dashboard
-  host: 0.0.0.0
-  port: 8443
-  username: admin
-  password: changeme     # À MODIFIER en production !
-  ssl_cert: ""           # Chemin vers le certificat TLS (PEM) ; vide = auto self-signed
-  ssl_key:  ""           # Chemin vers la clé TLS (PEM)
+  enabled: false               # the web interface; 'config system web-interface'
 EOF
-    chown root:"${SERVICE_USER}" "${CONFIG_FILE}"
-    chmod 640 "${CONFIG_FILE}"
+    chown "${SERVICE_USER}:${SERVICE_USER}" "${CONFIG_FILE}"
+    chmod 600 "${CONFIG_FILE}"
     success "Configuration written: ${CONFIG_FILE}"
 fi
+# A configuration from an earlier installer: the node must be able to rewrite it.
+chown -R "${SERVICE_USER}:${SERVICE_USER}" "${CONFIG_DIR}"
+chmod 600 "${CONFIG_FILE}"
 
 # ---------------------------------------------------------------------------
 # systemd unit file
@@ -215,8 +283,7 @@ fi
 info "Writing systemd service..."
 cat > "${SERVICE_FILE}" <<EOF
 # /etc/systemd/system/usmd.service
-# Generated by scripts/install.sh — do not edit manually.
-# To customize: systemctl edit usmd
+# Generated by scripts/install.sh — rewritten on each install.
 
 [Unit]
 Description=USMD-RDSH Node Daemon
@@ -229,8 +296,10 @@ Type=simple
 User=${SERVICE_USER}
 Group=${SERVICE_USER}
 WorkingDirectory=${DATA_DIR}
+Environment=HOME=${DATA_DIR}
 
-ExecStart=${VENV_DIR}/bin/python -m usmd --config ${CONFIG_FILE}
+# No terminal: the console is 'usmd', through /run/usmd/usmd.sock.
+ExecStart=${VENV_DIR}/bin/python -m usmd_rdsh --config ${CONFIG_FILE} --no-console
 ExecReload=/bin/kill -HUP \$MAINPID
 
 Restart=on-failure
@@ -242,17 +311,22 @@ StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=usmd
 
-# Runtime directory (creates /run/usmd, owned by usmd, cleared on reboot)
+# /run/usmd: the console socket (mode 0660, group ${SERVICE_USER})
 RuntimeDirectory=usmd
 RuntimeDirectoryMode=0755
 
-# Security hardening
+# The SP interface (tun, its addresses and routes) needs CAP_NET_ADMIN;
+# nothing else is granted.
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
+
+# Security hardening: the node and the services it runs write only its
+# configuration and its data (services keep theirs in \$USMD_DATA_DIR).
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=strict
 ProtectHome=yes
-ReadWritePaths=${DATA_DIR}
-CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+ReadWritePaths=${DATA_DIR} ${CONFIG_DIR}
 
 [Install]
 WantedBy=multi-user.target
@@ -260,6 +334,29 @@ EOF
 
 chmod 644 "${SERVICE_FILE}"
 success "systemd service written: ${SERVICE_FILE}"
+
+# ---------------------------------------------------------------------------
+# Console command
+# ---------------------------------------------------------------------------
+info "Installing the console command ${COMMAND_FILE}..."
+cat > "${COMMAND_FILE}" <<EOF
+#!/bin/sh
+# The console of the USMD-RDSH node running on this machine (usmd.service).
+#   usmd                     interactive console (Tab, '?', 'exit')
+#   usmd -c "show node"      one line, then exit (repeatable; -y answers yes)
+# Root and the members of the '${SERVICE_USER}' group may use it.
+USMD_ATTACH_ONLY=1 exec ${VENV_DIR}/bin/python -m usmd_rdsh "\$@"
+EOF
+chmod 755 "${COMMAND_FILE}"
+
+# The administrator who ran the installer may use the console without sudo.
+if [[ -n "${SUDO_USER:-}" && "${SUDO_USER}" != "root" ]]; then
+    if ! id -nG "${SUDO_USER}" | tr ' ' '\n' | grep -qx "${SERVICE_USER}"; then
+        usermod -aG "${SERVICE_USER}" "${SUDO_USER}"
+        info "'${SUDO_USER}' joined the '${SERVICE_USER}' group: 'usmd' without sudo after the next login."
+    fi
+fi
+success "Console command installed."
 
 # ---------------------------------------------------------------------------
 # Enable and start service
@@ -274,8 +371,8 @@ if [[ "${NO_START}" == "true" ]]; then
     warn "Option --no-start: service was not started."
 else
     info "Starting service..."
-    systemctl start usmd.service
-    sleep 1
+    systemctl restart usmd.service
+    sleep 2
     if systemctl is-active --quiet usmd.service; then
         success "Service started and active."
     else
@@ -296,11 +393,9 @@ echo -e "  Data / keys     : ${CYAN}${DATA_DIR}${NC}"
 echo -e "  Virtualenv      : ${CYAN}${VENV_DIR}${NC}"
 echo
 echo -e "  Useful commands:"
+echo -e "    ${YELLOW}sudo usmd${NC}                      — console of the running node"
+echo -e "    ${YELLOW}sudo usmd -c \"show node\"${NC}       — one console line"
 echo -e "    ${YELLOW}systemctl status usmd${NC}          — service status"
 echo -e "    ${YELLOW}journalctl -u usmd -f${NC}          — live logs"
 echo -e "    ${YELLOW}systemctl restart usmd${NC}         — restart"
-echo -e "    ${YELLOW}systemctl stop usmd${NC}            — stop"
 echo
-echo -e "  Edit ${CYAN}${CONFIG_FILE}${NC} then restart the service."
-echo
-                                                                                                                                                                                                                                                                                                                                                                                                             

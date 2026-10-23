@@ -35,6 +35,18 @@ def state_directory() -> StateDirectory:
     return StateDirectory(Path(root))
 
 
+def migrate(document: ConfigDocument) -> ConfigDocument:
+    """Fields renamed since a document was saved: ``system bootstrap role``
+    (one role) became ``roles`` (several) [ARCH 12.4]."""
+    path = ("system", "bootstrap")
+    old = document.fields(path).get("role")
+    if old is not None:
+        document.unset_field(path, "role")
+        if "roles" not in document.fields(path):
+            document.set_field(path, "roles", [old])
+    return document
+
+
 class ConfigStore:
     """Loads and saves the configuration document.
 
@@ -65,7 +77,7 @@ class ConfigStore:
             self.bootstrap, self.keys_file = loaded.bootstrap, loaded.keys_file
             self.warnings = loaded.warnings
             return loaded.document
-        return ConfigDocument.from_json(self._state.read_text(_CONFIG_FILE))
+        return migrate(ConfigDocument.from_json(self._state.read_text(_CONFIG_FILE)))
 
     def text(self, document: ConfigDocument) -> str:
         """What :meth:`save_now` writes."""

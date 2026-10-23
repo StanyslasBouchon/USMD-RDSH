@@ -62,6 +62,10 @@ MAX_COMPLETED = 4096  # reassembled groups remembered to ignore late duplicates
 DATAGRAMS_PER_S = 200  # per source address, before any work [10]
 APPROVALS_PER_S = 5  # new Request_approval messages per source address [10]
 REQUEST_APPROVAL = 0x0005
+#: Operate from an operator of another USD of the USC: an address outside the
+#: NIT, checked by its credentials once decrypted [ARCH 12.5].
+OPERATE = 0x0016
+FOREIGN_OPERATE_PER_S = 20  # new messages per source address outside the NIT
 
 
 class NcpTimeout(Exception):
@@ -225,6 +229,7 @@ class NcpTransport(asyncio.DatagramProtocol):  # pylint: disable=too-many-instan
         self._buffered = 0
         self.datagram_limit = RateLimiter(DATAGRAMS_PER_S)
         self.approval_limit = RateLimiter(APPROVALS_PER_S)
+        self.foreign_limit = RateLimiter(FOREIGN_OPERATE_PER_S)
         self._outgoing: dict[bytes, _Outgoing] = {}  # by salt
         self._waiting: dict[tuple[bytes, int], asyncio.Future] = {}
         self._responses: dict[tuple[bytes, int], tuple[float, list[bytes]]] = {}
@@ -311,8 +316,13 @@ class NcpTransport(asyncio.DatagramProtocol):  # pylint: disable=too-many-instan
         body: bytes,
         recipient_ed: bytes,
         recipient_x: bytes,
+        attempts: int | None = None,
     ) -> bytes:
-        """Send a request and await its response body; NcpRemoteError or NcpTimeout."""
+        """Send a request and await its response body; NcpRemoteError or NcpTimeout.
+
+        ``attempts`` overrides the transmissions for a request whose execution
+        takes long (Operate): retransmissions are answered from the cache or
+        ignored while the request runs, never executed twice [5.7]."""
         request_id = secrets.randbits(64) or 1
         datagrams, salt, plaintext = self._build(event, MessageType.REQUEST, request_id, body,
                                                  recipient_ed, recipient_x, address)
@@ -326,7 +336,7 @@ class NcpTransport(asyncio.DatagramProtocol):  # pylint: disable=too-many-instan
             self._send(datagrams, address)
             # 2 s, 4 s, 8 s then failure: no extra doubled wait after the
             # last transmission [5.7].
-            tries = max(1, self.attempts)
+            tries = max(1, attempts or self.attempts)
             for attempt in range(tries):
                 try:
                     return await asyncio.wait_for(asyncio.shield(future), delay)
@@ -429,7 +439,8 @@ class NcpTransport(asyncio.DatagramProtocol):  # pylint: disable=too-many-instan
             if not self.approval_limit.allow(source, now):
                 raise WireError("Request_approval rate exceeded for this source")
         elif self._address_known is not None and not self._address_known(source):
-            raise WireError("address absent from the NIT")
+            if fragment.event != OPERATE or not self.foreign_limit.allow(source, now):
+                raise WireError("address absent from the NIT")
         if len(self._assemblies) >= MAX_ASSEMBLIES:
             raise WireError("too many messages in reassembly")
         if sum(1 for g in self._assemblies if g[0] == source) >= PER_SOURCE:

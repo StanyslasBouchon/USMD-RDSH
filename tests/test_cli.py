@@ -240,6 +240,114 @@ def test_authority_commit_signs_and_others_refuse(factory, tmp_path):
     assert authority.signed.usd.version == version
 
 
+def test_web_config_text(factory):
+    """The Configuration page's text view: running, startup and full, read-only."""
+    monitor = RUNTIME.tokens.mint("mon", "monitor").plaintext
+    router = _router(factory)
+    auth = {"Authorization": f"Bearer {monitor}"}
+
+    def text(which):
+        return asyncio.run(router.handle("GET", f"/web/config/text?which={which}", auth))
+
+    _run(factory, "config system global", "set hostname text-node", "end")
+    running = text("running")
+    assert running.status == 200
+    assert "Current configuration of text-node:" in running.body["text"]
+    assert "set hostname text-node" in running.body["text"]
+    startup = text("startup")
+    assert startup.status == 200 and startup.body["path"]
+    assert len(text("full").body["text"]) > len(running.body["text"])
+    assert text("nope").status == 400
+    assert asyncio.run(router.handle("GET", "/web/config/text", {})).status == 401
+
+
+def test_web_runs_every_show(factory):
+    """Each console 'show' has its web equivalent: listed, runnable, and its
+    tables and field blocks come back as data."""
+    monitor = RUNTIME.tokens.mint("mon", "monitor").plaintext
+    router = _router(factory)
+    auth = {"Authorization": f"Bearer {monitor}"}
+
+    def post(body):
+        return asyncio.run(router.handle("POST", "/web/shows", auth, json.dumps(body).encode()))
+
+    listed = asyncio.run(router.handle("GET", "/web/shows", auth))
+    assert listed.status == 200
+    shows = {s["cli"]: s for s in listed.body["shows"]}
+    assert {"show node", "show nit", "show sp flows", "show tech-support"} <= set(shows)
+    assert {i["name"] for i in shows["show data-id"]["inputs"]} == {"id"}
+    for cli, show in shows.items():
+        if any(i["required"] for i in show["inputs"]):
+            continue
+        answer = post({"cli": cli})
+        # No node runs here: a refusal is a message, never a fault.
+        if answer.status == 422:
+            assert answer.body["message"], cli
+            continue
+        assert answer.status == 200, (cli, answer.body)
+        assert answer.body["segments"] or not answer.body["text"].strip(), cli
+
+    version = post({"cli": "show version"}).body["segments"]
+    assert version[0]["kind"] == "text" and "USMD-RDSH Software" in version[0]["text"]
+    master = post({"cli": "show usd master"}).body["segments"]
+    assert master[0]["kind"] == "fields" and master[0]["pairs"][0][0] == "Master"
+    nit = post({"cli": "show nit"}).body["segments"]
+    assert any(s["kind"] == "table" and s["columns"] for s in nit)
+    assert post({"cli": "show logging", "args": {"last": "0"}}).status == 422
+    assert post({"cli": "show nope"}).status == 404
+    assert post({"cli": "execute node state"}).status == 404
+    assert post({"args": {}}).status == 400
+    assert asyncio.run(router.handle("GET", "/web/shows", {})).status == 401
+
+
+def test_web_service_file_upload(factory):
+    """Upload kept on the authority; a service file must name the service;
+    reading back only what a service names; writing needs 'write'."""
+    import base64  # pylint: disable=import-outside-toplevel
+
+    admin = RUNTIME.tokens.mint("adm", "admin").plaintext
+    monitor = RUNTIME.tokens.mint("mon", "monitor").plaintext
+    router = _router(factory)
+
+    def post(body, token=admin):
+        return asyncio.run(router.handle("POST", "/web/service-files",
+                                         {"Authorization": f"Bearer {token}"},
+                                         json.dumps(body).encode()))
+
+    b64 = lambda text: base64.b64encode(text.encode()).decode()  # noqa: E731
+    saved = post({"service": "web", "name": "web.yaml", "service_file": True,
+                  "content": b64("name: web\nbuild:\n  - command: 'true'\n")})
+    assert saved.status == 200, saved.body
+    assert saved.body["path"].endswith("web.yaml") and saved.body["services"] == ["web"]
+    wrong = post({"service": "web", "name": "db.yaml", "service_file": True,
+                  "content": b64("name: db\n")})
+    assert wrong.status == 422 and "found: db" in wrong.body["message"]
+    assert post({"service": "web", "name": "../x", "content": b64("x")}).status == 422
+    assert post({"service": "web", "name": "a.sh", "content": b64("x")}, monitor).status == 403
+    script = post({"service": "web", "name": "a.sh", "content": b64("#!/bin/sh\n")})
+
+    _run(factory, "config service-area", "edit front", "set id 1", "set prefix 10.80.0.0",
+         "set prefix-length 16", "next", "end",
+         "config service", "edit web", "set id 0a1", "set area front",
+         f"set service-file {saved.body['path']}", f"set files {script.body['path']}",
+         "next", "end")
+
+    def read(path):
+        return asyncio.run(router.handle(
+            "GET", f"/web/service-files?service=web&path={path}",
+            {"Authorization": f"Bearer {monitor}"}))
+
+    assert read(saved.body["path"]).body["text"].startswith("name: web")
+    assert read(script.body["path"]).body["text"] == "#!/bin/sh\n"
+    assert read("/etc/passwd").status == 422
+
+
+def test_show_service_instances_is_the_action_not_a_row(factory):
+    out = _run(factory, "show service instances")
+    assert "Service" in out and "SP address" in out
+    assert "Traceback" not in out and "no such" not in out.lower()
+
+
 def test_web_serves_the_page(factory):
     response = asyncio.run(_router(factory).handle("GET", "/", {}))
     assert response.status == 200

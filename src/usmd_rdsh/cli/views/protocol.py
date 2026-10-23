@@ -73,7 +73,12 @@ class NcpView(ConfigNode):
 
 
 class SpConfig(BaseModel):
-    """Service protocol, the parameters [SP] section 10 marks as local."""
+    """Service protocol, the parameters [SP] section 10 marks as local.
+
+    The SP port and MTU are not here: every node of the USD uses the same,
+    signed by the authority as USD parameters 0x0010 and 0x0013
+    ('config usd' / 'set sp-port', 'set sp-mtu').
+    """
 
     selection_margin: float = Field(0.1, ge=0, le=5, description="Delta between candidates")
     flow_idle_timeout: int = Field(300, ge=1, description="Seconds")
@@ -85,7 +90,7 @@ class SpConfig(BaseModel):
 
 @view("protocol sp", model=SpConfig, **NODE_ACCESS)
 class SpView(ConfigNode):
-    """Service protocol local parameters."""
+    """Service protocol local parameters; the SP port is 'config usd' / 'set sp-port'."""
 
     async def apply(self, config: SpConfig) -> None:
         await apply_local("protocol sp", config)

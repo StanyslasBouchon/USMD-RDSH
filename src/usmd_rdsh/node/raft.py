@@ -1,8 +1,8 @@
 """The USD master: Raft among at most Nv voters [ARCH-02 12, NCP-02 6.15-6.18].
 
 The replicated state is the table of SP addresses: for each (service,
-management id) the node and Ed25519 key it is assigned to, plus the set of
-voters. A configuration change takes effect as soon as it is in the log and
+management id) the node and Ed25519 key it is assigned to, the set of voters,
+and the nodes elected to each operator role [ARCH 12.4]. A configuration change takes effect as soon as it is in the log and
 only one may be pending [6.17]. Pre-vote (Ongaro's thesis 9.6) keeps an
 isolated voter from disturbing the leader when it comes back. Term, vote and
 log are persisted [ARCH 12.2].
@@ -27,6 +27,7 @@ COMPACT_AFTER = 1000  # applied records beyond the snapshot before compaction
 SNAPSHOT_PAGE_BYTES = 1000 * 1111  # body bound of one Raft_install_snapshot page [6.18]
 _SNAPSHOT_HEAD = 8 + 26 + 8 + 8 + 2 + 2  # term, leader, index, term, page, pages
 _VOTER_SIZE = 26 + 32
+_OPERATOR_SIZE = 1 + 26
 _ASSIGNMENT_SIZE = 2 + 2 + 26 + 32
 
 
@@ -53,10 +54,21 @@ def voter_record(term: int, node_id: str, key: bytes | None) -> LogRecord:
     return LogRecord(term, RecordType.ADD_VOTER, Writer().ident(node_id).raw(key).bytes())
 
 
+def operator_record(term: int, role: int, node_id: str, *, elected: bool) -> LogRecord:
+    """*node_id* elected to, or deposed from, an operator role [ARCH 12.4]."""
+    kind = RecordType.ELECT_OPERATOR if elected else RecordType.DEPOSE_OPERATOR
+    return LogRecord(term, kind, Writer().u8(role).ident(node_id).bytes())
+
+
 @dataclass
 class StateMachine:
     assignments: dict[tuple[int, int], Assignment] = field(default_factory=dict)
     voters: dict[str, bytes] = field(default_factory=dict)
+    operators: dict[int, set[str]] = field(default_factory=dict)  # role -> elected node ids
+
+    def copy(self) -> "StateMachine":
+        return StateMachine(dict(self.assignments), dict(self.voters),
+                            {r: set(ids) for r, ids in self.operators.items()})
 
     def apply(self, record: LogRecord) -> None:
         reader = Reader(record.data)
@@ -65,6 +77,15 @@ class StateMachine:
             self.assignments[(a.service, a.management)] = a
         elif record.type == RecordType.RELEASE:
             self.assignments.pop((reader.u16(), reader.u16()), None)
+        elif record.type == RecordType.ELECT_OPERATOR:
+            role = reader.u8()
+            self.operators.setdefault(role, set()).add(reader.ident())
+        elif record.type == RecordType.DEPOSE_OPERATOR:
+            role = reader.u8()
+            self.operators.get(role, set()).discard(reader.ident())
+
+    def operator_pairs(self) -> list[tuple[int, str]]:
+        return sorted((r, n) for r, ids in self.operators.items() for n in ids)
 
     def management_of(self, node_id: str, service: int) -> int | None:
         for (svc, mgmt), a in self.assignments.items():
@@ -87,6 +108,7 @@ class _PendingSnapshot:
     last_term: int
     pages: int
     voters: dict[str, bytes] | None = None  # from page 0
+    operators: list[tuple[int, str]] = field(default_factory=list)  # from page 0
     parts: dict[int, list[Assignment]] = field(default_factory=dict)
 
 
@@ -194,10 +216,12 @@ class Raft:  # pylint: disable=too-many-instance-attributes
         for a in data["snapshot_assignments"]:
             snap.assignments[(a[0], a[1])] = Assignment(a[0], a[1], a[2], bytes.fromhex(a[3]))
         snap.voters = {k: bytes.fromhex(v) for k, v in data["snapshot_voters"].items()}
+        for role, node_id in data.get("snapshot_operators", []):
+            snap.operators.setdefault(role, set()).add(node_id)
         self.snapshot_state = snap
         self.log = [LogRecord(r[0], r[1], bytes.fromhex(r[2])) for r in data["log"]]
         self.commit_index = self.applied = self.snapshot_index
-        self.state = StateMachine(dict(snap.assignments), dict(snap.voters))
+        self.state = snap.copy()
 
     def _save(self) -> None:
         snap = self.snapshot_state
@@ -207,6 +231,7 @@ class Raft:  # pylint: disable=too-many-instance-attributes
             "snapshot_assignments": [[a.service, a.management, a.node_id, a.key.hex()]
                                      for a in snap.assignments.values()],
             "snapshot_voters": {k: v.hex() for k, v in snap.voters.items()},
+            "snapshot_operators": [list(p) for p in snap.operator_pairs()],
             "log": [[r.term, r.type, r.data.hex()] for r in self.log],
         }
         self.storage.parent.mkdir(parents=True, exist_ok=True)
@@ -399,12 +424,13 @@ class Raft:  # pylint: disable=too-many-instance-attributes
     def snapshot_pages(self) -> list[bytes]:
         """The current snapshot as Raft_install_snapshot bodies [6.18].
 
-        Each body stays within ``snapshot_page_bytes``; the voters travel in
-        page 0 only.
+        Each body stays within ``snapshot_page_bytes``; the voters and the
+        elected operators travel in page 0 only.
         """
         index, term, state = self.snapshot_index, self.snapshot_term, self.snapshot_state
         assignments = list(state.assignments.values())
-        voters_size = 2 + _VOTER_SIZE * len(state.voters)
+        operators = state.operator_pairs()
+        voters_size = 2 + _VOTER_SIZE * len(state.voters) + 2 + _OPERATOR_SIZE * len(operators)
         first = (self.snapshot_page_bytes - _SNAPSHOT_HEAD - voters_size - 2) // _ASSIGNMENT_SIZE
         other = (self.snapshot_page_bytes - _SNAPSHOT_HEAD - 2) // _ASSIGNMENT_SIZE
         if first < 0 or other < 1:
@@ -422,6 +448,9 @@ class Raft:  # pylint: disable=too-many-instance-attributes
                 out.u16(len(state.voters))
                 for node_id, key in state.voters.items():
                     out.ident(node_id).raw(key)
+                out.u16(len(operators))
+                for role, node_id in operators:
+                    out.u8(role).ident(node_id)
             out.u16(len(chunk))
             for a in chunk:
                 out.u16(a.service).u16(a.management).ident(a.node_id).raw(a.key)
@@ -445,11 +474,15 @@ class Raft:  # pylint: disable=too-many-instance-attributes
         term, leader = reader.u64(), reader.ident()
         last_index, last_term, page, pages = reader.u64(), reader.u64(), reader.u16(), reader.u16()
         voters: dict[str, bytes] | None = None
+        operators: list[tuple[int, str]] = []
         if page == 0:
             voters = {}
             for _ in range(reader.u16()):
                 node_id = reader.ident()
                 voters[node_id] = reader.raw(32)
+            for _ in range(reader.u16()):
+                role = reader.u8()
+                operators.append((role, reader.ident()))
         chunk = []
         for _ in range(reader.u16()):
             chunk.append(Assignment(reader.u16(), reader.u16(), reader.ident(), reader.raw(32)))
@@ -467,12 +500,14 @@ class Raft:  # pylint: disable=too-many-instance-attributes
             self._snapshot_pages = {key: _PendingSnapshot(last_term, pages)}
             pending = self._snapshot_pages[key]
         if voters is not None:
-            pending.voters = voters
+            pending.voters, pending.operators = voters, operators
         pending.parts[page] = chunk
         if pending.voters is None or len(pending.parts) < pages:
             return Writer().u64(self.term).bytes()
         del self._snapshot_pages[key]
         snap = StateMachine(voters=dict(pending.voters))
+        for role, node_id in pending.operators:
+            snap.operators.setdefault(role, set()).add(node_id)
         for part in range(pages):
             for a in pending.parts[part]:
                 snap.assignments[(a.service, a.management)] = a
@@ -484,7 +519,7 @@ class Raft:  # pylint: disable=too-many-instance-attributes
         self.log = keep
         self.commit_index = max(self.commit_index, last_index)
         self.applied = last_index
-        self.state = StateMachine(dict(snap.assignments), dict(snap.voters))
+        self.state = snap.copy()
         self._apply_committed()
         self._save()
         self._check_voter()
@@ -498,7 +533,8 @@ class Raft:  # pylint: disable=too-many-instance-attributes
         self.snapshot_term = self.term_at(self.applied)
         self.log = self.log[self.applied - self.snapshot_index:]
         self.snapshot_index = self.applied
-        self.snapshot_state = StateMachine(dict(self.state.assignments), voters)
+        self.snapshot_state = self.state.copy()
+        self.snapshot_state.voters = voters
         self._save()
 
     # -- management identifiers [6.15] ---------------------------------------------

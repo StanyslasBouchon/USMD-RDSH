@@ -52,9 +52,11 @@ def _set(path: tuple[str, ...], name: str, value, *, only_if_unset: bool = False
     doc.set_field(path, name, value)
 
 
-def _role() -> Role:
-    role = RUNTIME.document.fields(("system", "bootstrap")).get("role", "node-executor")
-    return _ROLES.get(str(role), Role.NODE_EXECUTOR)
+def _roles(*extra: Role) -> list[Role]:
+    """The configured roles, plus *extra*; a node is always an executor [ARCH 12.4]."""
+    names = RUNTIME.document.fields(("system", "bootstrap")).get("roles") or []
+    return sorted({_ROLES[str(n)] for n in names if str(n) in _ROLES}
+                  | {Role.NODE_EXECUTOR, *extra})
 
 
 def _usdn(messages: list[str]) -> str:
@@ -102,8 +104,11 @@ def found(messages: list[str], *, usdn: str | None = None) -> None:
             RUNTIME.document.set_field(("service-area",), field_name, value, key="default")
         messages.append("Created service area 'default' (10.255.0.0/16): a USD needs one")
     if node.token is None or node.token.usdn != name:
-        token = node.authority.mint_token(name, node.key, [_role()], validity_ms=WEEK_MS,
-                                          founder=True, allow_second_founder=True)
+        # The founder holds both authority keys: it may be elected to either
+        # role, so the USD starts with a USC and a USD operator [ARCH 12.4].
+        token = node.authority.mint_token(
+            name, node.key, _roles(Role.USC_OPERATOR, Role.USD_OPERATOR), validity_ms=WEEK_MS,
+            founder=True, allow_second_founder=True)
         _set(("system", "bootstrap"), "creation_token", b64u(token.encode()))
         messages.append(f"Founder token minted for this node in USD {name}")
 
@@ -115,7 +120,7 @@ def join_with_shared_authority(messages: list[str], usdn: str) -> None:
     _set(("system", "trust-anchor"), "usc_public_key", b64u(node.authority.usc.public))
     _set(("system", "trust-anchor"), "usd_public_key", b64u(node.authority.usd.public))
     if node.token is None or node.token.usdn != usdn:
-        token = node.authority.mint_token(usdn, node.key, [_role()], validity_ms=WEEK_MS)
+        token = node.authority.mint_token(usdn, node.key, _roles(), validity_ms=WEEK_MS)
         _set(("system", "bootstrap"), "creation_token", b64u(token.encode()))
         messages.append(f"Development token minted for USD {usdn}")
 
@@ -130,6 +135,8 @@ def prepare_dev(index: int, count: int, messages: list[str]) -> None:
     _set(("system", "global"), "address", address)
     _set(("system", "global"), "hostname", f"dev-node{index}", only_if_unset=True)
     _set(("protocol", "nndp"), "hia_interval", 5, only_if_unset=True)
+    # Every dev node may be elected to any role, so a failover can be watched.
+    _set(("system", "bootstrap"), "roles", list(_ROLES), only_if_unset=True)
     web = ("system", "web-interface")
     _set(web, "status", True, only_if_unset=True)
     _set(web, "listen_address", address)

@@ -11,24 +11,38 @@ from usmd_rdsh.cli.views.common import NODE_ACCESS, IPv4
 
 
 class MutationConfig(BaseModel):
-    """A mutation: a set of services and their instance bounds [ARCH 8.6]."""
+    """A mutation: a role a node takes, the services it runs [ARCH 8, 8.6].
 
-    name: str = Field(description="Mutation name")
-    services: list[str] = Field([], description="Services hosted by this mutation")
-    min_instances: int = Field(1, ge=0, description="Lowest number in the USD")
-    max_instances: int = Field(0, ge=0, description="Highest number (0 = unbounded)")
-    average_transmutation: int = Field(60, ge=0, description="Tmoy, seconds [ARCH 7.1]")
+    A node takes it by transmutation (``execute node transmute mutation=<name>``
+    or a delegation); the bounds say how many nodes of the USD hold it.
+    """
+
+    name: str = Field(description="Role name, e.g. web; given to 'execute node transmute'")
+    services: list[str] = Field(
+        [], description="Catalogue services ('config service') a node of this role runs"
+    )
+    min_instances: int = Field(1, ge=0, description="Nodes of the USD that should hold this role")
+    max_instances: int = Field(
+        0, ge=0, description="Nodes that may hold it at most; beyond, delegations are refused "
+                             "(0 = no limit)"
+    )
+    average_transmutation: int = Field(
+        60, ge=0, description="Seconds a node takes to adopt the role, builds included "
+                              "(Tmoy) [ARCH 7.1]"
+    )
 
     @model_validator(mode="after")
     def _bounds(self) -> Self:
         if self.max_instances and self.max_instances < self.min_instances:
             raise ValueError("max-instances cannot be below min-instances")
+        if len(set(self.services)) != len(self.services):
+            raise ValueError("a service is listed twice")
         return self
 
 
 @view("mutation", model=MutationConfig, table=True, key="name", **NODE_ACCESS)
 class MutationView(ConfigNode):
-    """Mutations: services and instance bounds (signed by the authority)."""
+    """Mutations: roles a node can take, their services and how many nodes hold them."""
 
     async def apply(self, config) -> None:
         AUTHORITY.record("mutation", config)
@@ -51,15 +65,26 @@ class ServiceConfig(BaseModel):
     not to the service file; both halves are configured on one row here.
     """
 
-    name: str = Field(description="Service name, unique in the USD")
-    id: str = Field(description="12-bit identifier, 3 hex digits: 001 to ffe")
-    area: str = Field(description="Service area the service belongs to")
-    type: ServiceType = Field(ServiceType.STATIC, description="static or dynamic")
-    dependencies: list[str] = Field([], description="Services of the same area it needs")
-    vip: IPv4 = Field("", description="SP virtual address, in the area prefix (sss.0000)")
-    group: IPv4 = Field("", description="SP group address in 239.0.0.0/8 (sss.ffff)")
-    service_file: str = Field("", description="YAML file: build, unbuild, emergency...")
-    step_timeout: int = Field(300, ge=1, description="Default step timeout, seconds")
+    name: str = Field(description="Application name, unique in the USD, e.g. nginx")
+    id: str = Field(description="3 hex digits, 001 to ffe, unique: SP addresses are sss.nnnn")
+    area: str = Field(description="Service area ('config service-area'); its dependencies share it")
+    type: ServiceType = Field(
+        ServiceType.STATIC, description="static: identical instances; dynamic: own data per instance"
+    )
+    dependencies: list[str] = Field(
+        [], description="Services of the same area it needs; they may run on other nodes"
+    )
+    vip: IPv4 = Field("", description="Address reaching the nearest instance (sss.0000), in the "
+                                      "area prefix")
+    group: IPv4 = Field("", description="Multicast address reaching every instance (sss.ffff), "
+                                        "in 239.0.0.0/8; optional")
+    service_file: str = Field("", description="YAML file of the build, unbuild, check_health, "
+                                              "emergency, update sequences; empty: no command")
+    files: list[str] = Field(
+        [], description="Files on the authority the sequences use (scripts, SQL...): signed with "
+                        "the mutation, written to $USMD_FILES_DIR on every node hosting it")
+    step_timeout: int = Field(300, ge=1, description="Unused: set 'timeout:' per step in the "
+                                                     "service file (300 s by default)")
 
     @field_validator("id")
     @classmethod
@@ -83,7 +108,7 @@ class ServiceConfig(BaseModel):
 
 @view("service", model=ServiceConfig, table=True, key="name", **NODE_ACCESS)
 class ServiceView(ConfigNode):
-    """Service catalogue and service files: id, area, VIP, type, dependencies."""
+    """Services: applications nodes run, their catalogue entry and how to build them."""
 
     async def settle(self) -> None:
         await AUTHORITY.settle()

@@ -11,7 +11,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from usmd_rdsh.node.ncp.codec import CreationToken, EndorsementPacket, NodeRecord, Role
+from usmd_rdsh.node.ncp.codec import (CreationToken, EndorsementPacket, NodeRecord, Role,
+                                      role_allows)
 from usmd_rdsh.node.states import State
 from usmd_rdsh.node.wire import now_ms
 
@@ -102,8 +103,9 @@ class Nal:
     def of(self, key: bytes) -> set[int]:
         return self.roles.get(key, set())
 
-    def allows(self, key: bytes, minimum: Role) -> bool:
-        return any(0 < r <= minimum for r in self.of(key))
+    def allows(self, key: bytes, wanted: Role) -> bool:
+        """Roles add up; any role makes the key at least an executor [7.3]."""
+        return role_allows(self.of(key), wanted)
 
 
 @dataclass(slots=True)

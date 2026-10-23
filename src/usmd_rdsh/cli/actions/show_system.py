@@ -15,6 +15,7 @@ from usmd_rdsh.cli.permissions import READ
 from usmd_rdsh.cli.runtime import RUNTIME, format_duration
 from usmd_rdsh.cli.text import fields, printer, table
 from usmd_rdsh.node.crypto import b64u
+from usmd_rdsh.node.ncp.codec import Role
 from usmd_rdsh.node.signed import parameter
 from usmd_rdsh.node.states import LABELS, State
 from usmd_rdsh.node.wire import MAGIC, VERSION
@@ -75,6 +76,11 @@ def state_text(state: State) -> str:
     return f"{state.name} (0x{state.value:04X})"
 
 
+def role_text(role: int) -> str:
+    """A NAL role as the console spells it [NCP 7.3]."""
+    return Role(role).name.lower().replace("_", "-")
+
+
 def _named(r: dict, which: str) -> str:
     """``dho (01JAB7...)``: the signed label, then the identifier [NCP-03 6.8]."""
     if not r[which]:
@@ -89,7 +95,8 @@ def _named(r: dict, which: str) -> str:
             ("State", r["state"]),
             ("Admitted", "yes" if r["admitted"] else "no"),
             ("Endorser", r["endorser"] or "-"),
-            ("Role", r["role"]),
+            ("Roles", ", ".join(r["roles"])),
+            ("Authorised roles", ", ".join(r["authorised_roles"]) or "-"),
             ("Address", r["address"]),
             ("Mutation", r["mutation"] or "(none)"),
             ("Hosted services", ", ".join(r["hosted"]) or "(none)"),
@@ -118,7 +125,8 @@ async def show_node() -> dict:
         "state_code": f"0x{node.state.value:04X}",
         "admitted": node.admitted,
         "endorser": b64u(node.endorser) if node.endorser else None,
-        "role": node.settings.role.name.lower().replace("_", "-"),
+        "roles": [role_text(r) for r in sorted(node.roles)],
+        "authorised_roles": [role_text(r) for r in sorted(node.authorised_roles(node.node_id))],
         "address": node.settings.address,
         "mutation": node.mutation,
         "hosted": sorted(catalog[s].name for s in node.hosted if s in catalog),

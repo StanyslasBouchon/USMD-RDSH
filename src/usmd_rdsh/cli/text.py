@@ -7,9 +7,26 @@ reads on a console.
 
 from __future__ import annotations
 
-from typing import Any, Iterable, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
+from typing import Any, Iterable, Iterator, Sequence
 
 from nan_runtime.log import emit
+
+#: While the web interface runs a ``show``, every table and field block it
+#: renders, as data: the page draws them as tables instead of fixed columns.
+_RECORDED: ContextVar[list[dict[str, Any]] | None] = ContextVar("recorded", default=None)
+
+
+@contextmanager
+def recording() -> Iterator[list[dict[str, Any]]]:
+    """The blocks :func:`table` and :func:`fields` render inside the ``with``."""
+    blocks: list[dict[str, Any]] = []
+    token = _RECORDED.set(blocks)
+    try:
+        yield blocks
+    finally:
+        _RECORDED.reset(token)
 
 
 def table(rows: Iterable[dict[str, Any]], columns: Sequence[tuple[str, str]]) -> str:
@@ -26,17 +43,27 @@ def table(rows: Iterable[dict[str, Any]], columns: Sequence[tuple[str, str]]) ->
     lines = ["  ".join(t.ljust(w) for t, w in zip(titles, widths)).rstrip()]
     for row in materialised:
         lines.append("  ".join(c.ljust(w) for c, w in zip(row, widths)).rstrip())
-    return "\n".join(lines)
+    text = "\n".join(lines)
+    recorded = _RECORDED.get()
+    if recorded is not None:
+        recorded.append({"kind": "table", "text": text, "columns": titles,
+                         "rows": materialised})
+    return text
 
 
 def fields(pairs: Sequence[tuple[str, Any]], indent: int = 0) -> str:
     """``Label : value`` lines with the colons aligned."""
     width = max((len(label) for label, _ in pairs), default=0)
     pad = " " * indent
-    return "\n".join(
+    text = "\n".join(
         f"{pad}{label.ljust(width)} : {'' if value is None else value}"
         for label, value in pairs
     )
+    recorded = _RECORDED.get()
+    if recorded is not None:
+        recorded.append({"kind": "fields", "text": text, "pairs": [
+            [str(label), "" if value is None else str(value)] for label, value in pairs]})
+    return text
 
 
 def printer(render):

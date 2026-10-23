@@ -132,10 +132,15 @@ async def show_interfaces() -> list[dict]:
             "speed": link.speed if link else "",
         })
     node = RUNTIME.node
-    if node is not None and node.tun is not None:
+    if node is not None and node.tun is not None and node.tun.kind != "memory":
         rows.append({"interface": f"usmd-sp ({node.tun.kind})", "status": "up",
                      "addresses": " ".join(node.sp_vips()),
                      "mtu": parameter(node.signed.usd, 0x0013), "speed": ""})
+    elif node is not None:
+        # No system interface: say why, rather than leave the services' VIPs unexplained.
+        rows.append({"interface": "usmd-sp", "status": "down",
+                     "addresses": node.sp_problem() or "simulated in memory",
+                     "mtu": "", "speed": ""})
     return rows
 
 

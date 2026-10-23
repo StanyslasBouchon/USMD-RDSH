@@ -264,10 +264,15 @@ function mount(root, host) {
       });
     } catch (e) { if (e.message !== "401") $("error").textContent = e.message; }
   };
-  api("GET", "/web/capture/fields").then(r => {
-    document.getElementById("cap-field-names").innerHTML =
-      r.fields.map(f => `<option value="${esc(f.name)}">${esc(f.label)}</option>`).join("");
-  }).catch(() => {});
+  // Asked on the first activation: at mount there is no token yet, and the 401
+  // would log out the session the page is about to restore.
+  let fieldNames = null;
+  function loadFieldNames() {
+    fieldNames ||= api("GET", "/web/capture/fields").then(r => {
+      document.getElementById("cap-field-names").innerHTML =
+        r.fields.map(f => `<option value="${esc(f.name)}">${esc(f.label)}</option>`).join("");
+    }).catch(() => { fieldNames = null; });
+  }
 
   // ---- selection, tree and bytes ----
   async function select(tr) {
@@ -346,7 +351,7 @@ function mount(root, host) {
   });
 
   return {
-    activate() { $("clear").classList.toggle("hidden", !host.canWrite());
+    activate() { $("clear").classList.toggle("hidden", !host.canWrite()); loadFieldNames();
                  if (!state.active) { state.active = true; restart(false); } },
     deactivate() { state.active = false; restart(false); },
   };

@@ -1,0 +1,18 @@
+# Service file of "db" (config service / edit db / service-file).
+# Attach with it (files): db.sh, replicate.py, usmd_id.sql.
+name: db
+type: dynamic
+build:
+  - command: '"$USMD_FILES_DIR/db.sh" start'
+    timeout: 180
+check_health:
+  - command: '"$USMD_FILES_DIR/db.sh" check'
+    timeout: 10
+unbuild:
+  - command: '"$USMD_FILES_DIR/db.sh" stop'
+    timeout: 60
+update:          # new files signed: replicator restarted, schema re-applied
+  - command: '"$USMD_FILES_DIR/db.sh" start'
+    timeout: 120
+emergency:
+  - action: unbuild

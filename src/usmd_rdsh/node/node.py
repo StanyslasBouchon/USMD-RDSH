@@ -11,13 +11,15 @@ implements the procedures of the architecture draft:
     7   delegation  weakened / emergency, help, switch-over, expiry, healing
     8   services    transmutation, health checks, dependencies, updates
     9   config      signed objects, versions, propagation
-    11/12           areas, management ids, SP addresses, Raft master
+    11/12           areas, management ids, SP addresses, Raft master,
+                    operators elected by the master (12.4)
 """
 
 from __future__ import annotations
 
 import asyncio
 import ipaddress
+import json
 import logging
 import os
 import random
@@ -34,7 +36,7 @@ from nan_runtime.state import StateDirectory
 
 from usmd_rdsh.node import addresses, dataid, distance
 from usmd_rdsh.node.authority import Authority
-from usmd_rdsh.node.crypto import CryptoError, unb64u
+from usmd_rdsh.node.crypto import CryptoError, b64u, unb64u
 from usmd_rdsh.node.handlers import NcpHandlers
 from usmd_rdsh.node.identity import Identity, load_identity, save_identity
 from usmd_rdsh.node.load import LoadMonitor
@@ -43,7 +45,9 @@ from usmd_rdsh.node.ncp.codec import (
     CreationToken,
     EndorsementPacket,
     MutationProperties,
+    OPERATOR_ROLES,
     NodeRecord,
+    OperateRequest,
     Role,
     TableEntry,
     UscProperties,
@@ -52,12 +56,13 @@ from usmd_rdsh.node.ncp.codec import (
 )
 from usmd_rdsh.node.ncp.transport import NcpRemoteError, NcpTimeout, NcpTransport
 from usmd_rdsh.node.nndp import Neighbor, NndpHooks, NndpService
-from usmd_rdsh.node.raft import Raft, assign_record, voter_record
+from usmd_rdsh.node.raft import Raft, assign_record, operator_record, voter_record
 from usmd_rdsh.node.services import (
     ServiceRunner,
     ServiceSpec,
     dependency_order,
     parse_service_file,
+    write_files,
 )
 from usmd_rdsh.node.signed import SignedConfig, parameter
 from usmd_rdsh.node.sp.engine import CatalogService, Peer, SpEngine
@@ -66,6 +71,21 @@ from usmd_rdsh.node.tables import Tables
 from usmd_rdsh.node.wire import Reader, WireError, Writer, now_ms
 
 log = logging.getLogger("usmd_rdsh.node")
+
+
+def _redirect(answer: bytes) -> list[tuple[str, bytes, bytes]] | None:
+    """The operators an Operate answer redirects to, or None when it is the answer."""
+    try:
+        data = json.loads(answer)
+    except ValueError:
+        return None
+    if not isinstance(data, dict) or "redirect" not in data:
+        return None
+    try:
+        return [(str(r["address"]), unb64u(r["ed25519"]), unb64u(r["x25519"]))
+                for r in data["redirect"]]
+    except (KeyError, TypeError, ValueError):
+        return []
 
 
 def _jitter(seconds: float) -> float:
@@ -109,7 +129,7 @@ class LocalSettings:  # pylint: disable=too-many-instance-attributes
     sp_ineligible: float = 30.0
     sp_replay_window: int = 2048
     sp_broadcast_rate: int = 1000
-    role: Role = Role.NODE_EXECUTOR
+    roles: list[Role] = field(default_factory=lambda: [Role.NODE_EXECUTOR])  # authorised
     creation_token: str = ""
     founder: bool = False
     contact_node: str = ""
@@ -148,7 +168,7 @@ class Node(NcpHandlers):  # pylint: disable=too-many-instance-attributes,too-man
         self.tables = Tables()
         self.signed = SignedConfig.load(state_dir)
         self.load = LoadMonitor()
-        self.runner = ServiceRunner(environment=self.service_environment)
+        self.runner = ServiceRunner(environment=self.sequence_environment)
         self.state: State = State.APPROVAL_REQUIRED
         self.state_validity: int | None = None
         self.mutation: str = ""
@@ -168,6 +188,17 @@ class Node(NcpHandlers):  # pylint: disable=too-many-instance-attributes,too-man
         self.events: list[str] = []
         self.started = time.time()
         self.known_voters: list[str] = []
+        # Operator roles the master elected, as last known [ARCH 12.4]: role -> node ids.
+        self.operators: dict[int, set[str]] = {}
+        self.operators_term = 0
+        self._unfilled: set[Role] = set()  # operator roles without candidate, reported once
+        # Operate [ARCH 12.5]: the console answering an operator, set by the CLI:
+        # (origin, sender key, session, JSON) -> JSON.
+        self.operate_handler = None
+        #: Contact node of each other USD of the USC: USDN -> (address, Ed25519, X25519).
+        self.usc_peers: dict[str, tuple[str, bytes, bytes]] = {}
+        self._usc_relays: dict[str, tuple[str, bytes, bytes]] = {}  # USDN -> its operator
+        self._foreign_x25519: dict[bytes, bytes] = {}  # keys of other USDs' operators
         self._background: set[asyncio.Task] = set()
         self._measuring = False
         self.transfer_rate: float = 0.0  # bytes/s measured towards references
@@ -295,7 +326,7 @@ class Node(NcpHandlers):  # pylint: disable=too-many-instance-attributes,too-man
             self.tables.nal.grant(self.usc_key, [Role.USC_OPERATOR], anchor=True)
         if self.usd_key:
             self.tables.nal.grant(self.usd_key, [Role.USD_OPERATOR], anchor=True)
-        self.tables.nal.grant(self.key, [self.settings.role], anchor=True)
+        self.tables.nal.grant(self.key, self.settings.roles or [Role.NODE_EXECUTOR], anchor=True)
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -396,6 +427,8 @@ class Node(NcpHandlers):  # pylint: disable=too-many-instance-attributes,too-man
         pending = getattr(self, "_approval_x25519", {}).get(key)
         if pending is not None:
             return pending
+        if key in self._foreign_x25519:
+            return self._foreign_x25519[key]
         if self.nndp is not None:
             for neighbor in self.nndp.neighbors.values():
                 if neighbor.public_key == key:
@@ -520,7 +553,8 @@ class Node(NcpHandlers):  # pylint: disable=too-many-instance-attributes,too-man
     # ------------------------------------------------------------------
 
     async def call(self, node_id_or_key: str | bytes, command: Command, body: bytes = b"",
-                   *, address: str | None = None, x25519: bytes | None = None) -> bytes:
+                   *, address: str | None = None, x25519: bytes | None = None,
+                   attempts: int | None = None) -> bytes:
         """One NCP request to a node of the table (or an explicit address/key)."""
         key = node_id_or_key if isinstance(node_id_or_key, bytes) else \
             self.node_key(node_id_or_key)
@@ -532,7 +566,7 @@ class Node(NcpHandlers):  # pylint: disable=too-many-instance-attributes,too-man
             raise NcpTimeout("no address or key for this node")
         started = time.monotonic()
         answer = await self.ncp.request((address, self.settings.ncp_port), int(command), body,
-                                        key, x25519)
+                                        key, x25519, attempts)
         if command == Command.CHECK_DISTANCE_TO_NODE:
             # Only a measured round trip counts as t [ARCH 6.2, NNDP 6.5].
             self.rtt[key] = (time.monotonic() - started) * 1000
@@ -569,7 +603,8 @@ class Node(NcpHandlers):  # pylint: disable=too-many-instance-attributes,too-man
         voter = bool(self.raft and self.raft.is_voter)
         record = NodeRecord(self.node_id, self.settings.address, self.identity.x25519_public,
                             int(state), self.record_date, self.mutation, list(self.references),
-                            sp_addrs, voter).sign(self.identity.signing)
+                            sp_addrs, voter, operators=sorted(self.elected_roles)
+                            ).sign(self.identity.signing)
         if self.token is not None:
             self.tables.nodes.merge(self.token, record)
             self._learn_entry(self.token, record)
@@ -1242,9 +1277,206 @@ class Node(NcpHandlers):  # pylint: disable=too-many-instance-attributes,too-man
             return answer(0x02)
         return answer(0x00, pairs)
 
+    # ------------------------------------------------------------------
+    # Roles: executor for all, operators elected by the master [ARCH 12.4]
+    # ------------------------------------------------------------------
+
+    #: Operators the master keeps elected per role: at least one USC operator
+    #: and one USD operator in the USD, and one node operator when authorised.
+    OPERATOR_MINIMUM = {Role.USC_OPERATOR: 1, Role.USD_OPERATOR: 1, Role.NODE_OPERATOR: 1}
+
+    def authorised_roles(self, node_id: str) -> set[int]:
+        """The roles *node_id*'s creation token authorises, unless revoked [NCP 7.7, ARCH 14]."""
+        if node_id == self.node_id:
+            return set(self.token.roles) if self.token else {int(r) for r in self.settings.roles}
+        key = self.node_key(node_id)
+        entry = self.tables.nodes.get(key) if key else None
+        if entry is None or self.tables.exclusions.is_excluded(key) or not self.tables.nal.of(key):
+            return set()
+        return set(entry.token.roles)
+
+    @property
+    def elected_roles(self) -> set[int]:
+        return {r for r, ids in self.operators.items() if self.node_id in ids}
+
+    @property
+    def roles(self) -> set[int]:
+        """The roles this node exercises: executor, plus those it was elected to."""
+        return {int(Role.NODE_EXECUTOR)} | self.elected_roles
+
+    def set_operators(self, operators: dict[int, set[str]], term: int) -> None:
+        """The master's table of operators; a change of our own roles changes our record."""
+        before = self.elected_roles
+        self.operators = {r: set(ids) for r, ids in operators.items() if ids}
+        self.operators_term = max(self.operators_term, term)
+        after = self.elected_roles
+        if after != before:
+            names = ", ".join(Role(r).name.lower() for r in sorted(after)) or "executor only"
+            self.event(f"Operator roles of this node: {names}", logging.WARNING)
+            if self.token is not None and self.tables.nodes.get(self.key) is not None:
+                self.publish_record()
+
+    def _serving(self, node_id: str) -> bool:
+        if node_id == self.node_id:
+            return self.state == State.ACTIVE
+        key = self.node_key(node_id)
+        return key is not None and self.peer_state(key) == State.ACTIVE and \
+            not self.tables.exclusions.is_excluded(key)
+
+    async def elect_operators(self, inactive_since: dict[tuple[int, str], float]) -> bool:
+        """The master's side [ARCH 12.4]; at most one change per call, True when made.
+
+        A holder that lost its authorisation is deposed at once, one inactive
+        for longer than 0x0015 is deposed; while a role has fewer serving
+        holders than its minimum, the oldest active node authorised for it
+        (smallest ULID) is elected, as for voters [12.2].
+        """
+        raft = self.raft
+        if raft is None or not raft.is_leader:
+            return False
+        now = time.monotonic()
+        grace = parameter(self.signed.usd, 0x0015) or 600
+        for role in OPERATOR_ROLES:
+            holders = set(raft.state.operators.get(int(role), set()))
+            for holder in sorted(holders):
+                if int(role) not in self.authorised_roles(holder):
+                    reason = "no longer authorised"
+                elif self._serving(holder):
+                    inactive_since.pop((role, holder), None)
+                    continue
+                elif now - inactive_since.setdefault((role, holder), now) <= grace:
+                    continue
+                else:
+                    reason = "inactive"
+                if await raft.propose([operator_record(raft.term, role, holder, elected=False)],
+                                      5):
+                    inactive_since.pop((role, holder), None)
+                    self.event(f"{holder} deposed as {role.name.lower()} ({reason})",
+                               logging.WARNING)
+                return True
+            if sum(1 for h in holders if self._serving(h)) >= self.OPERATOR_MINIMUM[role]:
+                continue
+            candidates = sorted(n for n in (self.node_id, *self.active_nodes())
+                                if n not in holders and self._serving(n)
+                                and int(role) in self.authorised_roles(n))
+            if not candidates:
+                if not holders and role in (Role.USC_OPERATOR, Role.USD_OPERATOR) and \
+                        role not in self._unfilled:
+                    self._unfilled.add(role)
+                    self.event(f"No active node is authorised as {role.name.lower()}: "
+                               "the USD has none [ARCH 12.4]", logging.ERROR)
+                continue
+            self._unfilled.discard(role)
+            if await raft.propose([operator_record(raft.term, role, candidates[0], elected=True)],
+                                  5):
+                self.event(f"{candidates[0]} elected {role.name.lower()}", logging.WARNING)
+            return True
+        return False
+
+    def operators_body(self) -> bytes:
+        """Send_operators [NCP 6.19]: term ‖ master ‖ List<(role, node id)>."""
+        out = Writer().u64(self.operators_term).ident(self.node_id)
+        pairs = sorted((r, n) for r, ids in self.operators.items() for n in ids)
+        out.u16(len(pairs))
+        for role, node_id in pairs:
+            out.u8(role).ident(node_id)
+        return out.bytes()
+
+    async def announce_operators(self) -> None:
+        """The master tells the nodes outside the configuration, which have no log."""
+        body = self.operators_body()
+        voters = self.raft.voters if self.raft else {}
+        await asyncio.gather(*(self._quiet(self.call(n, Command.SEND_OPERATORS, body))
+                               for n in self.active_nodes() if n not in voters))
+
+    # ------------------------------------------------------------------
+    # Operate: an elected operator manages the other nodes [ARCH 12.5]
+    # ------------------------------------------------------------------
+
+    #: Transmissions of an Operate request (2+4+...+64 s): a command may take long.
+    OPERATE_ATTEMPTS = 6
+
+    def operator_scope(self) -> str:
+        """"usc", "usd" or "" : what this node manages, by the roles it was elected to."""
+        if Role.USC_OPERATOR in self.elected_roles:
+            return "usc"
+        if Role.USD_OPERATOR in self.elected_roles:
+            return "usd"
+        return ""
+
+    def operator_ids(self, *roles: Role) -> set[str]:
+        """Nodes elected to any of *roles*, as last known."""
+        return set().union(*(self.operators.get(int(r), set()) for r in roles))
+
+    async def operate(self, node_id: str, session: int, payload: bytes) -> bytes:
+        """One console exchange with a node of this USD."""
+        if not self.operator_scope():
+            raise ValueError("this node is not an elected usc-operator or usd-operator "
+                             "[ARCH 12.5]")
+        body = OperateRequest(session, payload).encode()
+        return await self.call(node_id, Command.OPERATE, body, attempts=self.OPERATE_ATTEMPTS)
+
+    async def operate_foreign(self, usdn: str, session: int, payload: bytes,
+                              target: str = "") -> bytes:
+        """One console exchange with a node of another USD of the USC.
+
+        Sent to that USD's elected usc-operator, which checks our credentials
+        and relays to *target*; a contact node that is not one answers with
+        the operators to ask instead.
+        """
+        if self.operator_scope() != "usc":
+            raise ValueError("only an elected usc-operator manages the other USDs [ARCH 12.5]")
+        if self.signed.usd is None or self.token is None:
+            raise ValueError("no USD properties or creation token to present")
+        usdn = usdn.upper()
+        if self.signed.usc is None or usdn not in self.signed.usc.usd:
+            raise ValueError(f"USD {usdn} is not a member of the USC in force")
+        contact = self._usc_relays.get(usdn) or self.usc_peers.get(usdn)
+        if contact is None:
+            raise ValueError(f"no contact node for USD {usdn}: 'config trust usc-peer'")
+        body = OperateRequest(session, payload, target, self.signed.usd, self.token,
+                              self.identity.x25519_public).encode()
+        for _ in range(3):
+            address, key, x25519 = contact
+            self._foreign_x25519[key] = x25519
+            answer = await self.call(key, Command.OPERATE, body, address=address, x25519=x25519,
+                                     attempts=self.OPERATE_ATTEMPTS)
+            redirect = _redirect(answer)
+            if redirect is None:
+                self._usc_relays[usdn] = contact
+                return answer
+            if not redirect:
+                raise ValueError(f"USD {usdn} has no elected usc-operator to relay")
+            contact = redirect[0]
+        raise ValueError(f"USD {usdn}: too many redirections")
+
+    def operators_to_redirect(self) -> list[dict[str, str]]:
+        """The usc-operators of this USD, for an operator of another USD."""
+        out = []
+        for node_id in sorted(self.operator_ids(Role.USC_OPERATOR)):
+            entry = self.tables.nodes.by_id(node_id)
+            if node_id == self.node_id:
+                out.append({"address": self.settings.address, "ed25519": b64u(self.key),
+                            "x25519": b64u(self.identity.x25519_public)})
+            elif entry is not None:
+                out.append({"address": entry.record.address, "ed25519": b64u(entry.key),
+                            "x25519": b64u(entry.record.x25519)})
+        return out
+
+    def _sync_operators(self) -> None:
+        """A voter reads the operators off its own applied state."""
+        raft = self.raft
+        if raft is None or not raft.is_voter or not raft.commit_index:
+            return
+        current = {r: ids for r, ids in raft.state.operators.items() if ids}
+        if current != self.operators or raft.term > self.operators_term:
+            self.set_operators(current, raft.term)
+
     async def _maintenance_loop(self) -> None:
-        """Voters (Nv, oldest executor first, removal after 0x0015), NIT expiry, SP timers."""
+        """Voters (Nv, oldest executor first, removal after 0x0015), operators,
+        NIT expiry, SP timers."""
         inactive_since: dict[str, float] = {}
+        operator_since: dict[tuple[int, str], float] = {}
         while True:
             await asyncio.sleep(1)
             self.tables.nit.expire()
@@ -1264,9 +1496,15 @@ class Node(NcpHandlers):  # pylint: disable=too-many-instance-attributes,too-man
                 self.delegation.handed_over = False
                 self.set_state(State.ACTIVE, reason="load back under the threshold")
                 self.publish_record()
+            self._sync_operators()
             raft = self.raft
             if raft is None or not raft.is_leader:
                 continue
+            if await self.elect_operators(operator_since):
+                self._sync_operators()
+                self._soon(self.announce_operators())
+            elif ticks % 30 == 0 and self.operators:
+                self._soon(self.announce_operators())  # nodes added since, lost messages
             voters = raft.voters
             now = time.monotonic()
             for voter in list(voters):
@@ -1365,6 +1603,10 @@ class Node(NcpHandlers):  # pylint: disable=too-many-instance-attributes,too-man
         self.publish_record()
         self.event(f"Transmutation {previous or '-'} -> {mutation or '-'}: "
                    f"{'ok' if ok else 'failed'} ({duration:.1f}s)")
+        problem = self.sp_problem() if ok and self.hosted else ""
+        if problem:
+            self.event(f"Services of {mutation} built, but no client can reach them: {problem}",
+                       logging.WARNING)
         if not ok:
             await self.emergency(State.INACTIVE_EMERGENCY_HEALTH_CHECK)
         return ok
@@ -1380,6 +1622,21 @@ class Node(NcpHandlers):  # pylint: disable=too-many-instance-attributes,too-man
         """Kept across unbuilds and transmutations [ARCH-03 8.7]."""
         configured = self.settings.service_data.get(name)
         return Path(configured) if configured else self.state_dir.path("services", name)
+
+    def service_files_dir(self, name: str) -> Path:
+        """Where the files delivered with a service are written; rewritten from
+        the signed mutation before each sequence, so nothing kept here."""
+        return self.state_dir.path("service-files", name)
+
+    def sequence_environment(self, spec: ServiceSpec, sequence: str) -> dict[str, str] | None:
+        """The runner's environment: the service's files in place, then its variables."""
+        env = self.service_environment(spec, sequence)
+        if env is not None or sequence not in ("build", "update", "check_health"):
+            try:
+                write_files(self.service_files_dir(spec.name), spec.files)
+            except OSError as exc:
+                self.event(f"Files of {spec.name} could not be written: {exc}", logging.ERROR)
+        return env
 
     def service_environment(self, spec: ServiceSpec, sequence: str) -> dict[str, str] | None:
         """The ``USMD_*`` variables of a sequence; None without an SP address
@@ -1405,6 +1662,7 @@ class Node(NcpHandlers):  # pylint: disable=too-many-instance-attributes,too-man
             "USMD_MUTATION": self.mutation,
             "USMD_SEQUENCE": sequence,
             "USMD_DATA_DIR": str(data.resolve()),
+            "USMD_FILES_DIR": str(self.service_files_dir(spec.name).resolve()),
         }
 
     def _host(self, name: str) -> None:
@@ -1650,6 +1908,16 @@ class Node(NcpHandlers):  # pylint: disable=too-many-instance-attributes,too-man
     # SP plumbing [SP-01]
     # ------------------------------------------------------------------
 
+    def sp_problem(self) -> str:
+        """Why the hosted services cannot be reached through SP, "" when they can."""
+        if parameter(self.signed.usd, 0x0010) is None:
+            return "no SP port in the USD (config usd / set sp-port): SP is not started"
+        if self.sp is None or self.tun is None:
+            return "SP is not running (see 'show logging')"
+        if self.tun.kind == "memory" and self.tun.reason:
+            return f"SP interface simulated in memory: {self.tun.reason}"
+        return ""
+
     def sp_vips(self) -> list[str]:
         catalog = self.signed.catalog()
         return [catalog[s].vip for s in self.hosted if s in catalog]
@@ -1721,6 +1989,9 @@ class Node(NcpHandlers):  # pylint: disable=too-many-instance-attributes,too-man
 
         self.tun = open_tun(mtu=parameter(self.signed.usd, 0x0013) or 1412,
                             on_packet=lambda raw: self.sp.from_tun(raw) if self.sp else None)
+        if self.tun.kind == "memory" and self.tun.reason:
+            self.event(f"SP interface simulated in memory, hosted services unreachable: "
+                       f"{self.tun.reason}", logging.ERROR)
         s = self.settings
         self.sp = SpEngine(context, self.identity.signing, self.identity.agreement,
                            send_udp=send_udp, write_tun=self.tun.write, port=port,

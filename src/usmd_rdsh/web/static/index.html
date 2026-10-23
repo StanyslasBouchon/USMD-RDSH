@@ -111,6 +111,24 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .input-wrap { position: relative; }
 .input-wrap .btn { position: absolute; right: 4px; top: 4px; height: 30px; width: 30px; }
 .input-wrap input { padding-right: 40px; }
+.suggest { display: flex; gap: 8px; align-items: center; } .suggest .btn { flex: none; }
+.suggest.wrap { flex-wrap: wrap; } .suggest.wrap .field-input { flex: 1 1 260px; min-width: 0; }
+
+/* Files of a service: uploaded or typed, kept on the authority */
+.files { display: grid; gap: 6px; }
+.file-row { display: flex; align-items: center; gap: 10px; padding: 7px 8px 7px 12px; border: 1px solid var(--line);
+  border-radius: var(--radius-sm); background: var(--panel); min-width: 0; }
+.file-row .n { font: 600 13px var(--mono); white-space: nowrap; }
+.file-row .p { flex: 1; min-width: 0; font: 12px var(--mono); color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.files .add { display: flex; gap: 8px; flex-wrap: wrap; }
+.editor { width: 860px; max-width: 100%; background: var(--panel); border: 1px solid var(--line); border-radius: 18px;
+  box-shadow: var(--shadow-lg); padding: 20px; display: grid; gap: 12px; }
+.editor h3 { font-size: 16px; } .editor .row { display: flex; gap: 8px; align-items: center; }
+.editor textarea { width: 100%; height: min(60vh, 520px); resize: vertical; padding: 12px 14px; border-radius: 10px;
+  border: 1px solid var(--term-line); background: var(--term-bg); color: var(--term-text); font: 13px/1.55 var(--mono);
+  tab-size: 2; white-space: pre; }
+.editor .actions { display: flex; gap: 8px; justify-content: flex-end; align-items: center; }
+.editor .actions .muted { margin-right: auto; font-size: 12.5px; }
 
 /* Switch */
 .switch { display: inline-flex; align-items: center; gap: 10px; cursor: pointer; user-select: none; height: 38px; }
@@ -401,6 +419,20 @@ td .yes { color: var(--ok); display: inline-flex; }
 .field .help code { font-family: var(--mono); font-size: 12px; background: var(--bg-sub); padding: 1px 5px; border-radius: 4px; }
 .field .act { padding-top: 4px; }
 .field.dirty .field-input, .field.dirty .select, .field.dirty .chips { border-color: color-mix(in srgb, var(--accent) 60%, var(--line)); }
+/* Configuration as text (show running-config), highlighted like the console */
+.cfgtext-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 14px 24px; border-bottom: 1px solid var(--line-2); }
+.cfgtext-bar .spacer { flex: 1; }
+.cfgtext { margin: 16px 24px 24px; border-radius: 12px; background: var(--term-bg); border: 1px solid var(--term-line);
+  color: var(--term-text); font: 13px/1.6 var(--mono); overflow: auto; max-height: calc(100vh - 330px); min-height: 220px;
+  counter-reset: ln; padding: 12px 0; }
+.cfgtext .ln { display: block; white-space: pre; padding: 0 18px 0 0; }
+.cfgtext .ln::before { counter-increment: ln; content: counter(ln); display: inline-block; width: 46px; padding-right: 14px;
+  margin-right: 4px; text-align: right; color: #3d475e; border-right: 1px solid var(--term-line); user-select: none; }
+.cfgtext .ln:hover { background: rgba(255, 255, 255, .03); }
+.hl-c { color: #6d7a94; font-style: italic; } .hl-k { color: #c792ea; font-weight: 600; }
+.hl-s { color: #82aaff; font-weight: 600; } .hl-a { color: #89ddff; }
+.hl-str { color: #c3e88d; } .hl-n { color: #f78c6c; } .hl-b { color: #ffcb6b; } .hl-v { color: #d5dceb; }
+.term .hl-c { font-style: normal; }
 .danger-zone { margin: 8px 24px 24px; padding: 16px 18px; border: 1px solid color-mix(in srgb, var(--bad) 25%, var(--line));
   border-radius: 12px; display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
 .danger-zone .t { flex: 1; min-width: 200px; }
@@ -417,6 +449,39 @@ td .yes { color: var(--ok); display: inline-flex; }
 .banner.bad { background: var(--bad-soft); color: var(--bad); }
 .banner.info { background: var(--info-soft); color: var(--info); }
 .banner pre { margin: 0; font: 12.5px var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.guide { margin: 16px 24px 0; padding: 16px 18px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel-2); }
+.guide > summary { display: flex; align-items: center; gap: 8px; cursor: pointer; font-weight: 600; list-style: none; }
+.guide > summary::-webkit-details-marker { display: none; }
+.guide > summary .i { color: var(--info); }
+.guide > summary .more { margin-left: auto; font-weight: 400; font-size: 12.5px; color: var(--muted); }
+.guide[open] > summary .more::after { content: "masquer"; } .guide:not([open]) > summary .more::after { content: "afficher"; }
+.guide p { color: var(--muted); font-size: 13px; margin-top: 8px; }
+.guide code { font-family: var(--mono); font-size: 12px; background: var(--bg-sub); padding: 1px 5px; border-radius: 4px; }
+.steps { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 8px; }
+.steps li { display: flex; gap: 10px; align-items: flex-start; font-size: 13px; }
+.steps .n { flex: none; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font: 600 11.5px var(--mono);
+  background: var(--panel); border: 1px solid var(--line); color: var(--muted); }
+.steps li.done .n { background: var(--ok-soft); border-color: transparent; color: var(--ok); }
+.steps li.todo .n { background: var(--accent); border-color: transparent; color: var(--accent-on); }
+.steps li > div { flex: 1; min-width: 0; } .steps li small { display: block; color: var(--muted); font-size: 12.5px; }
+.picker { display: grid; gap: 6px; }
+.pick { display: flex; gap: 10px; align-items: flex-start; padding: 9px 12px; border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: var(--panel); cursor: pointer; }
+.pick:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+.pick.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 6%, var(--panel)); }
+.pick.unknown { border-color: var(--bad); }
+.pick input { margin-top: 3px; accent-color: var(--accent); }
+.pick b { font: 600 13px var(--mono); } .pick .meta { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 3px; font-size: 12px; color: var(--muted); }
+.picker.disabled .pick { cursor: not-allowed; opacity: .75; }
+.recap { margin: 4px 24px 16px; padding: 12px 14px; border-radius: 10px; background: var(--info-soft); color: var(--text); font-size: 13px;
+  display: flex; gap: 10px; align-items: flex-start; }
+.recap .i { color: var(--info); flex: none; margin-top: 1px; }
+.recap.warn { background: var(--warn-soft); } .recap.warn .i { color: var(--warn); }
+.next-step { margin: 8px 24px 16px; padding: 16px 18px; border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line));
+  border-radius: 12px; display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+.next-step .t { flex: 1; min-width: 220px; } .next-step b { display: block; } .next-step p { font-size: 13px; color: var(--muted); }
+.field-label.guided label { font: 600 13.5px var(--sans); }
+.field-label .cli { font: 12px var(--mono); color: var(--faint); margin-top: 2px; overflow-wrap: anywhere; }
 .welcome { padding: 28px; }
 .welcome h2 { font-size: 20px; letter-spacing: -.02em; }
 .welcome > p { color: var(--muted); margin: 4px 0 22px; }
@@ -428,6 +493,20 @@ td .yes { color: var(--ok); display: inline-flex; }
 .tile b { display: flex; align-items: center; gap: 8px; font: 600 13.5px var(--mono); }
 .tile p { margin-top: 4px; font-size: 12.5px; color: var(--muted); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .back-mobile { display: none; }
+
+/* ---- Show commands (every 'show' of the console) ---------------------- */
+.show-form { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; margin-top: 16px; }
+.show-form > div { flex: 1; min-width: 160px; max-width: 320px; }
+.show-form .lbl small { font-weight: 400; color: var(--faint); margin-left: 4px; }
+.show-block { border-top: 1px solid var(--line-2); }
+.show-block:first-child { border-top: 0; }
+.show-block > .kv { padding: 16px 24px; }
+.show-block .kv dd { font-family: var(--mono); font-size: 12.5px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.show-text { margin: 0; padding: 14px 24px; font: 12.5px/1.55 var(--mono); color: var(--text-2); white-space: pre-wrap; overflow-wrap: anywhere; }
+.show-block .table-wrap { max-height: 70vh; overflow: auto; }
+.show-block td { font-family: var(--mono); font-size: 12.5px; }
+.show-meta { font-size: 12px; color: var(--muted); }
+.show-sec { margin: 0; padding: 14px 24px 0; font: 650 14px var(--mono); color: var(--accent); }
 
 /* ---- Logs ------------------------------------------------------------- */
 .toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 14px 20px; border-bottom: 1px solid var(--line-2); }
@@ -671,6 +750,19 @@ body.readonly .write-only { display: none !important; }
         </div>
       </section>
 
+      <!-- Show commands -->
+      <section data-page="shows" class="page config-layout hidden" id="shows-layout">
+        <aside class="card config-nav">
+          <div class="card-body"><div class="search sm"><svg class="i sm"><use href="#i-search"/></svg>
+            <input class="field-input" id="show-search" placeholder="Filtrer les commandes" autocomplete="off"></div></div>
+          <div class="list" id="show-nav"></div>
+        </aside>
+        <div>
+          <a class="btn sm back-mobile" href="#/shows"><svg class="i sm"><use href="#i-back"/></svg>Commandes</a>
+          <div class="card" id="show-out"></div>
+        </div>
+      </section>
+
       <!-- Logs -->
       <section data-page="logs" class="page hidden">
         <div class="card">
@@ -714,6 +806,15 @@ body.readonly .write-only { display: none !important; }
   <div class="actions"><button type="button" class="btn" id="modal-cancel">Annuler</button>
     <button type="button" class="btn primary" id="modal-ok">Confirmer</button></div>
 </div></dialog>
+
+<dialog id="editor"><form class="editor" method="dialog" id="editor-form">
+  <h3 id="editor-title"></h3>
+  <div class="row"><input class="field-input mono" id="editor-name" spellcheck="false" autocomplete="off" placeholder="nom-du-fichier.sh"></div>
+  <textarea id="editor-text" spellcheck="false" autocomplete="off"></textarea>
+  <div class="actions"><span class="muted" id="editor-hint"></span>
+    <button type="button" class="btn" id="editor-cancel">Annuler</button>
+    <button type="submit" class="btn primary" id="editor-ok">Enregistrer</button></div>
+</form></dialog>
 
 <dialog id="palette"><div class="palette">
   <div class="search"><svg class="i"><use href="#i-search"/></svg>
@@ -762,6 +863,7 @@ body.readonly .write-only { display: none !important; }
   <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6l8-3z"/></symbol>
   <symbol id="i-enter" viewBox="0 0 24 24"><path d="M9 10l-5 5 5 5"/><path d="M20 4v7a4 4 0 0 1-4 4H4"/></symbol>
   <symbol id="i-pause" viewBox="0 0 24 24"><path d="M9 5v14M15 5v14"/></symbol>
+  <symbol id="i-table" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M3 9.5h18M3 14.5h18M9.5 9.5V20"/></symbol>
 </svg>
 
 <script src="/static/capture.js"></script>
@@ -882,6 +984,7 @@ const PAGES = {
   network: { title: "Réseau", icon: "network", group: "Supervision", sub: "Voisins, nœuds de référence et table de l'USD" },
   services: { title: "Services", icon: "layers", group: "Supervision", sub: "Catalogue, instances proches et sessions SP" },
   capture: { title: "Capture", icon: "activity", group: "Supervision", sub: "Trames NNDP, NCP et SP en direct, filtres à la Wireshark" },
+  shows: { title: "Commandes show", icon: "table", group: "Supervision", sub: "Chaque commande show de la console, en tableaux" },
   config: { title: "Configuration", icon: "sliders", group: "Administration", sub: "Arbre de configuration du nœud" },
   logs: { title: "Journaux", icon: "list", group: "Administration", sub: "200 derniers messages du nœud" },
   console: { title: "Console", icon: "terminal", group: "Administration", sub: "Ligne de commande, comme sur le nœud" },
@@ -910,6 +1013,7 @@ async function route() {
   currentHash = location.hash;
   showPage(page);
   if (page === "config") openConfig(path, key === "~new" ? NEW_KEY : key);
+  if (page === "shows") openShow(path);
 }
 
 function showPage(name) {
@@ -1166,6 +1270,8 @@ function render(s) {
 async function refresh() {
   try { render(await call("GET", "/web/summary")); }
   catch (e) { if (e.message !== "401") { console.warn(e); setOffline(true); } }
+  // The open 'show' follows the node live too, except the long tech-support.
+  if (currentPage === "shows" && showResult && showCli !== "show tech-support") runShow(true);
 }
 function setOffline(v) { offline = v; tickLive(); }
 function tickLive() {
@@ -1218,7 +1324,8 @@ function renderLogs() {
 function termWrite(text, cls) {
   const div = document.createElement("div");
   if (cls) div.className = cls;
-  div.textContent = text;
+  if (!cls && /^Building configuration\.\.\./.test(text)) div.innerHTML = hlConfig(text).join("\n");
+  else div.textContent = text;
   $("term").appendChild(div);
   $("term").scrollTop = $("term").scrollHeight;
 }
@@ -1274,9 +1381,99 @@ async function openConfig(path, key) {
   renderConfigNav(); renderNode();
 }
 
+// ---- Configuration as text: show running-config / startup-config ---------
+const SHOW_PATH = "~show";
+const SHOWS = {
+  running: { cli: "show running-config", title: "running-config", desc: "Ce qui diffère des valeurs par défaut, en vigueur maintenant" },
+  startup: { cli: "show startup-config", title: "startup-config", desc: "La configuration enregistrée sur disque, lue au prochain démarrage" },
+  full: { cli: "show configuration", title: "configuration complète", desc: "Toute la configuration, valeurs par défaut comprises" },
+};
+
+// One line of the console's configuration syntax (config / edit / set / next
+// / end, "!" comments) as highlighted HTML.
+const CFG_LINE = /^(\s*)(config|edit|set|unset|append|next|end)\b(.*)$/;
+const CFG_WORD = /"(?:[^"\\]|\\.)*"|\S+|\s+/g;
+const cfgValue = (w) => w.startsWith('"') ? "hl-str" : /^(enable|disable)$/.test(w) ? "hl-b"
+  : /^\*+$/.test(w) ? "hl-c" : /^(0x[0-9a-f]+|-?[\d.:/]+)$/i.test(w) ? "hl-n" : "hl-v";
+function hlConfigLine(line) {
+  if (/^\s*!/.test(line) || /^(Building configuration|Current configuration)/.test(line))
+    return `<span class="hl-c">${esc(line)}</span>`;
+  const m = line.match(CFG_LINE);
+  if (!m) return esc(line);
+  const [, indent, kw, rest] = m;
+  let html = indent + `<span class="hl-k">${kw}</span>`, first = true;
+  for (const w of rest.match(CFG_WORD) || []) {
+    if (!w.trim()) { html += w; continue; }
+    const cls = kw === "config" ? "hl-s" : kw === "edit" ? "hl-str"
+      : (kw === "set" || kw === "unset" || kw === "append") && first ? "hl-a" : cfgValue(w);
+    html += `<span class="${cls}">${esc(w)}</span>`; first = false;
+  }
+  return html;
+}
+const hlConfig = (text) => String(text).split("\n").map(hlConfigLine);
+
+let configTexts = {};
+async function renderConfigText(box, which) {
+  if (!SHOWS[which]) which = "running";
+  const show = SHOWS[which];
+  $("page-sub").textContent = "Configuration › " + show.cli;
+  box.innerHTML = `<div class="form-head"><div class="crumbs"><a href="${href("config")}">Configuration</a>${icon("chev")}<span>${esc(show.cli)}</span></div>
+    <div class="row"><div><h2>${esc(show.title)} <span id="cfgtext-state"></span></h2><p>${esc(show.desc)}</p></div></div></div>
+    <div class="cfgtext-bar"><div class="seg" role="tablist">${Object.entries(SHOWS).map(([k, s]) =>
+      `<button type="button" role="tab" class="${k === which ? "on" : ""}" data-show="${k}">${esc(s.title)}</button>`).join("")}</div>
+      <span class="spacer"></span>
+      <span class="muted mono" id="cfgtext-path"></span>
+      <button class="btn sm" id="cfgtext-reload" title="Relire">${icon("reset", "sm")}Actualiser</button>
+      <button class="btn sm" id="cfgtext-copy" title="Copier le texte">${icon("copy", "sm")}Copier</button>
+      <button class="btn sm" id="cfgtext-save" title="Télécharger en .conf">Télécharger</button></div>
+    <div id="cfgtext-banner"></div>
+    <pre class="cfgtext" id="cfgtext"><span class="ln"><span class="hl-c">Chargement…</span></span></pre>`;
+  $$("[data-show]", box).forEach(b => b.onclick = () => go("config", SHOW_PATH, b.dataset.show));
+  $("cfgtext-reload").onclick = () => renderConfigText(box, which);
+  $("cfgtext-copy").onclick = () => configTexts[which] && copyText(configTexts[which].text);
+  $("cfgtext-save").onclick = () => {
+    if (!configTexts[which]) return;
+    const host = (configTexts[which].text.match(/^Current configuration of (\S+?):/m) || [, "usmd"])[1];
+    const a = Object.assign(document.createElement("a"), { download: `${host}-${which}.conf`,
+      href: URL.createObjectURL(new Blob([configTexts[which].text + "\n"], { type: "text/plain" })) });
+    a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  };
+  let running, startup, shown;
+  try {
+    [running, startup, shown] = await Promise.all(["running", "startup", which].map(w =>
+      call("GET", "/web/config/text?which=" + w)));
+  } catch (e) {
+    if (e.message !== "401") $("cfgtext").innerHTML = `<span class="ln"><span class="hl-c">! ${esc(e.message)}</span></span>`;
+    return;
+  }
+  if (configPath !== SHOW_PATH || configKey !== which) return;
+  configTexts[which] = shown;
+  $("cfgtext").innerHTML = hlConfig(shown.text).map(l => `<span class="ln">${l || " "}</span>`).join("");
+  if (shown.path) $("cfgtext-path").textContent = shown.path;
+  if (which === "full") return;
+  const same = running.text === startup.text;
+  $("cfgtext-state").innerHTML = same ? pill("enregistrée", "ok", true) : pill("non enregistrée", "warn", true);
+  if (same) return;
+  $("cfgtext-banner").innerHTML = `<div class="banner info">${icon("info")}<span>La configuration en cours diffère de celle enregistrée sur disque.
+    ${canWrite ? '<button class="btn sm" id="cfgtext-write" style="margin-left:8px">write memory</button>' : ""}</span></div>`;
+  if ($("cfgtext-write")) $("cfgtext-write").onclick = async () => {
+    try {
+      const r = await call("POST", "/web/cli", { line: "write memory", confirm: true });
+      const out = (r.output || []).join("\n");
+      toast(/^✗|refus|error|invalid/im.test(out) ? "Échec de l'enregistrement" : "Configuration enregistrée",
+        /^✗|refus|error|invalid/im.test(out) ? "bad" : "ok", out);
+    } catch (e) { if (e.message !== "401") toast("Échec de l'enregistrement", "bad", e.message); }
+    renderConfigText(box, which);
+  };
+}
+
 function renderConfigNav() {
   const needle = $("config-search").value.trim().toLowerCase();
-  let group = null, html = "";
+  let group = null, html = Object.entries(SHOWS)
+    .filter(([, s]) => !needle || (s.cli + " " + s.desc).toLowerCase().includes(needle))
+    .map(([k, s]) => `<a class="cfg-link ${configPath === SHOW_PATH && configKey === k ? "on" : ""}" href="${href("config", SHOW_PATH, k)}" title="${esc(s.desc)}">
+      <span class="n">${esc(s.cli)}</span></a>`).join("");
+  if (html) html = `<div class="group">vue texte</div>` + html;
   for (const node of sortedNodes()) {
     if (needle && !(node.path + " " + node.description).toLowerCase().includes(needle)) continue;
     const head = headOf(node);
@@ -1322,9 +1519,11 @@ function chipInput(writable) {
   return c;
 }
 
-function control(field, value, writable) {
+function control(field, value, writable, custom) {
   let c;
-  if (field.kind === "bool") {
+  if (custom) {
+    c = custom(writable);
+  } else if (field.kind === "bool") {
     const lab = document.createElement("label"); lab.className = "switch";
     const cb = document.createElement("input"); cb.type = "checkbox"; cb.disabled = !writable;
     const txt = document.createElement("span"); txt.className = "switch-text";
@@ -1373,7 +1572,9 @@ function fmtDefault(f) {
 
 function configWelcome(box) {
   let group = null, html = `<div class="welcome"><h2>Configuration du nœud</h2>
-    <p>Choisissez une section. Les changements sont validés puis appliqués immédiatement, comme un <span class="mono">commit</span> sur la console.</p>`;
+    <p>Choisissez une section. Les changements sont validés puis appliqués immédiatement, comme un <span class="mono">commit</span> sur la console.
+    Le texte complet se lit dans <a href="${href("config", SHOW_PATH, "running")}">show running-config</a>
+    et <a href="${href("config", SHOW_PATH, "startup")}">show startup-config</a>.</p>`;
   for (const node of sortedNodes()) {
     const head = headOf(node);
     if (head !== group) { html += (group ? "</div>" : "") + `<h4>${esc(head)}</h4><div class="tiles">`; group = head; }
@@ -1383,11 +1584,462 @@ function configWelcome(box) {
   box.innerHTML = html + "</div></div>";
 }
 
+// ---- Guides: what a section is for and how to use it --------------------
+// A section with a guide gets an explanation with its steps, labels and help
+// in plain words, custom controls, a live recap and the step that follows.
+const rowsOf = (path) => (nodeOf(path) || { rows: {} }).rows;
+// The form being filled in, for controls that suggest a value from the others;
+// and values a "next step" hands to the entry it creates.
+let formValues = () => ({}), prefill = null;
+
+function hint(html) {
+  return `<div class="banner info" style="margin:0">${icon("info")}<span>${html}</span></div>`;
+}
+
+function servicePicker(writable, exclude = null, empty = "") {
+  const catalogue = Object.fromEntries(Object.entries(rowsOf("service")).filter(([n]) => n !== exclude));
+  const wrap = document.createElement("div"); wrap.className = "picker" + (writable ? "" : " disabled");
+  let items = [];
+  const c = { el: wrap, onchange() {} };
+  const draw = () => {
+    const names = [...Object.keys(catalogue).sort(), ...items.filter(n => !(n in catalogue))];
+    if (!names.length) {
+      wrap.innerHTML = hint(empty || `Le catalogue ne contient encore aucun service : une mutation ne peut regrouper que des services déclarés.
+        <a href="${href("config", "service", "~new")}">Déclarer un service</a>`);
+      return;
+    }
+    wrap.innerHTML = names.map(n => {
+      const s = catalogue[n], on = items.includes(n);
+      const meta = s ? [pill("aire " + (s.area || "?"), "sm"), pill(s.type || "static", "sm"), s.id ? `<span class="mono">id ${esc(s.id)}</span>` : "",
+        (s.dependencies || []).length ? `<span>dépend de ${esc(s.dependencies.join(", "))}</span>` : ""].join("")
+        : `<span style="color:var(--bad)">absent du catalogue : retirez-le</span>`;
+      return `<label class="pick ${on ? "on" : ""} ${s ? "" : "unknown"}"><input type="checkbox" value="${esc(n)}" ${on ? "checked" : ""} ${writable ? "" : "disabled"}>
+        <div><b>${esc(n)}</b><div class="meta">${meta}</div></div></label>`;
+    }).join("");
+  };
+  wrap.addEventListener("change", e => {
+    const n = e.target.value;
+    items = e.target.checked ? [...items, n] : items.filter(x => x !== n);
+    draw(); c.onchange();
+  });
+  Object.assign(c, { get: () => items.join(" "), set: v => { items = [...(v || [])]; draw(); }, value: () => items.slice() });
+  return c;
+}
+
+function areaSelect(writable) {
+  const areas = rowsOf("service-area"), names = Object.keys(areas).sort();
+  const wrap = document.createElement("div");
+  const sel = document.createElement("select"); sel.className = "select"; sel.disabled = !writable;
+  const c = { el: wrap, onchange() {} };
+  const fill = (v) => {
+    const all = v && !names.includes(v) ? [...names, v] : names;
+    sel.innerHTML = '<option value="">— choisir une aire —</option>' + all.map(n => {
+      const a = areas[n];
+      return `<option value="${esc(n)}">${esc(n)}${a ? ` — ${esc(a.prefix)}/${esc(a.prefix_length)}` : " (inconnue)"}</option>`;
+    }).join("");
+    sel.value = v || "";
+  };
+  wrap.appendChild(sel);
+  if (!names.length) wrap.insertAdjacentHTML("beforeend", `<div style="margin-top:8px">${hint(`Aucune aire de service n'est déclarée : un service
+    appartient toujours à une aire. <a href="${href("config", "service-area", "~new")}">Créer une aire</a>`)}</div>`);
+  sel.addEventListener("change", () => c.onchange());
+  Object.assign(c, { get: () => sel.value, set: v => fill(v), value: () => sel.value || null });
+  return c;
+}
+
+// A text field with a "Proposer" button that fills in a free value.
+const suggested = (suggest, why) => (writable) => {
+  const wrap = document.createElement("div"); wrap.className = "suggest";
+  const inp = document.createElement("input"); inp.className = "field-input mono"; inp.disabled = !writable;
+  inp.spellcheck = false; inp.autocomplete = "off";
+  const c = { el: wrap, input: inp, onchange() {} };
+  wrap.appendChild(inp);
+  if (writable) {
+    const btn = document.createElement("button"); btn.type = "button"; btn.className = "btn ghost sm"; btn.textContent = "Proposer"; btn.title = why;
+    btn.onclick = () => {
+      const v = suggest(formValues());
+      if (v) { inp.value = v; c.onchange(); } else toast("Rien à proposer", "info", why);
+    };
+    wrap.appendChild(btn);
+  }
+  inp.addEventListener("input", () => c.onchange());
+  Object.assign(c, { get: () => inp.value, set: v => { inp.value = v ?? ""; }, value: () => inp.value.trim() === "" ? null : inp.value.trim() });
+  return c;
+};
+
+// ---- Files of a service: sent to the authority, which keeps them and puts
+// their content in the signed mutation; the form holds the paths it answers.
+const textCache = new Map();  // path -> text sent in this session (not yet readable back)
+const baseName = (p) => String(p).split(/[\\/]/).pop();
+const serviceKey = () => configKey !== NEW_KEY ? configKey : ($("fld-name")?.value.trim() || "");
+function bytesToB64(bytes) {
+  let s = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+async function sendServiceFile(name, bytes, serviceFile = false) {
+  const service = serviceKey();
+  if (!service) throw new Error("Donnez d'abord un nom au service (champ name).");
+  return call("POST", "/web/service-files", { service, name, content: bytesToB64(bytes), service_file: serviceFile });
+}
+async function readServiceFile(path) {
+  if (textCache.has(path)) return textCache.get(path);
+  if (configKey === NEW_KEY) return null;
+  try { return (await call("GET", `/web/service-files?service=${encodeURIComponent(configKey)}&path=${encodeURIComponent(path)}`)).text; }
+  catch (e) { if (e.message !== "401") toast("Lecture impossible", "bad", e.message); return null; }
+}
+function pickFiles(accept, multiple) {
+  return new Promise(resolve => {
+    const inp = Object.assign(document.createElement("input"), { type: "file", accept, multiple });
+    inp.onchange = () => resolve([...inp.files]);
+    inp.click();
+  });
+}
+
+// The text editor: resolves {name, text}, or null when cancelled.
+function editText({ title, name = "", nameEditable = false, text = "", hint = "" }) {
+  const dlg = $("editor");
+  $("editor-title").textContent = title; $("editor-hint").textContent = hint;
+  $("editor-name").value = name; $("editor-name").disabled = !nameEditable;
+  $("editor-name").parentElement.classList.toggle("hidden", !nameEditable && !name);
+  $("editor-text").value = text;
+  dlg.showModal(); (nameEditable && !name ? $("editor-name") : $("editor-text")).focus();
+  return new Promise(resolve => {
+    const done = (v) => {
+      $("editor-form").onsubmit = $("editor-cancel").onclick = dlg.onkeydown = null;
+      if (dlg.open) dlg.close();
+      resolve(v);
+    };
+    $("editor-form").onsubmit = (e) => { e.preventDefault(); done({ name: $("editor-name").value.trim(), text: $("editor-text").value }); };
+    $("editor-cancel").onclick = () => done(null);
+    dlg.onkeydown = (e) => {
+      if (e.key === "Escape") { e.preventDefault(); done(null); }
+      if (e.key === "Tab" && e.target.id === "editor-text") {  // a tab types two spaces in YAML
+        e.preventDefault(); e.target.setRangeText("  ", e.target.selectionStart, e.target.selectionEnd, "end");
+      }
+    };
+  });
+}
+
+const SERVICE_TEMPLATE = (name) => `name: ${name}
+type: static
+build:
+  - command: "$USMD_FILES_DIR/start.sh"
+    timeout: 120
+check_health:
+  - command: "true"
+unbuild:
+  - command: "true"
+emergency:
+  - action: unbuild
+`;
+
+// service_file: a path, a file to upload, or YAML typed in place.
+function serviceFileControl(writable) {
+  const wrap = document.createElement("div"); wrap.className = "suggest wrap";
+  const inp = document.createElement("input"); inp.className = "field-input mono"; inp.disabled = !writable;
+  inp.spellcheck = false; inp.autocomplete = "off"; inp.placeholder = "chemin sur l'autorité, ou téléverser / saisir";
+  const c = { el: wrap, input: inp, onchange() {} };
+  const setPath = (path) => { inp.value = path; c.onchange(); };
+  const upload = document.createElement("button"); upload.type = "button"; upload.className = "btn sm"; upload.textContent = "Téléverser…";
+  const edit = document.createElement("button"); edit.type = "button"; edit.className = "btn sm"; edit.textContent = "Éditer le texte";
+  wrap.append(inp);
+  if (writable) wrap.append(upload, edit);
+  upload.onclick = async () => {
+    const [file] = await pickFiles(".yaml,.yml,text/yaml,text/plain", false);
+    if (!file) return;
+    try {
+      const r = await sendServiceFile(file.name, new Uint8Array(await file.arrayBuffer()), true);
+      textCache.set(r.path, await file.text()); setPath(r.path);
+      toast(`${file.name} envoyé`, "ok", `Conservé sur l'autorité : ${r.path}`);
+    } catch (e) { if (e.message !== "401") toast("Fichier refusé", "bad", e.message); }
+  };
+  edit.onclick = async () => {
+    const service = serviceKey();
+    if (!service) return toast("Donnez d'abord un nom au service.", "warn");
+    const current = inp.value.trim() ? await readServiceFile(inp.value.trim()) : null;
+    let text = current ?? SERVICE_TEMPLATE(service);
+    for (;;) {
+      const r = await editText({ title: `Fichier de service — ${service}`, text,
+        hint: "YAML : name, type, dependencies, build, unbuild, check_health, emergency, update" });
+      if (!r) return;
+      text = r.text;
+      try {
+        const saved = await sendServiceFile(baseName(inp.value.trim()) || `${service}.yaml`,
+                                            new TextEncoder().encode(text), true);
+        textCache.set(saved.path, text); setPath(saved.path);
+        return toast("Fichier de service enregistré", "ok", saved.path);
+      } catch (e) { if (e.message === "401") return; toast("Fichier refusé", "bad", e.message); }  // back to the editor
+    }
+  };
+  inp.addEventListener("input", () => c.onchange());
+  Object.assign(c, { get: () => inp.value, set: v => { inp.value = v ?? ""; }, value: () => inp.value.trim() === "" ? null : inp.value.trim() });
+  return c;
+}
+
+// files: several files, uploaded at once or typed one by one.
+function filesControl(writable) {
+  const wrap = document.createElement("div"); wrap.className = "files";
+  const list = document.createElement("div"); list.className = "files";
+  let items = [];
+  const c = { el: wrap, onchange() {} };
+  const put = (path) => { items = [...items.filter(p => baseName(p) !== baseName(path)), path]; draw(); c.onchange(); };
+  const draw = () => {
+    list.innerHTML = items.length ? "" : `<span class="muted" style="font-size:12.5px">Aucun fichier.</span>`;
+    items.forEach((path, i) => {
+      const row = document.createElement("div"); row.className = "file-row";
+      row.innerHTML = `${icon("list", "sm")}<span class="n">${esc(baseName(path))}</span><span class="p" title="${esc(path)}">${esc(path)}</span>`;
+      const open = document.createElement("button"); open.type = "button"; open.className = "btn ghost sm";
+      open.textContent = writable ? "Éditer" : "Voir";
+      open.onclick = async () => {
+        const text = await readServiceFile(path);
+        if (text === null) return toast("Fichier non lisible en texte", "warn", path);
+        const r = await editText({ title: baseName(path), name: baseName(path), text: text ?? "" });
+        if (!r || !writable) return;
+        try {
+          const saved = await sendServiceFile(baseName(path), new TextEncoder().encode(r.text));
+          textCache.set(saved.path, r.text); put(saved.path); toast(`${saved.name} enregistré`, "ok");
+        } catch (e) { if (e.message !== "401") toast("Fichier refusé", "bad", e.message); }
+      };
+      row.appendChild(open);
+      if (writable) {
+        const x = document.createElement("button"); x.type = "button"; x.className = "btn ghost icon sm"; x.title = "Retirer"; x.innerHTML = icon("x", "sm");
+        x.onclick = () => { items.splice(i, 1); draw(); c.onchange(); };
+        row.appendChild(x);
+      }
+      list.appendChild(row);
+    });
+  };
+  wrap.appendChild(list);
+  if (writable) {
+    const add = document.createElement("div"); add.className = "add";
+    const up = document.createElement("button"); up.type = "button"; up.className = "btn sm"; up.innerHTML = icon("plus", "sm") + "Ajouter des fichiers…";
+    const typed = document.createElement("button"); typed.type = "button"; typed.className = "btn sm"; typed.textContent = "Nouveau fichier texte";
+    up.onclick = async () => {
+      for (const file of await pickFiles("", true)) {
+        try {
+          const r = await sendServiceFile(file.name, new Uint8Array(await file.arrayBuffer()));
+          put(r.path); toast(`${r.name} envoyé`, "ok");
+        } catch (e) { if (e.message === "401") return; toast(`${file.name} refusé`, "bad", e.message); }
+      }
+    };
+    typed.onclick = async () => {
+      if (!serviceKey()) return toast("Donnez d'abord un nom au service.", "warn");
+      const r = await editText({ title: "Nouveau fichier", nameEditable: true, text: "#!/bin/sh\nset -e\n",
+        hint: "Commençant par #!, il sera exécutable sur les nœuds" });
+      if (!r) return;
+      try {
+        const saved = await sendServiceFile(r.name, new TextEncoder().encode(r.text));
+        textCache.set(saved.path, r.text); put(saved.path); toast(`${saved.name} enregistré`, "ok");
+      } catch (e) { if (e.message !== "401") toast("Fichier refusé", "bad", e.message); }
+    };
+    add.append(up, typed); wrap.appendChild(add);
+  }
+  Object.assign(c, { get: () => items.join("\n"), set: v => { items = [...(v || [])]; draw(); }, value: () => items.slice() });
+  return c;
+}
+
+const ipToInt = (ip) => ip.split(".").reduce((n, b) => n * 256 + Number(b), 0);
+const intToIp = (n) => [24, 16, 8, 0].map(s => Math.floor(n / 2 ** s) % 256).join(".");
+const otherServices = () => Object.entries(rowsOf("service")).filter(([n]) => configKey === NEW_KEY || n !== configKey).map(([, s]) => s);
+
+function freeServiceId() {
+  const used = new Set(otherServices().map(s => parseInt(s.id, 16)));
+  for (let id = 1; id <= 0xffe; id++) if (!used.has(id)) return id.toString(16).padStart(3, "0");
+  return "";
+}
+function freeVip(v) {
+  const area = rowsOf("service-area")[v.area];
+  if (!area) return "";
+  const used = new Set(otherServices().map(s => s.vip));
+  const base = ipToInt(area.prefix), size = 2 ** (32 - area.prefix_length);
+  const start = base - base % size;
+  for (let i = 1; i < size - 1; i++) { const ip = intToIp(start + i); if (!used.has(ip)) return ip; }
+  return "";
+}
+function freeGroup(v) {
+  const used = new Set(otherServices().map(s => s.group));
+  const id = parseInt(v.id || freeServiceId(), 16);
+  const first = `239.1.${id >> 8}.${id & 255}`;
+  if (!used.has(first)) return first;
+  for (let i = 1; i < 65536; i++) { const ip = `239.2.${i >> 8}.${i & 255}`; if (!used.has(ip)) return ip; }
+  return "";
+}
+const inArea = (ip, area) => {
+  if (!ip || !area) return true;
+  const size = 2 ** (32 - area.prefix_length), base = ipToInt(area.prefix);
+  return Math.floor(ipToInt(ip) / size) === Math.floor(base / size);
+};
+
+const seconds = (s) => s >= 120 ? `${Math.round(s / 60)} min` : `${s} s`;
+
+const GUIDES = {
+  mutation: {
+    title: "À quoi sert une mutation ?",
+    what: `Une mutation est un <b>rôle</b> qu'un nœud peut tenir : la liste des services qu'il fait tourner.
+      Quand un nœud se <i>transmute</i> vers une mutation, il déconstruit les services de l'ancienne puis construit et contrôle ceux de la nouvelle.
+      Les bornes disent combien de nœuds de l'USD tiennent ce rôle. Exemple : une mutation <code>web</code> regroupant
+      <code>nginx</code> et <code>php</code>, tenue par 2 à 4 nœuds.`,
+    steps: () => [
+      [Object.keys(rowsOf("service")).length > 0, "Déclarer les services dans le catalogue",
+        `Chaque service a un identifiant, une aire et un fichier de service. <a href="${href("config", "service")}">config service</a>`],
+      [Object.keys(rowsOf("mutation")).length > 0, "Créer la mutation",
+        "Choisir ses services et le nombre de nœuds qui doivent l'héberger. L'autorité la signe et la diffuse à tout l'USD."],
+      [!!(summary && summary.mutation && summary.mutation.mutation), "Faire tenir le rôle par des nœuds",
+        `Ouvrez la mutation puis « Héberger sur ce nœud », ou lancez sur chaque nœud concerné <code>execute node transmute mutation=&lt;nom&gt;</code>.
+         Ensuite, l'USD répartit la charge par délégation dans la limite du maximum.`],
+    ],
+    fields: {
+      name: { label: "Nom", help: "Nom du rôle, sans espace, par exemple <code>web</code> ou <code>base-donnees</code>. C'est ce nom qu'on donne à un nœud pour qu'il prenne ce rôle." },
+      services: { label: "Services", control: servicePicker,
+        help: "Services que fait tourner un nœud qui tient ce rôle, construits dans l'ordre de leurs dépendances. Une dépendance peut tourner sur un autre nœud, à condition d'être dans la même aire." },
+      min_instances: { label: "Nœuds au minimum",
+        help: "Nombre de nœuds qui doivent tenir ce rôle. Tant qu'il n'est pas atteint, un nœud de cette mutation qui ne répond plus est repris par un autre." },
+      max_instances: { label: "Nœuds au maximum",
+        help: "Au-delà, un nœud refuse de prendre ce rôle et les nœuds en excédent rendent leur instance. <code>0</code> = pas de limite." },
+      average_transmutation: { label: "Durée de transmutation (s)",
+        help: "Temps moyen pour qu'un nœud prenne ce rôle, construction des services comprise (Tmoy). Il sert à juger s'il vaut mieux déléguer à un autre nœud." },
+    },
+    check: (v) => !(v.services || []).length ? "Choisissez au moins un service : une mutation sans service ne fait rien tourner." : "",
+    recap(v, key) {
+      const services = v.services || [];
+      if (!services.length) return ["warn", "Choisissez au moins un service dans la liste."];
+      const catalogue = rowsOf("service");
+      const min = v.min_instances ?? 1, max = v.max_instances ?? 0;
+      const count = !max ? `au moins ${min} nœud${min > 1 ? "s" : ""} (sans maximum)` : min === max ? `${min} nœud${min > 1 ? "s" : ""} exactement`
+        : `${min} à ${max} nœuds`;
+      let text = `Un nœud qui tient le rôle <b>${esc(key || "…")}</b> fera tourner <b>${esc(services.join(", "))}</b>.
+        Ce rôle sera tenu par ${count} de l'USD ; une transmutation prend environ ${seconds(v.average_transmutation ?? 60)}.`;
+      const outside = services.flatMap(n => ((catalogue[n] || {}).dependencies || []).filter(d => !services.includes(d))
+        .map(d => `${esc(n)} dépend de ${esc(d)}`));
+      if (outside.length) text += `<br>${outside.join(", ")} : ${outside.length > 1 ? "ces dépendances devront" : "cette dépendance devra"} tourner sur un autre nœud de la même aire, ou être ajoutée${outside.length > 1 ? "s" : ""} ici.`;
+      if (max && max < min) return ["warn", "Le maximum ne peut pas être inférieur au minimum."];
+      return [outside.length ? "warn" : "", text];
+    },
+    next(key) {
+      const hosted = summary && summary.mutation ? summary.mutation.mutation : "";
+      if (hosted === key) return { text: `Ce nœud tient déjà le rôle « ${esc(key)} ».`, sub: "Pour l'ajouter à un autre nœud, lancez sur lui " +
+        `<code>execute node transmute mutation=${esc(key)}</code>.` };
+      return { text: "Prochaine étape : faire tenir ce rôle par un nœud",
+        sub: (hosted ? `Ce nœud quittera « ${esc(hosted)} » et construira les services de « ${esc(key)} ». ` : "Ce nœud construira les services de cette mutation. ") +
+          `Pour un autre nœud, lancez sur lui <code>execute node transmute mutation=${esc(key)}</code>.`,
+        button: "Héberger sur ce nœud", line: `execute node transmute mutation=${key}`,
+        confirm: { title: `Transmuter ce nœud vers « ${key} » ?`, body: hosted ? `Les services de « ${hosted} » seront déconstruits.` : "Les services de la mutation seront construits puis contrôlés." },
+        done: "Transmutation lancée", fail: "Transmutation refusée" };
+    },
+  },
+  service: {
+    title: "À quoi sert un service ?",
+    what: `Un service est une <b>application que les nœuds font tourner</b>, par exemple <code>nginx</code> ou <code>postgresql</code>.
+      Son entrée au catalogue de l'USD lui donne un identifiant, une aire et ses adresses : la <b>VIP</b> joint l'instance la plus proche,
+      l'adresse de <b>groupe</b> les joint toutes. Son <b>fichier de service</b> dit comment le construire, le déconstruire et contrôler sa santé.
+      Un service ne tourne nulle part tant qu'il n'est pas placé dans une mutation.`,
+    steps: () => [
+      [Object.keys(rowsOf("service-area")).length > 0, "Créer une aire de service",
+        `Le plan d'adresses où vivent les VIP des services. <a href="${href("config", "service-area")}">config service-area</a>`],
+      [Object.keys(rowsOf("service")).length > 0, "Déclarer le service",
+        "Nom, identifiant, aire, adresses et fichier de service. L'autorité signe le catalogue et le diffuse à tout l'USD."],
+      [Object.values(rowsOf("mutation")).some(m => (m.services || []).length), "Le placer dans une mutation",
+        `Une mutation regroupe les services qu'un nœud fait tourner. <a href="${href("config", "mutation")}">config mutation</a>`],
+    ],
+    fields: {
+      name: { label: "Nom", help: "Nom unique dans l'USD, sans espace, par exemple <code>nginx</code>. Le fichier de service doit contenir un document avec ce même <code>name</code>." },
+      id: { label: "Identifiant", control: suggested(() => freeServiceId(), "Premier identifiant libre du catalogue"),
+        help: "Trois chiffres hexadécimaux, de <code>001</code> à <code>ffe</code>, uniques dans l'USD. Il forme les adresses SP des instances (<code>0a1.0001</code>…). « Proposer » prend le premier libre." },
+      area: { label: "Aire", control: areaSelect,
+        help: "Plan d'adresses du service. Sa VIP doit être dans le préfixe de l'aire, et ses dépendances dans la même aire." },
+      type: { label: "Type",
+        help: "<b>static</b> : toutes les instances sont identiques, une nouvelle instance est prête dès la fin du build (ex. serveur web). <b>dynamic</b> : chaque instance a ses propres données à acquérir, la transmutation dure plus longtemps (ex. base de données)." },
+      dependencies: { label: "Dépendances", control: (w) => servicePicker(w, configKey === NEW_KEY ? null : configKey,
+          "Aucun autre service au catalogue : rien dont celui-ci puisse dépendre pour l'instant."),
+        help: "Services dont il a besoin pour fonctionner, dans la même aire. Ils peuvent tourner sur d'autres nœuds ; sans instance joignable, le nœud se déclare en urgence." },
+      vip: { label: "VIP", control: suggested(freeVip, "Choisissez d'abord une aire : la VIP est prise dans son préfixe"),
+        help: "Adresse virtuelle par laquelle les clients joignent l'instance la plus proche (<code>sss.0000</code>). Dans le préfixe de l'aire, unique. « Proposer » prend la première libre de l'aire." },
+      group: { label: "Adresse de groupe", control: suggested(freeGroup, "Adresse multicast libre en 239.0.0.0/8"),
+        help: "Adresse multicast qui joint toutes les instances à la fois (<code>sss.ffff</code>), dans <code>239.0.0.0/8</code>, unique. Facultative : utile pour diffuser des données aux instances." },
+      service_file: { label: "Fichier de service", control: serviceFileControl,
+        help: `Fichier YAML qui décrit les séquences <code>build</code>, <code>unbuild</code>, <code>check_health</code>,
+          <code>emergency</code> et <code>update</code>. Chaque séquence est une liste d'étapes <code>command:</code> (commande système) ou
+          <code>action:</code> (autre séquence), avec un <code>timeout:</code> facultatif. Téléversez-le ou saisissez-le : il est gardé sur l'autorité,
+          qui le signe avec la mutation. Il doit contenir un document <code>name:</code> au nom du service. Vide : le service n'exécute aucune commande.` },
+      files: { label: "Fichiers joints", control: filesControl,
+        help: `Scripts, SQL, configurations… que les séquences utilisent (512 Kio au total). Signés avec la mutation, ils sont écrits sur chaque nœud
+          qui héberge le service dans <code>$USMD_FILES_DIR</code> avant chaque séquence ; un fichier qui commence par <code>#!</code> y est exécutable.
+          Exemple d'étape : <code>command: "$USMD_FILES_DIR/init.sh"</code>.` },
+      step_timeout: { label: "Délai par étape (s)",
+        help: "N'est plus utilisé : le délai se règle étape par étape avec <code>timeout:</code> dans le fichier de service (300 s par défaut)." },
+    },
+    check: (v) => !v.area ? "Choisissez l'aire du service." : !v.id ? "Donnez un identifiant au service (ou cliquez sur « Proposer »)." : "",
+    recap(v, key) {
+      const name = esc(key || "…"), area = rowsOf("service-area")[v.area], catalogue = rowsOf("service");
+      if (!v.area) return ["warn", "Choisissez l'aire du service."];
+      const warn = [];
+      const id = v.id ? v.id.toLowerCase().padStart(3, "0") : "";
+      const twin = id && otherServices().find(s => s.id && s.id.toLowerCase() === id);
+      if (twin) warn.push(`L'identifiant ${esc(id)} est déjà pris par un autre service.`);
+      if (v.vip && area && !inArea(v.vip, area)) warn.push(`La VIP ${esc(v.vip)} n'est pas dans le préfixe de l'aire ${esc(v.area)} (${esc(area.prefix)}/${esc(area.prefix_length)}).`);
+      if (v.group && !v.group.startsWith("239.")) warn.push("L'adresse de groupe doit être dans 239.0.0.0/8.");
+      const elsewhere = (v.dependencies || []).filter(d => catalogue[d] && catalogue[d].area !== v.area);
+      if (elsewhere.length) warn.push(`${esc(elsewhere.join(", "))} ${elsewhere.length > 1 ? "sont" : "est"} dans une autre aire : une dépendance doit être dans la même aire.`);
+      let text = `Le service <b>${name}</b>${id ? ` (id <span class="mono">${esc(id)}</span>)` : ""} appartient à l'aire <b>${esc(v.area)}</b>.
+        ${v.vip ? `Les clients joignent l'instance la plus proche par <span class="mono">${esc(v.vip)}</span>.` : "Sans VIP, les clients ne peuvent pas le joindre par une adresse virtuelle."}
+        ${(v.dependencies || []).length ? `Il a besoin de ${esc(v.dependencies.join(", "))}.` : ""}
+        ${v.service_file ? `Ses séquences sont lues dans <span class="mono">${esc(v.service_file)}</span>.` : "Sans fichier de service, aucune commande ne sera exécutée pour le construire."}`;
+      if (warn.length) text = warn.join("<br>") + "<br>" + text;
+      return [warn.length || !v.service_file || !v.vip ? "warn" : "", text];
+    },
+    next(key) {
+      const holders = Object.entries(rowsOf("mutation")).filter(([, m]) => (m.services || []).includes(key)).map(([n]) => n);
+      if (holders.length) return { text: `Placé dans ${holders.length > 1 ? "les mutations" : "la mutation"} ${holders.map(n =>
+          `<a href="${href("config", "mutation", n)}">${esc(n)}</a>`).join(", ")}.`,
+        sub: "Les nœuds qui tiennent ce rôle font tourner ce service. Pour l'ajouter à un autre rôle, ouvrez la mutation concernée." };
+      return { text: "Prochaine étape : le placer dans une mutation",
+        sub: "Tant qu'aucune mutation ne le contient, aucun nœud ne le fait tourner. Créez une mutation avec ce service, ou ajoutez-le à une mutation existante.",
+        button: "Créer une mutation avec ce service", go: ["mutation", "~new"], prefill: { services: [key] } };
+    },
+  },
+};
+
+function guideIntro(guide, open) {
+  const steps = guide.steps().map(([done, title, sub], i, all) => {
+    const todo = !done && all.slice(0, i).every(s => s[0]);
+    return `<li class="${done ? "done" : todo ? "todo" : ""}"><span class="n">${done ? icon("check", "sm") : i + 1}</span><div>${esc(title)}<small>${sub}</small></div></li>`;
+  }).join("");
+  return `<details class="guide" ${open ? "open" : ""}><summary>${icon("info")}${esc(guide.title)}<span class="more"></span></summary>
+    <p>${guide.what}</p><ol class="steps">${steps}</ol></details>`;
+}
+
+function guideNext(guide, key, box) {
+  const next = guide.next && guide.next(key);
+  if (!next) return;
+  const el = document.createElement("div"); el.className = "next-step";
+  el.innerHTML = `<div class="t"><b>${next.text}</b><p>${next.sub}</p></div>`;
+  if (next.button) {
+    const btn = document.createElement("button"); btn.type = "button"; btn.className = "btn primary";
+    btn.innerHTML = icon(next.go ? "plus" : "enter", "sm") + esc(next.button);
+    btn.onclick = async () => {
+      if (next.go) { prefill = next.prefill || null; return go("config", ...next.go); }
+      if (!await confirmDialog({ ...next.confirm, ok: next.button })) return;
+      btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>En cours…';
+      try {
+        const r = await call("POST", "/web/cli", { line: next.line, confirm: true });
+        const out = (r.output || []).join("\n");
+        if (/^✗|refus|error|invalid|no mutation/im.test(out)) toast(next.fail, "bad", out);
+        else toast(next.done, "ok", out);
+        await refresh(); renderNode();
+      } catch (e) { if (e.message !== "401") toast(next.fail, "bad", e.message); renderNode(); }
+    };
+    el.appendChild(btn);
+  }
+  box.appendChild(el);
+}
+
 function renderNode() {
   const box = $("config-form");
   controls = [];
   $("config-layout").classList.toggle("has-node", !!configPath);
   if (!configPath) { $("page-sub").textContent = PAGES.config.sub; return configWelcome(box); }
+  if (configPath === SHOW_PATH) return renderConfigText(box, configKey);
   const node = nodeOf(configPath);
   if (!node) { box.innerHTML = emptyState("Cette section n'existe pas.", "alert", `<a class="btn sm" href="${href("config")}">Toutes les sections</a>`); return; }
   const writable = node.writable && configSchema.can_write;
@@ -1404,6 +2056,8 @@ function renderNode() {
   const tags = (node.table ? pill("table", "info") : "") + (writable ? "" : `<span class="pill">${icon("lock", "sm")}lecture seule</span>`);
   box.innerHTML = `<div class="form-head"><div class="crumbs">${crumbs.join(icon("chev"))}</div>
     <div class="row"><div><h2>${title} ${tags}</h2><p>${esc(node.description)}</p></div><div id="head-actions"></div></div></div>`;
+  const guide = GUIDES[node.path];
+  if (guide && (configKey === null || isNew)) box.insertAdjacentHTML("beforeend", guideIntro(guide, isNew || !Object.keys(node.rows || {}).length));
   if (node.table && configKey === null) return renderRows(node, box, writable);
   renderForm(node, box, writable, isNew);
 }
@@ -1411,15 +2065,18 @@ function renderNode() {
 function renderForm(node, box, writable, isNew) {
   const values = node.table ? (node.rows[configKey] || {}) : node.values;
   const explicit = new Set(node.explicit || []);
+  const guide = GUIDES[node.path];
+  const seed = isNew && prefill || {}; prefill = null;
   const banner = document.createElement("div"); banner.className = "banner bad hidden";
   const fields = document.createElement("div"); fields.className = "fields";
   let keyInput = null;
   for (const f of node.fields) {
     const isKey = node.table && f.cli === node.key;
+    const g = guide && guide.fields[f.name];
     const row = document.createElement("div"); row.className = "field";
-    const lbl = document.createElement("div"); lbl.className = "field-label";
+    const lbl = document.createElement("div"); lbl.className = "field-label" + (g ? " guided" : "");
     const id = "fld-" + f.name;
-    lbl.innerHTML = `<label for="${id}">${esc(f.cli)}</label><div class="tags">${
+    lbl.innerHTML = `<label for="${id}">${esc(g ? g.label : f.cli)}</label>${g ? `<div class="cli">${esc(f.cli)}</div>` : ""}<div class="tags">${
       isKey ? pill("clé", "accent sm") : ""}${f.required && !isKey ? pill("requis", "warn sm") : ""}${
       !node.table && explicit.has(f.name) ? pill("défini", "sm") : ""}</div>`;
     const cell = document.createElement("div");
@@ -1428,12 +2085,12 @@ function renderForm(node, box, writable, isNew) {
     if (isKey) {
       keyInput = document.createElement("input"); keyInput.type = "text"; keyInput.className = "field-input mono";
       keyInput.value = isNew ? "" : configKey; keyInput.disabled = !isNew || !writable; keyInput.spellcheck = false;
-      keyInput.addEventListener("input", () => keyInput.classList.remove("invalid"));
+      keyInput.addEventListener("input", () => { keyInput.classList.remove("invalid"); drawRecap(); });
       ctlEl = keyInput;
     } else {
-      const c = control(f, isNew ? f.default : values[f.name], writable);
+      const c = control(f, isNew ? (f.name in seed ? seed[f.name] : f.default) : values[f.name], writable, g && g.control);
       c.row = row; controls.push(c); ctlEl = c.el;
-      c.onchange = () => { c.nulled = false; updateDirty(); };
+      c.onchange = () => { c.nulled = false; updateDirty(); drawRecap(); };
       if (writable) {
         const btn = document.createElement("button"); btn.type = "button"; btn.className = "btn ghost icon sm";
         c.actBtn = btn; act.appendChild(btn);
@@ -1449,12 +2106,24 @@ function renderForm(node, box, writable, isNew) {
     (ctlEl.tagName === "INPUT" || ctlEl.tagName === "SELECT" ? ctlEl : ctlEl.querySelector("input,select") || ctlEl).id = id;
     cell.appendChild(ctlEl);
     const help = document.createElement("div"); help.className = "help";
-    help.innerHTML = esc(f.description) + (isKey ? "" : fmtDefault(f));
+    help.innerHTML = (g ? g.help : esc(f.description)) + (isKey ? "" : fmtDefault(f));
     cell.appendChild(help);
     row.append(lbl, cell, act);
     fields.appendChild(row);
   }
   box.append(banner, fields);
+
+  // What the form says, in one sentence, as it is filled in.
+  const recap = document.createElement("div");
+  const current = () => Object.fromEntries(controls.map(c => [c.field.name, c.nulled ? c.field.default : c.value() ?? c.field.default]));
+  formValues = current;
+  function drawRecap() {
+    if (!guide || !guide.recap) return;
+    const [cls, text] = guide.recap(current(), keyInput ? keyInput.value.trim() : configKey);
+    recap.className = "recap " + cls; recap.innerHTML = icon(cls === "warn" ? "alert" : "info") + `<div>${text}</div>`;
+  }
+  if (guide && guide.recap) { box.appendChild(recap); drawRecap(); }
+  if (guide && !isNew && node.table && configSchema.can_write) guideNext(guide, configKey, box);
 
   if (!writable) {
     box.insertAdjacentHTML("beforeend", `<div class="banner info" style="margin-bottom:20px">${icon("lock")}<span>${
@@ -1501,6 +2170,8 @@ function renderForm(node, box, writable, isNew) {
       keyInput.classList.add("invalid"); keyInput.focus();
       showBanner(banner, `La clé « ${node.key} » est obligatoire.`); return;
     }
+    const problem = guide && guide.check && guide.check(current());
+    if (problem) { showBanner(banner, problem); return; }
     const sent = {};
     for (const c of controls) if (isNew || c.dirty()) sent[c.field.name] = c.nulled ? null : c.value();
     if (!node.table && !Object.keys(sent).length) { toast("Aucune modification à appliquer."); return; }
@@ -1589,12 +2260,196 @@ async function submitConfig(request, banner, nextKey, success) {
   } catch (e) { showBanner(banner, e.message); return false; }
 }
 
+// ---- Show commands (#/shows/<command>) ---------------------------------
+// Every 'show' of the console, listed by the node (GET /web/shows): one added
+// to the console is here without touching this page. Its tables and
+// "Label : value" blocks come back as data; the rest is the console's text.
+let showList = null, showCli = null, showResult = null, showError = "", showBusy = false;
+let showView = pref("show-view") || "data";
+const showArgs = {}, showSort = {};
+
+async function loadShows() {
+  if (!showList) showList = (await call("GET", "/web/shows")).shows;
+  return showList;
+}
+const showDef = (cli) => (showList || []).find(s => s.cli === cli);
+// "show sp flows" -> "sp" when several commands share it, else "Nœud".
+function showGroup(cli) {
+  const w = cli.split(" ")[1] || "";
+  return (showList || []).filter(s => s.cli.split(" ")[1] === w).length > 1 ? w : "Nœud";
+}
+// "show nndp neighbors" -> "Nndp neighbors"; acronyms stay upper case.
+const SHOW_ACRONYMS = /^(nndp|ncp|sp|usd|usc|nit|nal|nel|ip|api|id|cpu)$/i;
+const showLabel = (cli) => cli.split(" ").slice(1).map((w, i) => SHOW_ACRONYMS.test(w) ? w.toUpperCase()
+  : i ? w : w[0].toUpperCase() + w.slice(1)).join(" ");
+// "USD master and Raft voters [ARCH-02 12]" -> title and draft reference.
+const showTitle = (d) => { const m = /^(.*?)\s*\[([^\]]+)\]\s*$/.exec(d); return m ? [m[1], m[2]] : [d, ""]; };
+const showNeedsInput = (s) => s.inputs.some(i => i.required && ["", undefined].includes((showArgs[s.cli] || {})[i.name]));
+
+function renderShowNav() {
+  const needle = $("show-search").value.trim().toLowerCase();
+  let group = null, html = "";
+  const rows = (showList || []).filter(s => !needle || (s.cli + " " + s.description).toLowerCase().includes(needle))
+    .map(s => [showGroup(s.cli), s]).sort((a, b) => (b[0] === "Nœud") - (a[0] === "Nœud")
+      || a[0].localeCompare(b[0]) || a[1].cli.localeCompare(b[1].cli));
+  for (const [g, s] of rows) {
+    if (g !== group) { group = g; html += `<div class="group">${esc(g)}</div>`; }
+    html += `<a class="cfg-link sh-link ${s.cli === showCli ? "on" : ""}" href="${href("shows", s.cli)}" title="${esc(s.description)}"><span class="n">${esc(showLabel(s.cli))}</span>${
+      s.inputs.some(i => i.required) ? pill("paramètre", "sm") : ""}</a>`;
+  }
+  $("show-nav").innerHTML = html || emptyState("Aucune commande ne correspond.", "search");
+}
+
+async function openShow(cli) {
+  try { await loadShows(); } catch (e) { if (e.message !== "401") $("show-out").innerHTML = `<div class="banner bad">${esc(e.message)}</div>`; return; }
+  if (cli !== showCli) { showResult = null; showError = ""; }
+  showCli = cli && showDef(cli) ? cli : null;
+  $("shows-layout").classList.toggle("has-node", !!showCli);
+  $("page-sub").textContent = showCli ? showDef(showCli).description : PAGES.shows.sub;
+  renderShowNav();
+  if (!showCli) return renderShowWelcome();
+  renderShowHead();
+  if (!showResult && !showNeedsInput(showDef(showCli))) runShow();
+}
+
+function renderShowWelcome() {
+  const groups = {};
+  for (const s of showList) (groups[showGroup(s.cli)] ||= []).push(s);
+  $("show-out").innerHTML = `<div class="welcome"><h2>Commandes show</h2>
+    <p>Chaque commande <code>show</code> de la console locale, exécutée avec vos droits et mise en forme : tableaux triables, états en couleur, identifiants copiables. L'onglet « Console » garde la sortie exacte.</p>
+    ${Object.entries(groups).map(([g, list]) => `<h4>${esc(g)}</h4><div class="tiles">${list.map(s =>
+      `<a class="tile sh-tile" href="${href("shows", s.cli)}"><b>${icon("table", "sm")}${esc(showLabel(s.cli))}</b><p>${esc(showTitle(s.description)[0])}</p><code>${esc(s.cli)}</code></a>`).join("")}</div>`).join("")}</div>`;
+}
+
+function renderShowHead() {
+  const s = showDef(showCli), args = showArgs[s.cli] ||= {};
+  const input = (i) => {
+    const v = args[i.name] ?? (i.default ?? "");
+    const id = `sa-${i.name}`;
+    const label = `<label class="lbl" for="${id}">${esc(i.name)}${i.required ? "" : "<small>facultatif</small>"}</label>`;
+    if (i.type === "enum" || i.type === "boolean") {
+      const choices = i.type === "boolean" ? ["true", "false"] : i.choices;
+      return `<div>${label}<select class="field-input select" id="${id}" data-arg="${esc(i.name)}"><option value="">—</option>${
+        choices.map(c => `<option ${String(v) === c ? "selected" : ""}>${esc(c)}</option>`).join("")}</select></div>`;
+    }
+    return `<div>${label}<input class="field-input ${i.type === "string" ? "mono" : ""}" id="${id}" data-arg="${esc(i.name)}" type="${i.type === "integer" || i.type === "number" ? "number" : "text"}"
+      value="${esc(v)}" placeholder="${esc(i.description)}" title="${esc(i.description)}" autocomplete="off" spellcheck="false"></div>`;
+  };
+  const [title, ref] = showTitle(s.description);
+  $("show-out").innerHTML = `<div class="sh-head">
+      <div class="crumbs"><a href="${href("shows")}">Commandes</a>${icon("chev")}<span>${esc(showGroup(s.cli))}</span></div>
+      <div class="sh-title">
+        <div class="sh-ic">${icon("table")}</div>
+        <div class="t"><h2>${esc(title)}</h2>
+          <div class="sh-sub"><button type="button" class="sh-cmd" data-copy="${esc(s.cli)}" title="Copier la commande">${icon("terminal", "sm")}<code>${esc(s.cli)}</code></button>
+            ${ref ? `<span class="pill sm" title="Référence du draft">${esc(ref)}</span>` : ""}
+            <span class="sh-meta" id="show-meta"></span></div></div>
+        <div class="sh-actions">
+          <button class="btn sm ghost" id="show-copy" title="Copier la sortie de la console">${icon("copy", "sm")}<span>Copier</span></button>
+          <button class="btn sm" id="show-run" title="Exécuter à nouveau">${icon("reset", "sm")}<span>Actualiser</span></button>
+        </div>
+      </div>
+      ${s.inputs.length ? `<form class="show-form" id="show-form">${s.inputs.map(input).join("")}
+        <button class="btn primary" type="submit">${icon("enter", "sm")}Exécuter</button></form>` : ""}
+    </div>
+    <div class="sh-toolbar">
+      <div class="seg" role="tablist" id="show-view">${[["data", "Vue", "grid"], ["text", "Console", "terminal"]].map(([k, l, ic]) =>
+        `<button type="button" role="tab" data-view="${k}" class="${showView === k ? "on" : ""}">${icon(ic, "sm")}${l}</button>`).join("")}</div>
+      <span class="spacer"></span>
+      <div class="search sm">${icon("search", "sm")}<input class="field-input" id="show-filter" placeholder="Filtrer" autocomplete="off"></div>
+    </div>
+    <div id="show-body" class="sh-body"></div>`;
+  const form = $("show-form");
+  if (form) form.onsubmit = (e) => {
+    e.preventDefault();
+    $$("[data-arg]", form).forEach(el => { args[el.dataset.arg] = el.value.trim(); });
+    runShow();
+  };
+  $("show-view").onclick = (e) => { const b = e.target.closest("[data-view]"); if (!b) return;
+    showView = b.dataset.view; pref("show-view", showView);
+    $$("#show-view button").forEach(x => x.classList.toggle("on", x === b)); drawShowResult(); };
+  $("show-filter").oninput = drawShowResult;
+  $("show-copy").onclick = () => showResult && copyText(showResult.text);
+  $("show-run").onclick = () => form ? form.requestSubmit() : runShow();
+  drawShowResult();
+}
+
+async function runShow(quiet = false) {
+  const cli = showCli; if (!cli || showBusy) return;
+  showBusy = true;
+  if (!quiet) $("show-meta").innerHTML = '<span class="spinner"></span>';
+  try {
+    const r = await call("POST", "/web/shows", { cli, args: showArgs[cli] || {} });
+    if (cli !== showCli) return;
+    const same = showResult && showResult.text === r.text;
+    showResult = r; showResult.at = new Date(); showError = "";
+    if (!same || !quiet) drawShowResult();
+  } catch (e) {
+    if (e.message === "401" || cli !== showCli) return;
+    showError = e.message; showResult = null; drawShowResult();
+  } finally {
+    showBusy = false;
+    if (cli === showCli && $("show-meta")) $("show-meta").innerHTML = showResult
+      ? `${icon("clock", "sm")}mis à jour à ${esc(showResult.at.toLocaleTimeString())}` : "";
+  }
+}
+
+// A ULID or a public key: copyable; ULIDs inside text: shortened with a title.
+function showCell(v) {
+  const m = /^([0-9A-HJKMNP-TV-Z]{26}|[0-9a-f]{40,})( \(self\))?$/.exec(v);
+  return m ? idv(v, m[1].length > 26 ? 10 : 6) : shortIds(esc(v));
+}
+
+function drawShowResult() {
+  const box = $("show-body"); if (!box) return;
+  if (showError) { box.innerHTML = `<div class="banner bad" style="margin-bottom:24px">${icon("alert-circle", "sm")}<pre>${esc(showError)}</pre></div>`; return; }
+  if (!showResult) {
+    box.innerHTML = showNeedsInput(showDef(showCli)) ? emptyState("Renseignez les paramètres puis exécutez la commande.", "enter")
+      : emptyState('<span class="spinner"></span>', "table"); return;
+  }
+  const needle = ($("show-filter") || {}).value?.trim().toLowerCase() || "";
+  const segs = showResult.segments;
+  if (showView === "text" || !segs.some(s => s.kind !== "text")) {
+    const lines = showResult.text.split("\n").filter(l => !needle || l.toLowerCase().includes(needle));
+    box.innerHTML = showResult.text.trim() ? `<div class="cfgtext">${lines.map(l => `<span class="ln">${esc(l) || " "}</span>`).join("")}</div>`
+      : emptyState("La commande n'a rien affiché.", "info");
+    return;
+  }
+  box.innerHTML = segs.map((s, i) => {
+    // tech-support's "------ show x ------" dividers become section titles.
+    if (s.kind === "text") return `<div class="show-block"><pre class="show-text">${shortIds(esc(s.text)).replace(
+      /^\s*-{6,} (show [^\n]+?) -{6,}\s*$/gm, '</pre><h3 class="show-sec">$1</h3><pre class="show-text">')}</pre></div>`.replace(/<pre class="show-text">\s*<\/pre>/g, "");
+    if (s.kind === "fields") {
+      const pairs = s.pairs.filter(([k, v]) => !needle || (k + " " + v).toLowerCase().includes(needle));
+      return `<div class="show-block"><dl class="kv">${pairs.map(([k, v]) =>
+        `<dt>${esc(k)}</dt><dd>${v.trim() ? showCell(v.replace(/^\n/, "")) : dash}</dd>`).join("")}</dl></div>`;
+    }
+    const st = showSort[showCli + "#" + i] ||= { col: null, dir: 1 };
+    let rows = s.rows.filter(r => !needle || r.some(c => c.toLowerCase().includes(needle)));
+    if (st.col !== null) rows = rows.slice().sort((a, b) => cmp(a[st.col], b[st.col]) * st.dir);
+    const head = `<div class="card-head"><div class="t"><h3>${plural(s.rows.length, "ligne", "lignes")}${
+      needle ? ` <span class="count">${rows.length} / ${s.rows.length}</span>` : ""}</h3></div></div>`;
+    if (!rows.length) return `<div class="show-block">${head}${emptyState(s.rows.length ? "Aucune ligne ne correspond à ce filtre." : "Table vide.", s.rows.length ? "search" : "info")}</div>`;
+    return `<div class="show-block">${head}<div class="table-wrap"><table data-seg="${i}"><thead><tr>${s.columns.map((c, j) =>
+      `<th data-col="${j}" class="${st.col === j ? (st.dir > 0 ? "asc" : "desc") : ""}">${esc(c)}<span class="arrow"></span></th>`).join("")}</tr></thead><tbody>${
+      rows.map(r => "<tr>" + r.map(c => `<td>${c === "" ? dash : showCell(c)}</td>`).join("") + "</tr>").join("")}</tbody></table></div></div>`;
+  }).join("") || emptyState("La commande n'a rien affiché.", "info");
+  $$("table[data-seg] th[data-col]", box).forEach(th => th.onclick = () => {
+    const st = showSort[showCli + "#" + th.closest("table").dataset.seg], col = Number(th.dataset.col);
+    st.dir = st.col === col ? -st.dir : 1; st.col = col; drawShowResult();
+  });
+}
+
 // ---- Command palette ----------------------------------------------------
 let paletteAt = 0, paletteShown = [];
 function paletteItems() {
   const items = Object.entries(PAGES).map(([k, p]) => ({ label: p.title, hint: p.sub, icon: p.icon, run: () => go(k) }));
+  for (const [k, s] of Object.entries(SHOWS))
+    items.push({ label: s.cli, hint: "Configuration · " + s.desc, icon: "list", run: () => go("config", SHOW_PATH, k) });
   if (configSchema) for (const n of sortedNodes())
     items.push({ label: n.path, hint: "Configuration · " + n.description, icon: "sliders", run: () => go("config", n.path) });
+  for (const s of showList || [])
+    items.push({ label: s.cli, hint: "Commande · " + s.description, icon: "table", run: () => go("shows", s.cli) });
   for (const c of QUICK) items.push({ label: c, hint: "Exécuter dans la console", icon: "terminal", run: () => { go("console"); submit(c); } });
   items.push({ label: "Changer de thème", hint: "Clair / sombre", icon: "moon", run: toggleTheme },
     { label: paused ? "Reprendre l'actualisation" : "Suspendre l'actualisation", hint: "Données en direct", icon: "pause", run: togglePause },
@@ -1616,6 +2471,7 @@ function openPalette() {
   $("palette-input").value = ""; paletteAt = 0; drawPalette();
   $("palette").showModal(); $("palette-input").focus();
   if (!configSchema) loadSchema().then(drawPalette).catch(() => {});
+  if (!showList) loadShows().then(drawPalette).catch(() => {});
 }
 function pickPalette(i) {
   const it = paletteShown[i]; if (!it) return;
@@ -1650,6 +2506,7 @@ function start() {
 function logout(message) {
   clearInterval(timer); token = null; keepToken(null); capture.deactivate();
   controls = []; configSchema = null; summary = null; lastUpdate = 0;
+  showList = null; showResult = null; showCli = null;
   $("term").innerHTML = "";
   $("app").classList.add("hidden"); $("login").classList.remove("hidden");
   if (message) { $("login-error").innerHTML = icon("alert-circle", "sm") + "<span>" + esc(message) + "</span>"; $("login-error").classList.remove("hidden"); }
@@ -1719,6 +2576,7 @@ $("theme-btn").onclick = toggleTheme;
 $("live").onclick = togglePause;
 $("cmdk-btn").onclick = openPalette;
 $("config-search").oninput = renderConfigNav;
+$("show-search").oninput = renderShowNav;
 $("log-filter").oninput = renderLogs;
 
 $("term-form").addEventListener("submit", e => { e.preventDefault(); submit(); });

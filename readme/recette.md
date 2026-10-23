@@ -16,13 +16,13 @@ Une exigence est cochée quand son état est **done**. Les tests se lancent avec
 
 | Partie | Draft | done | partial | missing | config-only | open | n/a |
 |---|---|---|---|---|---|---|---|
-| [1 — Architecture](#partie-1--architecture) | draft-usmd-rdsh-architecture-03 | 330 | 3 | 0 | 0 | 12 | 11 |
+| [1 — Architecture](#partie-1--architecture) | draft-usmd-rdsh-architecture-03 | 338 | 3 | 0 | 0 | 12 | 11 |
 | [2 — NCP](#partie-2--ncp) | draft-usmd-ncp-03 | 285 | 0 | 0 | 0 | 0 | 12 |
 | [3 — NNDP](#partie-3--nndp) | draft-usmd-nndp-01 | 125 | 0 | 0 | 0 | 1 | 4 |
 | [4 — SP](#partie-4--sp) | draft-usmd-sp-01 | 187 | 3 | 0 | 0 | 0 | 1 |
-| **Total** | | **927** | **6** | **0** | **0** | **13** | **28** |
+| **Total** | | **935** | **6** | **0** | **0** | **13** | **28** |
 
-Exigences applicables (hors open et n/a) : 933, dont 927 cochées (99.4 %).
+Exigences applicables (hors open et n/a) : 941, dont 935 cochées (99.4 %).
 
 ---
 
@@ -642,6 +642,21 @@ Constats transverses (à lire avant les tableaux) :
 | ARCH-12.3-2 | DEF | Deux maîtres ne peuvent attribuer la même adresse SP à deux nœuds | done | Confirmation seulement après commit majoritaire (`Raft.propose`) |
 | ARCH-12.3-3 | DEF | Les autres parties fonctionnent avec les adresses déjà attribuées et ne peuvent intégrer un nœud dans une aire nouvelle avant la reconnexion | done | Pas d'attribution sans majorité (`Raft.propose`) et pas de build d'une aire nouvelle sans identifiant (`Node.transmute`, voir 11.4-6) |
 
+#### 12.4 Rôles élus (demande de l'auteur, 2026-10-23 — à reporter dans ARCH-04 / NCP-03)
+
+Rôles : executor | operator | usd_operator | ucd_operator (= Node_executor, Node_operator, Usd_operator, Usc_operator). Le jeton liste les rôles **autorisés** ; le maître désigne dans le journal qui les **exerce**. Les clés d'autorité restent hors ligne : un rôle élu est une fonction, pas une clé.
+
+| ID | Niveau | Exigence | État | Remarque |
+|---|---|---|---|---|
+| ARCH-12.4-1 | DEF | Un nœud peut avoir plusieurs rôles ; les rôles se cumulent, aucun n'inclut un autre | done | `codec.role_allows`, `Nal.allows` ; `config system bootstrap roles` (liste), `usmd.yaml` `node.roles` (ou `node.role`), noms du démon acceptés ; `store.migrate` (`role` → `roles`) ; `test_operators.py::test_roles_add_up_and_every_node_is_an_executor`, `test_yaml_config.py::test_several_roles_with_the_daemon_names` |
+| ARCH-12.4-2 | DEF | Tout nœud admis est au moins executor | done | `role_allows(…, NODE_EXECUTOR)` vrai pour tout rôle ; `Node.roles` = executor ∪ rôles élus ; `show node` (Roles / Authorised roles) |
+| ARCH-12.4-3 | DEF | Les operators (usc, usd, node) sont élus par le maître Raft parmi les nœuds actifs dont le jeton autorise le rôle, le plus ancien d'abord | done | `Node.elect_operators` (dans `_maintenance_loop`, une proposition à la fois) ; enregistrements `ELECT_OPERATOR` 0x06 / `DEPOSE_OPERATOR` 0x07 (rôle 8 ‖ identifiant 26), `StateMachine.operators` ; `test_operators.py::test_master_elects_then_deposes_the_operators` |
+| ARCH-12.4-4 | DEF | Il existe au moins un usc_operator et un usd_operator ; sans candidat, le maître le signale | done | `Node.OPERATOR_MINIMUM` (1 par rôle) ; événement ERROR « the USD has none » ; le fondateur reçoit un jeton autorisant usc+usd (`startup.found`) ; `test_missing_usc_operator_is_reported` |
+| ARCH-12.4-5 | DEF | Un operator est destitué s'il perd l'autorisation (aussitôt) ou reste non Actif plus de 0x0015 ; un remplaçant est élu dès qu'il ne sert plus | done | `Node.elect_operators` |
+| ARCH-12.4-6 | DEF | La table des operators fait partie de l'état répliqué : journal, instantané (page 0, après les électeurs : Liste<(rôle 8, identifiant)>), fichier persistant | done | `Raft.snapshot_pages/handle_snapshot`, `_save/_load` (`snapshot_operators`) ; `test_operators_are_replicated_snapshotted_and_persisted` |
+| ARCH-12.4-7 | DEF | Les nœuds hors configuration apprennent les operators par Send_operators (0x0015) du maître, à chaque changement et toutes les 30 s | done | `Node.announce_operators`, `handlers._on_send_operators` (expéditeur électeur, terme ≥ dernier connu) ; dissection `dissect._req_operators`. Non testé de bout en bout. |
+| ARCH-12.4-8 | DEF | La fiche de nœud déclare les rôles élus : bits 0x40 usc, 0x20 usd, 0x10 node operator ; 0x0F réservés | done | `NodeRecord.flags/operators`, republiée par `Node.set_operators` ; colonne Roles de `show node-table` ; `show usd operators` ; `test_record_carries_the_elected_roles` |
+
 ### 13. Considérations opérationnelles
 
 | ID | Niveau | Exigence | État | Remarque |
@@ -1087,7 +1102,7 @@ Restent sans test : les exclusions (7.4, 7.5, 7.6), la vérification d'endosseme
 | ID | Niveau | Exigence | État | Remarque |
 |---|---|---|---|---|
 | NCP-7.3-1 | DEF | Codes de rôle : 0x01 Usc_operator, 0x02 Usd_operator, 0x03 Node_operator, 0x04 Node_executor. | done | `codec.Role` ; correspondance texte dans `cli/bridge._ROLE`. |
-| NCP-7.3-2 | DEF | La NAL associe à chaque clé publique un ou plusieurs rôles. | done | `tables.Nal` (ancres, rôles du jeton, `config trust nal`) ; contrôle dans `_check_sender`. |
+| NCP-7.3-2 | DEF | La NAL associe à chaque clé publique un ou plusieurs rôles. | done | `tables.Nal` (ancres, rôles du jeton, `config trust nal`) ; contrôle dans `_check_sender`. Depuis ARCH-12.4 les rôles se cumulent sans hiérarchie (tout rôle vaut Node_executor). |
 | NCP-7.3-3 | DEF | Un code de rôle inconnu dans une liste de rôles ⇒ corps malformé (0x0003). | done | `codec._read_roles` (`WireError` hors 0x01..0x04) pour le jeton, le paquet d'endossement et désormais les rôles demandés de Request_approval (`handlers._on_request_approval` ⇒ 0x0003, avant le contrôle du jeton). Non testé. |
 
 #### 7.4 Vérification d'endossement
@@ -1147,7 +1162,7 @@ Restent sans test : les exclusions (7.4, 7.5, 7.6), la vérification d'endosseme
 
 | ID | Niveau | Exigence | État | Remarque |
 |---|---|---|---|---|
-| NCP-7.8-1 | DEF | Format : Identifiant (26) ‖ IPv4 (32 bits) ‖ clé X25519 (32) ‖ état (16) ‖ indicateurs (8 : bit 0x80 E électeur, autres à 0) ‖ date (Date) ‖ mutation (Chaîne, longueur 0 si aucune) ‖ nœuds de référence (Liste d'Identifiants) ‖ adresses SP (Liste d'Entiers 32 bits) ‖ signature (64). | done | `codec.NodeRecord` (bits réservés rejetés à la lecture). `show node-table`. |
+| NCP-7.8-1 | DEF | Format : Identifiant (26) ‖ IPv4 (32 bits) ‖ clé X25519 (32) ‖ état (16) ‖ indicateurs (8 : bit 0x80 E électeur, autres à 0) ‖ date (Date) ‖ mutation (Chaîne, longueur 0 si aucune) ‖ nœuds de référence (Liste d'Identifiants) ‖ adresses SP (Liste d'Entiers 32 bits) ‖ signature (64). | done | `codec.NodeRecord` (bits réservés rejetés à la lecture). `show node-table`. Bits 0x40/0x20/0x10 désormais pris par les rôles élus (ARCH-12.4-8), seuls 0x0F restent réservés. |
 | NCP-7.8-2 | DEF | Signature sur `"USMD-NCP-v1-node-record"` (23 o ASCII) ‖ clé Ed25519 du nœud (32) ‖ tous les champs précédents ; la clé Ed25519 n'est pas dans la fiche (fournie par le jeton). | done | `NodeRecord.signed_bytes`, `TableEntry.verify`. |
 | NCP-7.8-3 | DEF | L'adresse IPv4 est celle où le nœud reçoit NCP, NNDP et SP. | done | `settings.address` (adresse locale détectée ou configurée) dans `initial_record`/`publish_record`. |
 | NCP-7.8-4 | DEF | Date d'émission **strictement croissante** pour un même nœud. | done | `record_date = max(record_date + 1, now_ms())` (persistée) ; réception : `NodeTable.merge` exige `>`. |

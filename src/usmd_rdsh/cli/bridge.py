@@ -16,6 +16,7 @@ The node calls :func:`reflect` whenever it applies newer signed objects, so
 
 from __future__ import annotations
 
+import base64
 import ipaddress
 import logging
 from pathlib import Path
@@ -33,7 +34,11 @@ from usmd_rdsh.node.ncp.codec import (
     UscProperties,
     UsdProperties,
 )
-from usmd_rdsh.node.services import load_yaml_stream, parse_service_file
+from usmd_rdsh.node.services import (
+    check_file_name,
+    load_yaml_stream,
+    parse_service_file,
+)
 from usmd_rdsh.node.signed import USD_PARAMETERS
 from usmd_rdsh.node.wire import WireError, now_ms
 
@@ -89,9 +94,10 @@ async def apply_local(path: str, config: Any) -> None:
             node.sp.broadcast_rate = config.broadcast_rate
     elif path == "system bootstrap":
         anchors = RUNTIME.config("system trust-anchor")
-        _check_anchors(node, _ROLE[str(config.role)], config.creation_token,
+        roles = roles_of(config.roles)
+        _check_anchors(node, roles, config.creation_token,
                        anchors.usc_public_key, anchors.usd_public_key)
-        s.role = _ROLE[str(config.role)]
+        s.roles = roles
         s.contact_node = config.contact_node
         s.contact_ed25519, s.contact_x25519 = config.contact_node_ed25519, config.contact_node_x25519
         s.edb_domain = config.edb_domain
@@ -105,7 +111,7 @@ async def apply_local(path: str, config: Any) -> None:
             if key and len(unb64u(key)) != 32:
                 raise ValueError("an Ed25519 public key is 32 bytes (base64url)")
         bootstrap = RUNTIME.config("system bootstrap")
-        _check_anchors(node, _ROLE[str(bootstrap.role)], bootstrap.creation_token,
+        _check_anchors(node, roles_of(bootstrap.roles), bootstrap.creation_token,
                        config.usc_public_key, config.usd_public_key)
         s.usc_anchor, s.usd_anchor = config.usc_public_key, config.usd_public_key
         node.apply_anchors()
@@ -113,8 +119,14 @@ async def apply_local(path: str, config: Any) -> None:
         _apply_nal(node, config)
 
 
-def _check_anchors(node, role: Role, token: str, usc_anchor: str, usd_anchor: str) -> None:
-    """Refuse trust anchors that cannot support the configured role [ARCH 4.4].
+def roles_of(names) -> list[Role]:
+    """Configured role names, deduplicated, in code order; executor when none."""
+    return sorted({_ROLE[str(n)] for n in names or []} or {Role.NODE_EXECUTOR})
+
+
+def _check_anchors(node, roles: list[Role], token: str, usc_anchor: str,
+                   usd_anchor: str) -> None:
+    """Refuse trust anchors that cannot support the configured roles [ARCH 4.4].
 
     A USD operator verifies objects signed by the USC: it needs the USC key.
     A node operator or executor verifies both the USC's objects and the USD's
@@ -127,13 +139,15 @@ def _check_anchors(node, role: Role, token: str, usc_anchor: str, usd_anchor: st
         return
     has_usc = bool(usc_anchor) or node.authority.usc is not None
     has_usd = bool(usd_anchor) or node.authority.usd is not None or node.signed.usd is not None
-    if role == Role.USD_OPERATOR and not has_usc:
-        raise ValueError("a usd-operator needs the USC trust anchor "
-                         "('config system trust-anchor' / 'set usc-public-key') [ARCH 4.4]")
-    if role in (Role.NODE_OPERATOR, Role.NODE_EXECUTOR) and not (has_usc and has_usd):
-        missing = " and ".join(name for name, ok in (("USC", has_usc), ("USD", has_usd)) if not ok)
-        raise ValueError(f"a {role.name.lower().replace('_', '-')} needs the {missing} trust "
-                         "anchor(s) ('config system trust-anchor') [ARCH 4.4]")
+    for role in roles:  # each role brings its own needs
+        if role == Role.USD_OPERATOR and not has_usc:
+            raise ValueError("a usd-operator needs the USC trust anchor "
+                             "('config system trust-anchor' / 'set usc-public-key') [ARCH 4.4]")
+        if role in (Role.NODE_OPERATOR, Role.NODE_EXECUTOR) and not (has_usc and has_usd):
+            missing = " and ".join(name for name, ok in (("USC", has_usc), ("USD", has_usd))
+                                   if not ok)
+            raise ValueError(f"a {role.name.lower().replace('_', '-')} needs the {missing} "
+                             "trust anchor(s) ('config system trust-anchor') [ARCH 4.4]")
 
 
 #: Keys granted by ``config trust nal`` at the previous apply, to revoke the
@@ -374,17 +388,41 @@ def _service_file(names: list[str], services_cfg: dict) -> bytes:
             raise ValueError(f"mutation names unknown service '{name}'")
         document = None
         if svc.service_file:
-            text = Path(svc.service_file).expanduser().read_text(encoding="utf-8")
+            try:
+                text = Path(svc.service_file).expanduser().read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError) as exc:
+                raise ValueError(f"service '{name}': cannot read {svc.service_file}: {exc}") from exc
             for candidate in load_yaml_stream(text):
                 if isinstance(candidate, dict) and candidate.get("name") == name:
                     document = candidate
+        if svc.service_file and document is None:
+            raise ValueError(f"service '{name}': {svc.service_file} has no document with "
+                             f"'name: {name}' [ARCH 8.3]")
         if document is None:
             document = {"name": name, "type": str(svc.type),
                         "dependencies": list(svc.dependencies)}
+        if svc.files:
+            document["files"] = {**(document.get("files") or {}),
+                                 **_attached_files(name, svc.files)}
         documents.append(document)
     text = yaml.safe_dump_all(documents, sort_keys=False, allow_unicode=True)
     parse_service_file(text)  # refuse what a node would refuse
     return text.encode("utf-8")
+
+
+def _attached_files(service: str, paths: list[str]) -> dict[str, str]:
+    """The ``files`` of a service document: base name -> base64 content."""
+    files: dict[str, str] = {}
+    for item in paths:
+        path = Path(item).expanduser()
+        name = check_file_name(path.name)
+        if name in files:
+            raise ValueError(f"service '{service}': two files are named '{name}'")
+        try:
+            files[name] = base64.b64encode(path.read_bytes()).decode("ascii")
+        except OSError as exc:
+            raise ValueError(f"service '{service}': cannot read {path}: {exc.strerror}") from exc
+    return files
 
 
 def _content(obj) -> bytes:

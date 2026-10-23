@@ -19,7 +19,7 @@ CONTEXT = b"USMD-NCP-v1"
 
 
 class Command(IntEnum):
-    """The twenty commands [6.1]."""
+    """The twenty-one commands [6.1], Send_operators and Operate [ARCH 12.4, 12.5]."""
 
     GET_STATUS = 0x0001
     CHECK_DISTANCE_TO_NODE = 0x0002
@@ -41,6 +41,8 @@ class Command(IntEnum):
     RAFT_REQUEST_VOTE = 0x0012
     RAFT_APPEND_ENTRIES = 0x0013
     RAFT_INSTALL_SNAPSHOT = 0x0014
+    SEND_OPERATORS = 0x0015
+    OPERATE = 0x0016  # [ARCH 12.5], outside the drafts
 
 
 class MessageType(IntEnum):
@@ -77,9 +79,18 @@ class Role(IntEnum):
     NODE_EXECUTOR = 0x04
 
 
-#: Each role holds the rights of the ones below it [7.3].
-def role_allows(roles: set[int], minimum: Role) -> bool:
-    return any(r != 0 and r <= minimum for r in roles)
+#: The roles the USD master elects among the nodes authorised for them [ARCH 12.4].
+OPERATOR_ROLES = (Role.USC_OPERATOR, Role.USD_OPERATOR, Role.NODE_OPERATOR)
+#: Node-record flag of each elected role [7.8].
+OPERATOR_FLAGS = {Role.USC_OPERATOR: 0x40, Role.USD_OPERATOR: 0x20, Role.NODE_OPERATOR: 0x10}
+
+
+def role_allows(roles: set[int], wanted: Role) -> bool:
+    """Roles add up, none includes another; every node is at least an
+    executor, whatever else it holds [7.3]."""
+    if wanted == Role.NODE_EXECUTOR:
+        return any(r in (1, 2, 3, 4) for r in roles)
+    return int(wanted) in roles
 
 
 # ---------------------------------------------------------------------------
@@ -257,10 +268,18 @@ class NodeRecord:  # pylint: disable=too-many-instance-attributes
     sp_addresses: list[int] = field(default_factory=list)
     voter: bool = False
     signature: bytes = b""
+    operators: list[int] = field(default_factory=list)  # roles the master elected it to
+
+    @property
+    def flags(self) -> int:
+        flags = 0x80 if self.voter else 0
+        for role in self.operators:
+            flags |= OPERATOR_FLAGS.get(Role(role), 0)
+        return flags
 
     def _unsigned(self) -> bytes:
         out = Writer().ident(self.node_id).raw(ipaddress.IPv4Address(self.address).packed)
-        out.raw(self.x25519).u16(self.state).u8(0x80 if self.voter else 0).u64(self.date)
+        out.raw(self.x25519).u16(self.state).u8(self.flags).u64(self.date)
         out.string(self.mutation).u16(len(self.reference_nodes))
         for ref in self.reference_nodes:
             out.ident(ref)
@@ -288,13 +307,14 @@ class NodeRecord:  # pylint: disable=too-many-instance-attributes
         address = str(ipaddress.IPv4Address(reader.raw(4)))
         x25519, state = reader.raw(32), reader.u16()
         flags = reader.u8()
-        if flags & 0x7F:
+        if flags & 0x0F:
             raise WireError("reserved record flags set")
         date, mutation = reader.u64(), reader.string()
         refs = [reader.ident() for _ in range(reader.u16())]
         sp = [reader.u32() for _ in range(reader.u16())]
+        operators = [int(r) for r, bit in OPERATOR_FLAGS.items() if flags & bit]
         return cls(node_id, address, x25519, state, date, mutation, refs, sp,
-                   bool(flags & 0x80), reader.raw(64))
+                   bool(flags & 0x80), reader.raw(64), operators)
 
 
 @dataclass(slots=True)
@@ -600,6 +620,8 @@ class RecordType(IntEnum):
     ADD_VOTER = 0x03
     REMOVE_VOTER = 0x04
     NOOP = 0x05
+    ELECT_OPERATOR = 0x06
+    DEPOSE_OPERATOR = 0x07
 
 
 @dataclass(frozen=True, slots=True)
@@ -614,10 +636,67 @@ class LogRecord:
     @classmethod
     def read(cls, reader: Reader) -> "LogRecord":
         term, kind, data = reader.u64(), reader.u8(), reader.blob()
-        expected = {1: 62, 2: 4, 3: 58, 4: 26, 5: 0}.get(kind)
+        expected = {1: 62, 2: 4, 3: 58, 4: 26, 5: 0, 6: 27, 7: 27}.get(kind)
         if expected is None or len(data) != expected:
             raise WireError("malformed Raft record")
         return cls(term, kind, data)
+
+
+# ---------------------------------------------------------------------------
+# Operate [ARCH 12.5]
+# ---------------------------------------------------------------------------
+
+
+@dataclass(slots=True)
+class OperateRequest:  # pylint: disable=too-many-instance-attributes
+    """One console exchange from an elected operator::
+
+        flags (8: 0x80 credentials, 0x40 target) ‖ session (64)
+        ‖ [target (Identifiant)] ‖ length (32) ‖ JSON (UTF-8)
+        ‖ [length (32) ‖ USD properties ‖ creation token ‖ X25519 (32)]
+
+    The JSON is the local console's (``line`` / ``confirm``, ``complete``...).
+    An operator of another USD of the USC adds its credentials: its USD
+    properties, signed by the USC, and its creation token, signed by that
+    USD's key; ``target`` asks the receiver to relay to a node of its USD.
+    """
+
+    session: int
+    payload: bytes
+    target: str = ""
+    usd: UsdProperties | None = None
+    token: CreationToken | None = None
+    x25519: bytes = b""
+
+    def encode(self) -> bytes:
+        foreign = self.token is not None and self.usd is not None
+        out = Writer().u8((0x80 if foreign else 0) | (0x40 if self.target else 0))
+        out.u64(self.session)
+        if self.target:
+            out.ident(self.target)
+        out.u32(len(self.payload)).raw(self.payload)
+        if foreign:
+            usd = self.usd.encode()
+            out.u32(len(usd)).raw(usd).raw(self.token.encode()).raw(self.x25519)
+        return out.bytes()
+
+    @classmethod
+    def decode(cls, body: bytes) -> "OperateRequest":
+        reader = Reader(body)
+        flags = reader.u8()
+        if flags & 0x3F:
+            raise WireError("reserved Operate flags set")
+        session = reader.u64()
+        target = reader.ident() if flags & 0x40 else ""
+        payload = reader.raw(reader.u32())
+        usd = token = None
+        x25519 = b""
+        if flags & 0x80:
+            usd = UsdProperties.decode(reader.raw(reader.u32()))
+            token = CreationToken.read(reader)
+            x25519 = reader.raw(32)
+        reader.end()
+        return cls(session, payload, target, usd, token, x25519)
 
 
 def read_list(reader: Reader, item) -> list:

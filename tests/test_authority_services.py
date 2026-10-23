@@ -163,6 +163,68 @@ def test_dependency_outside_catalogue_or_area_refused(authority_node):
     assert authority_node.signed.usd is not None
 
 
+def test_attached_files_travel_signed_and_land_in_files_dir(authority_node, tmp_path):
+    """Files of a service: in the signed mutation, then in $USMD_FILES_DIR."""
+    import os  # pylint: disable=import-outside-toplevel
+
+    service_file = tmp_path / "web.yaml"
+    service_file.write_text("name: web\nbuild:\n  - command: \"$USMD_FILES_DIR/start.sh\"\n")
+    script, sql = tmp_path / "start.sh", tmp_path / "schema.sql"
+    script.write_bytes(b"#!/bin/sh\necho up\n")
+    sql.write_bytes(b"CREATE TABLE t (id uuid);\n")
+    _commit(services={"web": ServiceConfig(name="web", id="0a1", area="front", vip="10.80.0.10",
+                                           service_file=str(service_file),
+                                           files=[str(script), str(sql)])})
+    (spec,) = authority_node.mutation_specs("frontal")
+    assert spec.files == {"start.sh": b"#!/bin/sh\necho up\n", "schema.sql": sql.read_bytes()}
+
+    directory = authority_node.service_files_dir("web")
+    directory.mkdir(parents=True)
+    (directory / "stale.txt").write_text("gone")
+    authority_node.sequence_environment(spec, "unbuild")
+    assert sorted(os.listdir(directory)) == ["schema.sql", "start.sh"]
+    if os.name != "nt":
+        assert os.access(directory / "start.sh", os.X_OK)
+        assert not os.access(directory / "schema.sql", os.X_OK)
+
+    with pytest.raises(ValueError, match="no document with 'name: db'"):
+        _commit(services={"web": ServiceConfig(name="web", id="0a1", area="front",
+                                               vip="10.80.0.10"),
+                          "db": ServiceConfig(name="db", id="0a2", area="front",
+                                              vip="10.80.0.11", service_file=str(service_file))},
+                mutations={"frontal": MutationConfig(name="frontal", services=["web", "db"])})
+    with pytest.raises(ValueError, match="cannot read"):
+        _commit(services={"web": ServiceConfig(name="web", id="0a1", area="front",
+                                               vip="10.80.0.10", files=[str(tmp_path / "x")])})
+
+
+def test_service_instances_come_from_the_node_table(authority_node):
+    """Who runs what, seen by any node, mutation or not."""
+    from usmd_rdsh.cli.actions import catalog  # pylint: disable=import-outside-toplevel
+
+    _commit()
+    assert catalog.instance_rows() == []
+    authority_node.settings.address = "192.168.1.11"
+    authority_node.token = authority_node.authority.mint_token(
+        USDN, authority_node.key, [Role.NODE_EXECUTOR], validity_ms=3_600_000, founder=True)
+    authority_node.mutation = "frontal"
+    authority_node.management[0x0A1] = 0x0001
+    authority_node.publish_record()
+    (row,) = catalog.instance_rows()
+    assert (row["service"], row["sp_address"], row["mutation"]) == ("web", "0a1.0001", "frontal")
+    assert row["node_id"].endswith("(self)")
+
+
+def test_service_file_names_and_sizes_are_checked():
+    with pytest.raises(ValueError, match="not a file name"):
+        parse_service_file("name: web\nfiles:\n  ../etc/passwd: aGk=\n")
+    with pytest.raises(ValueError, match="base64"):
+        parse_service_file("name: web\nfiles:\n  a.sh: '***'\n")
+    big = "A" * (4 * (512 * 1024 // 3 + 2))
+    with pytest.raises(ValueError, match="at most"):
+        parse_service_file(f"name: web\nfiles:\n  a.bin: {big}\n")
+
+
 def test_area_containing_a_node_address_refused(authority_node):
     authority_node.settings.address = "10.80.3.4"
     with pytest.raises(ValueError, match="node address"):

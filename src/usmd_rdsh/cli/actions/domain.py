@@ -89,6 +89,7 @@ async def show_sp() -> dict:
         ("no SP port configured (0x0010)" if port is None else "stopped"),
         "udp_port": port or "-",
         "interface": node.tun.kind if node and node.tun else "-",
+        "problem": (node.sp_problem() if node else "") or "-",
         "mtu": parameter(usd, 0x0013),
         "instances_per_service": parameter(usd, 0x000A),
         "vips": ", ".join(node.sp_vips()) if node else "",

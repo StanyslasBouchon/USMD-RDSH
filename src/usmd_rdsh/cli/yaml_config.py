@@ -2,8 +2,8 @@
 
 The sections of the example are kept as they are::
 
-    node:      address, role
-    usd:       name, cluster_name, edb_address, max_reference_nodes,
+    node:      address, roles (or role)
+    usd:      name, cluster_name, edb_address, max_reference_nodes,
                load_threshold, ping_tolerance_ms, load_check_interval,
                emergency_threshold
     bootstrap, keys_file, nndp_ttl, ctl_socket
@@ -99,7 +99,7 @@ def _role(value: str, warnings: list[str]) -> str:
         warnings.append(f"node.role '{value}' is the daemon's name: read as "
                         f"'{LEGACY_ROLES[text]}' [NCP-02 7.3]")
         return LEGACY_ROLES[text]
-    raise ValueError(f"node.role '{value}': one of {', '.join(SPEC_ROLES)}")
+    raise ValueError(f"node.roles '{value}': among {', '.join(SPEC_ROLES)}")
 
 
 def _tree(doc: ConfigDocument, prefix: tuple[str, ...], data: dict, warnings: list[str]) -> None:
@@ -139,8 +139,12 @@ def parse(text: str) -> YamlConfig:
     node = dict(data.pop("node", None) or {})
     if "address" in node:
         _set(doc, ("system", "global"), "address", str(node.pop("address")))
-    if "role" in node:
-        _set(doc, ("system", "bootstrap"), "role", _role(node.pop("role"), warnings))
+    if "role" in node or "roles" in node:
+        given = node.pop("roles", None) or node.pop("role", None) or []
+        node.pop("role", None)
+        given = given if isinstance(given, list) else [given]
+        roles = list(dict.fromkeys(_role(r, warnings) for r in given))
+        _set(doc, ("system", "bootstrap"), "roles", roles)
     _tree(doc, ("system",), {"bootstrap": node} if node else {}, warnings)
 
     usd = dict(data.pop("usd", None) or {})
@@ -211,9 +215,9 @@ def dump(document: ConfigDocument, *, bootstrap: bool = False, keys_file: str = 
     address = take(("system", "global"), "address")
     if address is not None:
         node["address"] = address
-    role = take(("system", "bootstrap"), "role")
-    if role is not None:
-        node["role"] = str(role)
+    roles = take(("system", "bootstrap"), "roles")
+    if roles is not None:
+        node["roles"] = [str(r) for r in roles]
     if node:
         out["node"] = node
 
@@ -245,6 +249,8 @@ def dump(document: ConfigDocument, *, bootstrap: bool = False, keys_file: str = 
         if value is not None:
             web[name] = value
     if web:
+        # parse() reads a missing tls as self-signed: write the default too.
+        web.setdefault("tls", "off")
         out["web"] = web
 
     rest: dict[str, Any] = {}
@@ -275,7 +281,10 @@ def dump(document: ConfigDocument, *, bootstrap: bool = False, keys_file: str = 
             out[section] = values
 
     header = ("# usmd.yaml — USMD-RDSH node configuration (layout of usmd.example.yaml)\n"
-              "# Roles: usc-operator | usd-operator | node-operator | node-executor [NCP-02 7.3]\n")
+              "# Roles (several allowed): usc-operator | usd-operator | node-operator | "
+              "node-executor [NCP-02 7.3]\n"
+              "# Every node is an executor; operators are elected by the USD master "
+              "[ARCH 12.4]\n")
     return header + yaml.safe_dump(_plain(out), sort_keys=False, allow_unicode=True)
 
 

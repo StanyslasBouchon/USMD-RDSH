@@ -1,0 +1,2 @@
+# Uploaded as they are to Linux nodes: a CR after "#!/bin/sh" breaks the script.
+* text eol=lf

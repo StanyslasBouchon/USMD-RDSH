@@ -37,6 +37,8 @@ class MemoryTun:
     """No system interface: written packets are kept for inspection."""
 
     kind = "memory"
+    #: Why no system interface could be opened ("" for an interface asked for).
+    reason = ""
 
     def __init__(self, mtu: int, on_packet: Callable[[bytes], None]) -> None:
         self.mtu = mtu
@@ -234,14 +236,21 @@ class WintunTun(MemoryTun):
 def open_tun(*, mtu: int, on_packet: Callable[[bytes], None],
              backend: str = "auto") -> MemoryTun:
     """The best interface this host allows."""
+    reason = ""
     if backend in ("auto", "linux") and sys.platform.startswith("linux"):
         try:
             return LinuxTun(mtu, on_packet)
         except OSError as exc:
-            log.warning("[SP] /dev/net/tun unavailable: %s", exc)
+            reason = f"/dev/net/tun: {exc.strerror or exc}"
+            if exc.errno in (1, 13):  # EPERM, EACCES
+                reason += " (the node needs CAP_NET_ADMIN: run it as the usmd service)"
+            log.warning("[SP] %s", reason)
     if backend in ("auto", "wintun") and sys.platform == "win32":
         try:
             return WintunTun(mtu, on_packet)
         except (OSError, AttributeError) as exc:
-            log.warning("[SP] Wintun unavailable: %s", exc)
-    return MemoryTun(mtu, on_packet)
+            reason = f"Wintun: {exc} (wintun.dll and administrator rights)"
+            log.warning("[SP] %s", reason)
+    tun = MemoryTun(mtu, on_packet)
+    tun.reason = reason or ("" if backend == "memory" else "no TUN backend on this system")
+    return tun

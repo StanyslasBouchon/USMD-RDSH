@@ -23,6 +23,7 @@ from usmd_rdsh.node.ncp.codec import (
     Command,
     ErrorCode,
     MessageType,
+    Role,
     UscProperties,
     UsdProperties,
     decode_mutations,
@@ -93,6 +94,8 @@ register({
     "ncp.object.name": "Identifier",
     "ncp.object.label": "Label",
     "ncp.object.version": "Version",
+    "ncp.term": "Term",
+    "ncp.role": "Role",
     # SP-01 7.3 - 7.6
     "sp": "Service Protocol",
     "sp.frame": "Frame type",
@@ -497,6 +500,20 @@ def _req_node_table(cursor: _Cursor, item: Item) -> str:
     return f"mode={mode} page {page + 1}/{max(pages, 1)} entries={count}"
 
 
+def _role_text(value: int) -> str:
+    return (_enum_name(Role, value) or "?").lower()
+
+
+def _req_operators(cursor: _Cursor, item: Item) -> str:
+    term, _ = cursor.add_int(item, "ncp.term", 8)
+    master = cursor.add_ident(item, "ncp.node_id")[0]
+    count = int.from_bytes(cursor.take(2)[1], "big")
+    for _ in range(min(count, 256)):
+        cursor.add_int(item, "ncp.role", 1, fmt=_role_text, alias=_role_text)
+        cursor.add_ident(item, "ncp.node_id")
+    return f"term={term} master={master} operators={count}"
+
+
 _REQUESTS: dict[int, Callable[[_Cursor, Item], str]] = {
     Command.CHECK_DISTANCE_TO_NODE: _req_check_distance,
     Command.REQUEST_HELP: _req_help,
@@ -510,6 +527,7 @@ _REQUESTS: dict[int, Callable[[_Cursor, Item], str]] = {
     Command.SEND_USD_PROPERTIES: _req_usd,
     Command.SEND_MUTATION_PROPERTIES: _req_mutations,
     Command.SEND_NODE_TABLE: _req_node_table,
+    Command.SEND_OPERATORS: _req_operators,
 }
 
 

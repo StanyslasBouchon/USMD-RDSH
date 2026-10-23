@@ -7,11 +7,12 @@ the node's tables.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 from typing import TYPE_CHECKING
 
-from usmd_rdsh.node.crypto import CryptoError
+from usmd_rdsh.node.crypto import CryptoError, b64u
 from usmd_rdsh.node.ncp.codec import (
     Command,
     CreationToken,
@@ -20,6 +21,7 @@ from usmd_rdsh.node.ncp.codec import (
     Message,
     MessageType,
     NodeRecord,
+    OperateRequest,
     Role,
     TableEntry,
     UscProperties,
@@ -79,7 +81,11 @@ class NcpHandlers:  # pylint: disable=too-many-public-methods
             return None
         if command == Command.REQUEST_APPROVAL:
             self._remember_requester(message)
-        if command != Command.REQUEST_APPROVAL:
+        # An operator of another USD is outside our tables: its credentials
+        # are checked by the handler instead [ARCH 12.5].
+        foreign = command == Command.OPERATE and message.body[:1] != b"" and \
+            bool(message.body[0] & 0x80)
+        if command != Command.REQUEST_APPROVAL and not foreign:
             refusal = self._check_sender(command, key, ip)
             if refusal is not False:
                 return refusal
@@ -539,6 +545,105 @@ class NcpHandlers:  # pylint: disable=too-many-public-methods
 
     async def _on_raft_install_snapshot(self: "Node", message: Message, ip: str) -> Answer:
         return _ok(self.raft.handle_snapshot(message.body, _loop_time()))
+
+    async def _on_send_operators(self: "Node", message: Message, ip: str) -> Answer:
+        """[6.19] the master's table of elected operators, for a node without the log."""
+        reader = Reader(message.body)
+        term, master = reader.u64(), reader.ident()
+        pairs = []
+        for _ in range(reader.u16()):
+            role = reader.u8()
+            if role not in (1, 2, 3):
+                raise WireError("not an elected role")
+            pairs.append((role, reader.ident()))
+        reader.end()
+        entry = self.tables.nodes.get(message.sender)
+        voters = set(self.raft.voters if self.raft else {}) | set(self.known_voters)
+        if entry is None or entry.record.node_id != master or not (
+                entry.record.voter or master in voters):
+            return _error(ErrorCode.VOTERS_ONLY)
+        if self.raft is not None and self.raft.is_voter:
+            return _ok(ack_body(True))  # a voter reads its own log
+        if term < self.operators_term:
+            return _ok(ack_body(False))  # from a deposed master
+        operators: dict[int, set[str]] = {}
+        for role, node_id in pairs:
+            operators.setdefault(role, set()).add(node_id)
+        self.set_operators(operators, term)
+        return _ok(ack_body(True))
+
+    # -- Operate [ARCH 12.5] ---------------------------------------------------------
+
+    async def _on_operate(self: "Node", message: Message, ip: str) -> Answer:
+        """A console exchange from an elected operator.
+
+        From this USD: the sender is an elected usc-operator or usd-operator,
+        and the exchange is for this node. From another USD of the USC: the
+        sender's credentials prove a usc-operator of that USD; only an elected
+        usc-operator of this USD serves it, relaying to *target* if needed,
+        and any other node answers with the operators to ask.
+        """
+        request = OperateRequest.decode(message.body)
+        if request.token is not None:
+            usdn = self._check_foreign_operator(request, message.sender)
+            self._approval_x25519 = {**getattr(self, "_approval_x25519", {}),
+                                     message.sender: request.x25519}
+            if Role.USC_OPERATOR not in self.elected_roles:
+                return _ok(json.dumps({"redirect": self.operators_to_redirect()}).encode())
+            origin = f"{b64u(message.sender)[:12]} (USD {usdn})"
+            if request.target and request.target != self.node_id:
+                return await self._relay_operate(request, origin)
+        else:
+            entry = self.tables.nodes.get(message.sender)
+            if entry is None:
+                return _error(ErrorCode.UNKNOWN_KEY)
+            origin = entry.record.node_id
+            if origin not in self.operator_ids(Role.USC_OPERATOR, Role.USD_OPERATOR):
+                return _error(ErrorCode.NOT_AUTHORISED, "not an elected usc/usd operator")
+            if request.target and request.target != self.node_id:
+                return _error(ErrorCode.NOT_AUTHORISED, "relayed only for another USD")
+        if self.operate_handler is None:
+            return _error(ErrorCode.BUSY, "no console on this node")
+        answer = await self.operate_handler(origin, message.sender, request.session,
+                                            request.payload)
+        return _ok(answer)
+
+    def _check_foreign_operator(self: "Node", request: OperateRequest, sender: bytes) -> str:
+        """USC -> USD properties -> creation token -> sender, usc-operator; the USDN."""
+        usc, usc_key, usd, token = self.signed.usc, self.usc_key, request.usd, request.token
+        if usc is None or usc_key is None or usd is None or token is None:
+            raise NcpRemoteError(ErrorCode.NOT_AUTHORISED, "no USC in force here")
+        try:
+            usd.verify(usc_key)
+            token.verify()
+        except CryptoError as exc:
+            raise NcpRemoteError(ErrorCode.NOT_AUTHORISED, "credentials") from exc
+        own = self.signed.usd.usdn if self.signed.usd else ""
+        if usd.usdn == own or usd.usdn not in usc.usd:
+            raise NcpRemoteError(ErrorCode.NOT_AUTHORISED, "USD not in the USC")
+        if token.issuer != usd.public_key or token.usdn != usd.usdn or \
+                token.node_key != sender or Role.USC_OPERATOR not in token.roles:
+            raise NcpRemoteError(ErrorCode.NOT_AUTHORISED, "not a usc-operator of that USD")
+        if len(request.x25519) != 32:
+            raise WireError("X25519 key")
+        return usd.usdn
+
+    async def _relay_operate(self: "Node", request: OperateRequest, origin: str) -> Answer:
+        """To a node of this USD, as its elected usc-operator; the origin travels along."""
+        if self.tables.nodes.by_id(request.target) is None:
+            return _error(ErrorCode.UNKNOWN_KEY, "no such node in this USD")
+        try:
+            payload = json.loads(request.payload)
+            if not isinstance(payload, dict):
+                raise ValueError
+        except ValueError:
+            return _error(ErrorCode.MALFORMED, "one JSON object")
+        payload["via"] = origin
+        try:
+            return _ok(await self.operate(request.target, request.session,
+                                          json.dumps(payload).encode()))
+        except NcpTimeout:
+            return _error(ErrorCode.BUSY, f"{request.target} does not answer")
 
 
 def _permille(reader: Reader) -> int:

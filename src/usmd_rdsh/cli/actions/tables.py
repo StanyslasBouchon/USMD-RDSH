@@ -118,6 +118,7 @@ class TableRow(BaseModel):
     references: str
     sp_addresses: str
     voter: bool
+    roles: str
     load: str
     record_date: str
 
@@ -143,6 +144,8 @@ def node_table_rows() -> list[dict]:
             "references": " ".join(e.record.reference_nodes),
             "sp_addresses": " ".join(addresses.to_text(a) for a in e.record.sp_addresses),
             "voter": e.record.voter,
+            # Executor, plus the operator roles the record declares [ARCH 12.4].
+            "roles": _roles({int(Role.NODE_EXECUTOR), *e.record.operators}),
             "load": "" if e.record.node_id not in node.loads
             else f"{node.loads[e.record.node_id]}",
             "record_date": _when(e.record.date),
@@ -155,7 +158,8 @@ def node_table_rows() -> list[dict]:
         cli_output=printer(with_reason(lambda rows: table(rows, [
             ("node_id", "Node ID"), ("address", "Address"), ("declared", "Declared"),
             ("observed", "Observed"), ("mutation", "Mutation"), ("sp_addresses", "SP addresses"),
-            ("voter", "Voter"), ("load", "Load"), ("record_date", "Record date")])
+            ("voter", "Voter"), ("roles", "Roles"), ("load", "Load"),
+            ("record_date", "Record date")])
         + f"\n\nTotal nodes: {len(rows)}")))
 async def show_node_table() -> list[dict]:
     """Every node of the USD: its latest signed record and what we observe."""

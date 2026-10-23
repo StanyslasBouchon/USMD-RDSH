@@ -7,6 +7,12 @@
                                  (a line ending in ``?`` lists what may follow)
     POST /web/complete           Tab: candidates for the text before the cursor
     GET  /web/summary            everything the dashboard draws, in one call
+    GET  /web/config/text        ``which`` = running | startup | full: the
+                                 configuration as the console shows it
+    POST /web/service-files      keep an uploaded file of a service on the
+                                 authority; GET reads one a service names
+    GET  /web/shows              every ``show`` of the console and its inputs;
+                                 POST runs one (web/shows.py)
     GET  /web/capture            captured frames after ``since`` matching ``filter``;
                                  ``wait`` seconds of long poll for new ones
     GET  /web/capture/<n>        one frame: its field tree and its bytes
@@ -50,7 +56,7 @@ from nan_runtime.log import set_log_sink, reset_log_sink, strip_level_prefix
 from nan_actions.views.errors import ViewError
 
 from usmd_rdsh.cli.confirm import reset_web_confirmation, web_confirmation
-from usmd_rdsh.web import config_forms
+from usmd_rdsh.web import config_forms, service_files, shows
 from usmd_rdsh.cli.permissions import READ, WRITE
 from usmd_rdsh.cli.runtime import RUNTIME
 from usmd_rdsh.node.capture import CAPTURE, FilterError, compile_filter, field_names
@@ -159,6 +165,12 @@ class WebRouter:
                                          "can_write": action_is_available([WRITE], actor)})
             if route == "/web/config" and method == "POST":
                 return await self._config(actor, body)
+            if route == "/web/config/text" and method == "GET":
+                return await self._config_text(actor, urlsplit(path).query)
+            if route == "/web/service-files":
+                return self._service_files(actor, method, body, urlsplit(path).query)
+            if route == "/web/shows":
+                return await self._shows(actor, method, body)
             if route.startswith("/web/capture"):
                 return await self._capture(actor, method, route, urlsplit(path).query)
         return ApiResponse.error(404, "not_found", "Nothing is served here.")
@@ -289,6 +301,70 @@ class WebRouter:
         finally:
             reset_current_action_actor(context)
         return ApiResponse(200, summary)
+
+    @staticmethod
+    async def _config_text(actor: ActionActor, query: str) -> ApiResponse:
+        """``show running-config``, ``show startup-config`` or ``show configuration``."""
+        from usmd_rdsh.cli.actions import configuration  # pylint: disable=import-outside-toplevel
+
+        shows = {
+            "running": configuration.show_running_config,
+            "startup": configuration.show_startup_config,
+            "full": configuration.show_configuration,
+        }
+        which = parse_qs(query).get("which", ["running"])[-1]
+        if which not in shows:
+            return ApiResponse.error(400, "bad_request", "which is running, startup or full.")
+        context = set_current_action_actor(actor)
+        try:
+            result = await shows[which]()
+        finally:
+            reset_current_action_actor(context)
+        return ApiResponse(200, {"which": which, "text": result["text"],
+                                 "path": result.get("path")})
+
+    @staticmethod
+    def _service_files(actor: ActionActor, method: str, body: bytes, query: str) -> ApiResponse:
+        """POST: keep an uploaded file on the authority; GET: read one a service names."""
+        try:
+            if method == "GET":
+                params = {k: v[-1] for k, v in parse_qs(query).items()}
+                return ApiResponse(200, service_files.read(params.get("service", ""),
+                                                           params.get("path", "")))
+            if method != "POST":
+                return ApiResponse.error(404, "not_found", "Nothing is served here.")
+            if not action_is_available([WRITE], actor):
+                return ApiResponse.error(403, "missing_permissions", f"'{WRITE}' is required.")
+            try:
+                request = json.loads(body or b"{}")
+                if not isinstance(request, dict):
+                    raise ValueError
+            except ValueError:
+                return ApiResponse.error(400, "bad_request", "Send a JSON object.")
+            saved = service_files.save(request)
+        except service_files.UploadError as exc:
+            return ApiResponse.error(422, "invalid_input", str(exc))
+        log.info("[WEB] %s uploaded %s (%d bytes)", actor.username, saved["path"], saved["size"])
+        return ApiResponse(200, saved)
+
+    @staticmethod
+    async def _shows(actor: ActionActor, method: str, body: bytes) -> ApiResponse:
+        """GET: the ``show`` commands; POST: run one of them."""
+        if method == "GET":
+            return ApiResponse(200, {"shows": shows.catalog(actor)})
+        if method != "POST":
+            return ApiResponse.error(404, "not_found", "Nothing is served here.")
+        try:
+            request = json.loads(body or b"{}")
+            cli, args = str(request["cli"]), request.get("args") or {}
+            if not isinstance(args, dict):
+                raise TypeError
+        except (ValueError, KeyError, TypeError, AttributeError):
+            return ApiResponse.error(400, "bad_request", 'Send {"cli": "show ...", "args": {}}.')
+        try:
+            return ApiResponse(200, await shows.run(actor, cli, args))
+        except shows.ShowError as exc:
+            return ApiResponse.error(exc.status, "refused", str(exc))
 
     @staticmethod
     async def _config(actor: ActionActor, body: bytes) -> ApiResponse:

@@ -1,0 +1,16 @@
+# Service file of "fake" (config service / edit fake / service-file).
+# Attach with it (files): fake.py. 10.80.0.20 is the VIP of "db".
+name: fake
+type: static
+dependencies: [db]
+build:
+  - command: 'setsid nohup python3 "$USMD_FILES_DIR/fake.py" 10.80.0.20 >>"$USMD_DATA_DIR/fake.log" 2>&1 & echo $! >"$USMD_DATA_DIR/fake.pid"'
+check_health:
+  - command: 'kill -0 "$(cat "$USMD_DATA_DIR/fake.pid")"'
+unbuild:
+  - command: 'kill "$(cat "$USMD_DATA_DIR/fake.pid")" 2>/dev/null; rm -f "$USMD_DATA_DIR/fake.pid"; true'
+update:
+  - action: unbuild
+  - action: build
+emergency:
+  - action: unbuild

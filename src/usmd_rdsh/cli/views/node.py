@@ -10,9 +10,13 @@ from usmd_rdsh.cli.views.common import NODE_ACCESS, IPv4, Role
 
 
 class BootstrapConfig(BaseModel):
-    """Role, creation token and where to look for an admitted node."""
+    """Roles, creation token and where to look for an admitted node."""
 
-    role: Role = Field(Role.NODE_EXECUTOR, description="Role given at creation")
+    roles: list[Role] = Field(
+        [Role.NODE_EXECUTOR],
+        description="Roles the node is authorised for; every node is an executor, "
+                    "operators are elected by the USD master [ARCH 12.4]",
+    )
     creation_token: Annotated[str, Secret] = Field(
         "", description="Token signed by the USD operator [NCP 7.7]"
     )
@@ -24,7 +28,7 @@ class BootstrapConfig(BaseModel):
 
 @view("system bootstrap", model=BootstrapConfig, **NODE_ACCESS)
 class BootstrapView(ConfigNode):
-    """Role, creation token, contact node and EDB used to join the USD."""
+    """Roles, creation token, contact node and EDB used to join the USD."""
 
     async def apply(self, config: BootstrapConfig) -> None:
         await apply_local("system bootstrap", config)

@@ -7,6 +7,9 @@ A service file is a UTF-8 YAML stream, one document per service [8.3]::
     dependencies: [db]
     build / unbuild / emergency / check_health / update:   sequences
 
+    files:               (extension) name -> base64 content, written to
+                         $USMD_FILES_DIR before every sequence
+
 A sequence is a list of steps; a step has either ``command`` (run by the
 operating system) or ``action`` (the name of another sequence of the same
 service, build or unbuild), and optionally ``timeout`` in seconds (300). A
@@ -19,7 +22,7 @@ properties carrying the file has been checked [8.3] - the caller's duty,
 enforced by :class:`ServiceRunner` refusing an unverified mutation.
 
 Every command gets the instance's ``USMD_*`` variables (SP address, data
-identifier prefix, VIP, data directory...); build, update and check_health
+identifier prefix, VIP, data directory, files directory...); build, update and check_health
 are refused without an SP address, and the sequences of one service never
 overlap [ARCH-03 8.7].
 """
@@ -27,6 +30,8 @@ overlap [ARCH-03 8.7].
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import logging
 import os
 import re
@@ -40,7 +45,12 @@ log = logging.getLogger("usmd_rdsh.services")
 
 SEQUENCES = ("build", "unbuild", "emergency", "check_health", "update")
 DEFAULT_TIMEOUT = 300
-KNOWN_KEYS = {"name", "type", "dependencies", "sp", *SEQUENCES}
+KNOWN_KEYS = {"name", "type", "dependencies", "sp", "files", *SEQUENCES}
+#: A file delivered with a service: a plain name, no directory, not hidden.
+FILE_NAME = re.compile(r"^[A-Za-z0-9_-][A-Za-z0-9._-]{0,127}$")
+#: Every file of one service together, decoded; the mutation travels in one
+#: NCP message (1024 fragments of 1111 bytes) with the base64 on top.
+MAX_FILES_BYTES = 512 * 1024
 
 
 class ServiceFileError(ValueError):
@@ -114,6 +124,32 @@ class ServiceSpec:
     type: str = "static"
     dependencies: list[str] = field(default_factory=list)
     sequences: dict[str, list[Step]] = field(default_factory=dict)
+    files: dict[str, bytes] = field(default_factory=dict)
+
+
+def check_file_name(name: str) -> str:
+    """ServiceFileError unless *name* can be a file of $USMD_FILES_DIR."""
+    if not isinstance(name, str) or not FILE_NAME.match(name):
+        raise ServiceFileError(f"'{name}' is not a file name (letters, digits, . _ -; "
+                               "no directory, not hidden)")
+    return name
+
+
+def _parse_files(value: object) -> dict[str, bytes]:
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ServiceFileError("'files' maps file names to base64 contents")
+    files = {}
+    for name, content in value.items():
+        check_file_name(name)
+        try:
+            files[name] = base64.b64decode(str(content), validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise ServiceFileError(f"file '{name}' is not valid base64") from exc
+    if sum(len(c) for c in files.values()) > MAX_FILES_BYTES:
+        raise ServiceFileError(f"the files of a service total at most {MAX_FILES_BYTES // 1024} KiB")
+    return files
 
 
 def parse_service_file(text: str | bytes) -> list[ServiceSpec]:
@@ -157,11 +193,37 @@ def parse_service_file(text: str | bytes) -> list[ServiceSpec]:
                     raise ServiceFileError("timeout is a positive number of seconds")
                 parsed.append(Step(step.get("command"), action, timeout))
             sequences[sequence] = parsed
-        services.append(ServiceSpec(name, kind, dependencies, sequences))
+        services.append(ServiceSpec(name, kind, dependencies, sequences,
+                                    _parse_files(document.get("files"))))
     names = [s.name for s in services]
     if len(names) != len(set(names)):
         raise ServiceFileError("a service appears twice")
     return services
+
+
+def write_files(directory: "os.PathLike[str] | str", files: dict[str, bytes]) -> None:
+    """Make *directory* hold exactly the service's files.
+
+    A file starting with ``#!`` is made executable, so a step can run it as
+    ``"$USMD_FILES_DIR/script.sh"``; the others are only readable. Files the
+    service no longer carries are removed.
+    """
+    os.makedirs(directory, mode=0o755, exist_ok=True)
+    for stale in set(os.listdir(directory)) - set(files):
+        path = os.path.join(directory, stale)
+        if os.path.isfile(path):
+            os.remove(path)
+    for name, content in files.items():
+        path = os.path.join(directory, check_file_name(name))
+        try:
+            with open(path, "rb") as held:
+                unchanged = held.read() == content
+        except OSError:
+            unchanged = False
+        if not unchanged:
+            with open(path, "wb") as out:
+                out.write(content)
+        os.chmod(path, 0o755 if content.startswith(b"#!") else 0o644)
 
 
 def dependency_order(services: list[ServiceSpec]) -> list[ServiceSpec]:

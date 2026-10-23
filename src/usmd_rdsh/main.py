@@ -1,11 +1,13 @@
 """Entry point of a USMD-RDSH node.
 
-    usmd                     start the node and its console
+    usmd                     the console of the node running on this machine
+                             (service); with none running, start one with it
     usmd --no-console        start the node only (service mode)
     usmd --config usmd.yaml  configuration file (layout of usmd.example.yaml)
     usmd --dev 2             virtual node 2 of a development cluster (127.0.0.3)
-    usmd -c "show version"   run console lines against the saved configuration
-                             and exit, without starting the node's protocols
+    usmd -c "show version"   run console lines and exit: on the running node,
+                             or, with none, against the saved configuration
+                             without starting the node's protocols
 
 Several virtual nodes at once: ``python -m usmd_rdsh.dev --nodes 3``.
 
@@ -27,7 +29,7 @@ dotenv.load_dotenv()
 # pylint: disable=wrong-import-position
 from prompt_toolkit.patch_stdout import patch_stdout  # noqa: E402
 
-from usmd_rdsh.cli import bridge  # noqa: E402
+from usmd_rdsh.cli import bridge, control  # noqa: E402
 from usmd_rdsh.cli.runtime import RUNTIME  # noqa: E402
 from usmd_rdsh.cli.shell import ShellFactory, banner  # noqa: E402
 from usmd_rdsh.cli import startup  # noqa: E402
@@ -101,8 +103,12 @@ async def _main(args: argparse.Namespace) -> None:
                 return True
 
         set_confirm_prompt(_Yes())
+    consoles = None
     if not one_shot:
         RUNTIME.web = WebServer(factory)
+        # Dev nodes share the machine: each listens in its own state directory.
+        consoles = control.ControlServer(
+            factory, state_directory().path("usmd.sock") if args.dev is not None else None)
     # What is in force (signed objects) is what the tree shows.
     bridge.reflect()
     await RUNTIME.apply_all()
@@ -110,8 +116,11 @@ async def _main(args: argparse.Namespace) -> None:
         if one_shot:
             await _run_commands(factory, args.command)
         else:
+            await consoles.start()
             await _serve(factory, console=not args.no_console)
     finally:
+        if consoles is not None:
+            await consoles.stop()
         if RUNTIME.web is not None:
             await RUNTIME.web.stop()
         if RUNTIME.node is not None and not one_shot:
@@ -121,6 +130,19 @@ async def _main(args: argparse.Namespace) -> None:
 def main(argv: list[str] | None = None) -> None:
     """Start the node."""
     args = _arguments(argv)
+    if not args.no_console and args.dev is None:
+        # A node already runs here (the service): talk to it, never start a second one.
+        running = control.running_node()
+        if running is not None:
+            if args.command:
+                control.run_lines(running, args.command, yes=args.yes)
+            else:
+                control.attach(running)
+            return
+        if os.getenv(control.ATTACH_ONLY_ENV_VAR):
+            # The installed 'usmd' command: the node is the service, not this process.
+            raise SystemExit("No node is running on this machine: 'sudo systemctl start usmd' "
+                             "(logs: 'journalctl -u usmd -e').")
 
     # A module-level logging call made during the imports above installs
     # logging's implicit stderr handler; the buffer and its console level

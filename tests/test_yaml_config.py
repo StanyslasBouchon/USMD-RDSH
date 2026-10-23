@@ -13,7 +13,7 @@ EXAMPLE = Path(__file__).resolve().parents[1] / "usmd.example.yaml"
 def test_example_file_is_read_with_spec_roles_and_units():
     loaded = yaml_config.parse(EXAMPLE.read_text(encoding="utf-8"))
     doc = loaded.document
-    assert doc.fields(("system", "bootstrap"))["role"] == "usc-operator"
+    assert doc.fields(("system", "bootstrap"))["roles"] == ["usc-operator"]
     assert any("ucd_operator" in w for w in loaded.warnings)
     usd = doc.fields(("usd",))
     assert usd["weakened_threshold"] == 800 and usd["emergency_threshold"] == 900
@@ -29,8 +29,16 @@ def test_example_file_is_read_with_spec_roles_and_units():
                                   "node-executor"])
 def test_spec_roles_are_kept(role):
     loaded = yaml_config.parse(f"node:\n  role: {role}\n")
-    assert loaded.document.fields(("system", "bootstrap"))["role"] == role
+    assert loaded.document.fields(("system", "bootstrap"))["roles"] == [role]
     assert loaded.warnings == []
+
+
+def test_several_roles_with_the_daemon_names():
+    loaded = yaml_config.parse("node:\n  roles: [executor, ucd_operator, usd_operator, "
+                               "operator]\n")
+    assert loaded.document.fields(("system", "bootstrap"))["roles"] == [
+        "node-executor", "usc-operator", "usd-operator", "node-operator"]
+    assert "roles:" in yaml_config.dump(loaded.document)
 
 
 def test_unknown_role_is_refused():
@@ -46,8 +54,16 @@ def test_round_trip_keeps_example_layout_and_tree_sections():
     dumped = yaml_config.dump(loaded.document, bootstrap=True, keys_file="keys.json")
     again = yaml_config.parse(dumped)
     assert again.document.to_dict() == loaded.document.to_dict()
-    assert "role: usc-operator" in dumped and "load_threshold: 0.8" in dumped
+    assert "- usc-operator" in dumped and "load_threshold: 0.8" in dumped
     assert "bootstrap: true" in dumped and again.keys_file == "keys.json"
+
+
+def test_plain_http_web_interface_stays_plain_after_a_round_trip():
+    loaded = yaml_config.parse("web:\n  enabled: true\n  port: 8080\n  tls: off\n")
+    dumped = yaml_config.dump(loaded.document)
+    again = yaml_config.parse(dumped)
+    assert str(again.document.fields(("system", "web-interface")).get("tls_mode", "off")) == "off"
+    assert "tls: 'off'" in dumped or "tls: off" in dumped
 
 
 def test_dev_addresses():

@@ -39,6 +39,7 @@ INSTALL_DIR="/opt/usmd"
 CONFIG_DIR="/etc/usmd"
 DATA_DIR="/var/lib/usmd"
 SERVICE_FILE="/etc/systemd/system/usmd.service"
+COMMAND_FILE="/usr/local/bin/usmd"
 SERVICE_USER="usmd"
 
 # ---------------------------------------------------------------------------
@@ -71,6 +72,7 @@ if [[ "${AUTO_YES}" == "false" ]]; then
     echo
     echo -e "${RED}Warning:${NC} this will remove:"
     echo -e "  • systemd service       ${CYAN}usmd.service${NC}"
+    echo -e "  • Console command       ${CYAN}${COMMAND_FILE}${NC}"
     echo -e "  • Virtualenv            ${CYAN}${INSTALL_DIR}${NC}"
     [[ "${KEEP_CONFIG}" == "false" ]] && echo -e "  • Configuration         ${CYAN}${CONFIG_DIR}${NC}"
     [[ "${KEEP_DATA}"   == "false" ]] && echo -e "  • Data / keys           ${CYAN}${DATA_DIR}${NC}"
@@ -101,6 +103,14 @@ if [[ -f "${SERVICE_FILE}" ]]; then
     success "Service file removed."
 else
     warn "${SERVICE_FILE} not found — skipped."
+fi
+
+# ---------------------------------------------------------------------------
+# Remove the console command
+# ---------------------------------------------------------------------------
+if [[ -f "${COMMAND_FILE}" ]]; then
+    rm -f "${COMMAND_FILE}"
+    success "Console command removed."
 fi
 
 # ---------------------------------------------------------------------------

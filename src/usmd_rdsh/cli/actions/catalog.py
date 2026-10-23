@@ -1,5 +1,5 @@
-"""``show service catalog``, ``show service-area summary``, ``show usd master``,
-``show mutation status`` [ARCH-02 8, 11, 12]."""
+"""``show service catalog``, ``show service instances``, ``show service-area summary``,
+``show usd master``, ``show mutation status`` [ARCH-02 8, 11, 12]."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from usmd_rdsh.cli.permissions import READ
 from usmd_rdsh.cli.runtime import RUNTIME
 from usmd_rdsh.cli.text import fields, printer, table
+from usmd_rdsh.node.ncp.codec import OPERATOR_ROLES
 from usmd_rdsh.node.signed import parameter
 
 
@@ -83,6 +84,71 @@ async def show_service_catalog() -> list[dict]:
     return catalog_rows()
 
 
+class InstanceRow(BaseModel):
+    service: str
+    sp_address: str
+    node_id: str
+    node_address: str
+    state: str
+    mutation: str
+    nearest: str
+
+
+def instance_rows() -> list[dict]:
+    """Every instance of the USD, from the node table: the nodes whose mutation
+    runs the service, with their SP address and state.
+
+    The node table reaches every node; the table of nearest services does not
+    (NNDP-01 6.5 keeps only the services of the node's own areas), so this is
+    where a node without a mutation sees who hosts what.
+    """
+    node = RUNTIME.node
+    if node is None or node.signed.usd is None:
+        return []
+    from usmd_rdsh.node import addresses  # pylint: disable=import-outside-toplevel
+    from usmd_rdsh.node.states import State  # pylint: disable=import-outside-toplevel
+
+    best = node.nndp.services._bests() if node.nndp else {}  # pylint: disable=protected-access
+    rows = []
+    for e in node.tables.nodes.sorted():
+        record = e.record
+        if not record.mutation:
+            continue
+        held = {addresses.service_of(a): a for a in record.sp_addresses}
+        try:
+            state = State(record.state).name
+        except ValueError:
+            state = f"0x{record.state:04X}"
+        for name in node.signed.mutation_services(record.mutation):
+            svc = node.signed.service_by_name(name)
+            if svc is None:
+                continue
+            address = held.get(svc.service_id)
+            rows.append({
+                "service": name,
+                "sp_address": addresses.to_text(address) if address is not None else "(no id)",
+                "node_id": record.node_id + (" (self)" if e.key == node.key else ""),
+                "node_address": record.address,
+                "state": state,
+                "mutation": record.mutation,
+                "nearest": "yes" if address is not None and best.get(svc.service_id) == address
+                else "",
+            })
+    return sorted(rows, key=lambda r: (r["service"], r["sp_address"]))
+
+
+@action(cli="show service instances",
+        description="Who runs each service in the USD, from the node table [ARCH 8, 11.3]",
+        permissions=[READ], rows=InstanceRow,
+        cli_output=printer(lambda rows: table(rows, [
+            ("service", "Service"), ("sp_address", "SP address"), ("node_id", "Node ID"),
+            ("node_address", "Address"), ("state", "State"), ("mutation", "Mutation"),
+            ("nearest", "Nearest")])
+            + "\n\nNearest: the instance this node's SP would choose (NNDP, own areas only)."))
+async def show_service_instances() -> list[dict]:
+    return instance_rows()
+
+
 @action(cli="show service-area summary", description="Service areas in force [ARCH-02 11.2]",
         permissions=[READ], cli_output=printer(lambda rows: table(rows, [
             ("id", "Id"), ("name", "Area"), ("prefix", "Prefix"), ("addresses", "Addresses"),
@@ -126,6 +192,30 @@ async def show_usd_master() -> dict:
         "removal": parameter(usd, 0x0015),
         "assignments": len(raft.state.assignments) if raft else 0,
     }
+
+
+@action(cli="show usd operators", description="Operators elected by the master [ARCH-02 12.4]",
+        permissions=[READ], cli_output=printer(lambda rows: table(rows, [
+            ("role", "Role"), ("node_id", "Node"), ("state", "State"),
+            ("this_node", "This node")])))
+async def show_usd_operators() -> list[dict]:
+    """Every node is an executor; the operator roles are elected among the
+    nodes whose creation token authorises them."""
+    node = RUNTIME.node
+    if node is None:
+        return []
+    rows = []
+    for role in OPERATOR_ROLES:
+        holders = sorted(node.operators.get(int(role), set()))
+        for node_id in holders or [None]:
+            key = node.node_key(node_id) if node_id else None
+            state = (node.state if node_id == node.node_id
+                     else node.peer_state(key) if key else None)
+            rows.append({"role": role.name.lower().replace("_", "-"),
+                         "node_id": node_id or "(none elected)",
+                         "state": state.name if state is not None else "-",
+                         "this_node": "yes" if node_id == node.node_id else ""})
+    return rows
 
 
 @action(cli="show usd assignments", description="SP addresses assigned by the master",
