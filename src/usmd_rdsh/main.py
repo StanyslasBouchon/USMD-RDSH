@@ -29,7 +29,7 @@ dotenv.load_dotenv()
 # pylint: disable=wrong-import-position
 from prompt_toolkit.patch_stdout import patch_stdout  # noqa: E402
 
-from usmd_rdsh.cli import bridge, control  # noqa: E402
+from usmd_rdsh.cli import bridge, control, operate  # noqa: E402
 from usmd_rdsh.cli.runtime import RUNTIME  # noqa: E402
 from usmd_rdsh.cli.shell import ShellFactory, banner  # noqa: E402
 from usmd_rdsh.cli import startup  # noqa: E402
@@ -93,6 +93,7 @@ async def _serve(factory: ShellFactory, console: bool) -> None:
 
 async def _main(args: argparse.Namespace) -> None:
     factory = ShellFactory()
+    operate.install(factory)  # the console lent to elected operators [ARCH 12.5]
     one_shot = bool(args.command)
     if one_shot and args.yes:
         from nan_actions.ports import set_confirm_prompt  # pylint: disable=import-outside-toplevel

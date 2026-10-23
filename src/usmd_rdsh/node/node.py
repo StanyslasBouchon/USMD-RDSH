@@ -1416,8 +1416,8 @@ class Node(NcpHandlers):  # pylint: disable=too-many-instance-attributes,too-man
         body = OperateRequest(session, payload).encode()
         return await self.call(node_id, Command.OPERATE, body, attempts=self.OPERATE_ATTEMPTS)
 
-    async def operate_foreign(self, usdn: str, session: int, payload: bytes,
-                              target: str = "") -> bytes:
+    async def operate_foreign(self, usdn: str, session: int, payload: bytes,  # pylint: disable=too-many-arguments
+                              target: str = "", *, attempts: int | None = None) -> bytes:
         """One console exchange with a node of another USD of the USC.
 
         Sent to that USD's elected usc-operator, which checks our credentials
@@ -1440,7 +1440,7 @@ class Node(NcpHandlers):  # pylint: disable=too-many-instance-attributes,too-man
             address, key, x25519 = contact
             self._foreign_x25519[key] = x25519
             answer = await self.call(key, Command.OPERATE, body, address=address, x25519=x25519,
-                                     attempts=self.OPERATE_ATTEMPTS)
+                                     attempts=attempts or self.OPERATE_ATTEMPTS)
             redirect = _redirect(answer)
             if redirect is None:
                 self._usc_relays[usdn] = contact

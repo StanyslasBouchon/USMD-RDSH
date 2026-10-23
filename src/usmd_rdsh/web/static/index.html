@@ -244,6 +244,10 @@ kbd { display: inline-flex; align-items: center; height: 20px; padding: 0 6px; b
 .cmdk:hover { color: var(--muted); border-color: color-mix(in srgb, var(--line) 50%, var(--muted)); }
 .cmdk span { flex: 1; text-align: left; }
 .live { cursor: pointer; border: 0; }
+.target { height: 36px; max-width: 280px; padding: 0 10px; border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: var(--panel); color: var(--text); box-shadow: var(--shadow-sm); font: inherit; font-size: 13px; }
+.target.remote { border-color: var(--warn); box-shadow: 0 0 0 2px var(--warn-soft); }
+@media (max-width: 720px) { .target { max-width: 140px; } }
 .menu-btn { display: none; }
 .content { width: 100%; max-width: 1360px; margin: 0 auto; padding: 24px 28px 56px; }
 .backdrop { display: none; }
@@ -773,6 +777,7 @@ body.readonly .write-only { display: none !important; }
             <span class="spacer"></span>
             <span class="count muted" id="log-count"></span>
           </div>
+      <select class="target hidden" id="target" title="Nœud(s) géré(s) par la console et les formulaires de configuration [ARCH 12.5]"></select>
           <div class="log-list" id="logs"></div>
         </div>
       </section>
@@ -1332,7 +1337,7 @@ function termWrite(text, cls) {
 function termWelcome() {
   termWrite("Console web USMD-RDSH — mêmes commandes que la console locale ('help', 'help <commande>').", "sys");
 }
-function setPrompt(p) { $("prompt").textContent = p; $("term-title").textContent = p.replace(/[#>]\s*$/, "").trim() || "console"; }
+function setPrompt(p) { $("prompt").textContent = p; consoleRemote = p.includes(">"); $("term-title").textContent = p.replace(/[#>]\s*$/, "").trim() || "console"; }
 
 async function run(line, confirm = false) {
   if (!confirm) termWrite($("prompt").textContent + line, "cmd");
@@ -1349,6 +1354,8 @@ async function run(line, confirm = false) {
 // ("config usd", "set ...", "end"), and two requests in flight would reorder it.
 let queue = Promise.resolve();
 function submit(line = $("cmd").value.trim()) {
+  // Nodes come and go: the target list follows, unless it is being chosen from.
+  if (++fleetTicks % 6 === 0 && document.activeElement !== $("target")) loadFleet();
   if (!line) return;
   cmdHistory.push(line); historyAt = cmdHistory.length;
   $("cmd").value = "";
@@ -1362,7 +1369,7 @@ const leafOf = n => n.path.includes(" ") ? n.path.split(" ").slice(1).join(" ") 
 const dirtyCount = () => controls.filter(c => c.dirty()).length;
 
 async function loadSchema() {
-  configSchema = await call("GET", "/web/config");
+  configSchema = await call("GET", "/web/config" + (target ? "?target=" + encodeURIComponent(target) : ""));
   return configSchema;
 }
 function sortedNodes() {
@@ -1444,6 +1451,40 @@ async function renderConfigText(box, which) {
       call("GET", "/web/config/text?which=" + w)));
   } catch (e) {
     if (e.message !== "401") $("cfgtext").innerHTML = `<span class="ln"><span class="hl-c">! ${esc(e.message)}</span></span>`;
+
+// ---- Target: the node(s) an elected operator manages [ARCH 12.5] --------
+// "" is this node; otherwise a console selector: "node <id>", "usd <USDN>",
+// "all". The console enters it ('node' / 'on'), the forms read and apply there.
+let target = "", fleet = null, consoleRemote = false, fleetTicks = 0;
+async function loadFleet() {
+  try { fleet = await call("GET", "/web/fleet"); } catch (e) { return; }
+  const sel = $("target");
+  sel.classList.toggle("hidden", !fleet.scope);
+  if (!fleet.scope) return;
+  const opt = (value, label) => `<option value="${esc(value)}"${value === target ? " selected" : ""}>${esc(label)}</option>`;
+  const byUsd = {};
+  for (const n of fleet.nodes) (byUsd[n.usdn] = byUsd[n.usdn] || []).push(n);
+  let html = opt("", "Ce nœud") + opt("all", fleet.scope === "usc" ? "Toute l'USC" : "Tout l'USD");
+  for (const usdn of fleet.usds) {
+    html += `<optgroup label="USD ${esc(usdn)}${usdn === fleet.usdn ? " (le mien)" : ""}">`;
+    if (fleet.scope === "usc") html += opt("usd " + usdn, "Tous les nœuds de cet USD");
+    for (const n of byUsd[usdn] || []) if (n.id !== fleet.self)
+      html += opt("node " + n.id, `${n.id.slice(-8)} · ${n.address} · ${n.state}${n.mutation ? " · " + n.mutation : ""}`);
+    html += "</optgroup>";
+  }
+  sel.innerHTML = html;
+  sel.value = target;
+}
+async function setTarget(value) {
+  target = value;
+  $("target").classList.toggle("remote", !!target);
+  // The console follows: leave the previous node(s), enter the new one(s).
+  const line = target && (target.startsWith("node ") ? target : "on " + target);
+  queue = queue.then(() => consoleRemote && run("disconnect")).then(() => line && run(line));
+  configSchema = null; controls = [];
+  if (currentPage === "config") openConfig(configPath === SHOW_PATH ? null : configPath, configKey);
+  toast(target ? "Cible : " + $("target").selectedOptions[0].textContent : "Retour à ce nœud");
+}
     return;
   }
   if (configPath !== SHOW_PATH || configKey !== which) return;
@@ -2240,7 +2281,7 @@ async function submitConfig(request, banner, nextKey, success) {
   try {
     const res = await fetch("/web/config", { method: "POST",
       headers: { "Authorization": "Bearer " + token, "Content-Type": "application/json" },
-      body: JSON.stringify(request) });
+      body: JSON.stringify(target ? { ...request, target } : request) });
     const data = await res.json().catch(() => ({}));
     if (res.status === 401) { logout("Jeton refusé ou révoqué."); return false; }
     if (!res.ok || data.ok === false) {
@@ -2251,8 +2292,8 @@ async function submitConfig(request, banner, nextKey, success) {
     controls = [];
     if (nextKey !== undefined) configKey = nextKey;
     await loadSchema();
-    const target = href("config", request.path, configKey && configKey !== NEW_KEY ? configKey : null);
-    history.replaceState(null, "", target); currentHash = location.hash;
+    const page = href("config", request.path, configKey && configKey !== NEW_KEY ? configKey : null);
+    history.replaceState(null, "", page); currentHash = location.hash;
     renderConfigNav(); renderNode();
     toast(success || "Appliqué", "ok", (data.output || []).join("\n"));
     refresh();
@@ -2641,3 +2682,7 @@ if (token) start(); else { $("login").classList.remove("hidden"); setLoginMode("
 </script>
 </body>
 </html>
+  loadFleet();
+  target = ""; fleet = null; consoleRemote = false;
+  $("target").classList.add("hidden"); $("target").classList.remove("remote");
+$("target").onchange = e => setTarget(e.target.value);

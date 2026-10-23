@@ -96,6 +96,9 @@ register({
     "ncp.object.version": "Version",
     "ncp.term": "Term",
     "ncp.role": "Role",
+    "ncp.operate.flags": "Operate flags",
+    "ncp.operate.session": "Console session",
+    "ncp.operate.json": "Console exchange",
     # SP-01 7.3 - 7.6
     "sp": "Service Protocol",
     "sp.frame": "Frame type",
@@ -514,7 +517,25 @@ def _req_operators(cursor: _Cursor, item: Item) -> str:
     return f"term={term} master={master} operators={count}"
 
 
+def _req_operate(cursor: _Cursor, item: Item) -> str:
+    """[ARCH 12.5]: flags, session, target, the console JSON, credentials."""
+    flags, _ = cursor.add_int(item, "ncp.operate.flags", 1, fmt=lambda v: f"0x{v:02X}")
+    session, _ = cursor.add_int(item, "ncp.operate.session", 8, fmt=lambda v: f"{v:016x}")
+    target = cursor.add_ident(item, "ncp.node_id")[0] if flags & 0x40 else ""
+    length = int.from_bytes(cursor.take(4)[1], "big")
+    _, raw = cursor.take(length)
+    text = raw.decode("utf-8", errors="replace")
+    item.add("ncp.operate.json", value=text, at=cursor.at - length, size=length)
+    if flags & 0x80:
+        size = int.from_bytes(cursor.take(4)[1], "big")
+        usd = UsdProperties.decode(cursor.take(size)[1])
+        item.add("ncp.object.name", "Operator's USD", value=usd.usdn)
+    return f"session {session:016x}{' -> ' + target if target else ''}" \
+           f"{' (other USD)' if flags & 0x80 else ''}"
+
+
 _REQUESTS: dict[int, Callable[[_Cursor, Item], str]] = {
+    Command.OPERATE: _req_operate,
     Command.CHECK_DISTANCE_TO_NODE: _req_check_distance,
     Command.REQUEST_HELP: _req_help,
     Command.REQUEST_EMERGENCY: _req_help,

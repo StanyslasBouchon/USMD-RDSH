@@ -20,9 +20,9 @@ from nan_actions.cli.history import as_history
 from nan_actions.cli.registry import Registry
 from nan_actions.cli.shell import Shell
 from prompt_toolkit import PromptSession
-from prompt_toolkit.completion import CompleteEvent
+from prompt_toolkit.completion import CompleteEvent, Completion
 from prompt_toolkit.document import Document
-from prompt_toolkit.application import run_in_terminal
+from prompt_toolkit.application import in_terminal, run_in_terminal
 from prompt_toolkit.key_binding import KeyBindings, merge_key_bindings
 from nan_actions.errors import SdkError
 from nan_actions.ports import set_confirm_prompt
@@ -83,9 +83,11 @@ def _operator(actor: ActionActor) -> Iterator[None]:
 class _OperatorCompleter(ShellCompleter):
     """Tab and ``?`` as the shell's operator sees them, actions included."""
 
-    def __init__(self, registry, views, actor_factory: Callable[[], ActionActor]) -> None:
+    def __init__(self, registry, views, actor_factory: Callable[[], ActionActor],
+                 shell: "UsmdShell | None" = None) -> None:
         super().__init__(registry, views=views)
         self._actor_factory = actor_factory
+        self._shell = shell
 
     def get_completions(self, document: Document, complete_event: CompleteEvent):
         with _operator(self._actor_factory()):
@@ -93,6 +95,14 @@ class _OperatorCompleter(ShellCompleter):
         yield from found
 
     async def get_completions_async(self, document: Document, complete_event: CompleteEvent):
+        if self._shell is not None and self._shell.remote is not None:
+            # Another node's console: its own candidates [ARCH 12.5].
+            typed = document.text_before_cursor
+            word = typed.split(" ")[-1] if typed and not typed.endswith(" ") else ""
+            for c in await self._shell.remote.completions(typed):
+                yield Completion(c["value"], start_position=-len(word),
+                                 display=c.get("display"), display_meta=c.get("description"))
+            return
         # Synchronous on purpose: an await would let another request run while
         # the operator is lent (see _operator).
         for completion in self.get_completions(document, complete_event):
@@ -112,6 +122,14 @@ def _key_bindings(shell: "UsmdShell") -> KeyBindings:
         if typed.count('"') % 2:
             buffer.insert_text("?")
             return
+        if shell.remote is not None:
+            async def remote_help() -> None:
+                async with in_terminal():
+                    print(shell.prompt() + typed + "?")
+                    await shell.execute_line(typed + "?")
+
+            event.app.create_background_task(remote_help())
+            return
         run_in_terminal(lambda: (print(shell.prompt() + typed + "?"), shell._answer(typed)))  # pylint: disable=protected-access
 
     return merge_key_bindings([ShellCompleter.build_key_bindings(), own])
@@ -129,7 +147,19 @@ class UsmdShell(Shell):
     answered by the shell, so the web console and ``usmd -c`` get it too.
     """
 
+    #: Another node's console (or several), while ``node`` / ``on`` holds it [ARCH 12.5].
+    remote: Any = None
+
     async def execute_line(self, line: str) -> bool:  # type: ignore[override]
+        from usmd_rdsh.cli import operate  # pylint: disable=import-outside-toplevel
+
+        if self.remote is not None:
+            await operate.remote_line(self, line)
+            return False
+        if line.strip().split()[:1] in (["node"], ["on"]) and not (
+                self._views is not None and self._views.active):
+            await operate.enter(self, line, self._actor_factory())
+            return False
         if self._is_question(line):
             self._answer(line.rstrip()[:-1])
             return False
@@ -140,6 +170,17 @@ class UsmdShell(Shell):
         stripped = line.rstrip()
         return stripped.endswith("?") and stripped.count('"') % 2 == 0 \
             and not stripped.startswith("help")
+
+    def prompt(self) -> str:
+        if self.remote is not None:
+            return self.remote.prompt(RUNTIME.hostname())
+        return super().prompt()
+
+    async def completions_async(self, text: str) -> list[dict[str, str]]:
+        """Tab: the remote console's candidates while one holds this shell."""
+        if self.remote is not None:
+            return await self.remote.completions(text)
+        return self.completions(text)
 
     def completions(self, text: str) -> list[dict[str, str]]:  # type: ignore[override]
         with _operator(self._actor_factory()):
@@ -184,7 +225,7 @@ class UsmdShell(Shell):
         """The prompt loop of :class:`Shell`, with the operator's completer."""
         session: PromptSession[str] = PromptSession(
             history=as_history(self._history),
-            completer=_OperatorCompleter(self._registry, self._views, self._actor_factory),
+            completer=_OperatorCompleter(self._registry, self._views, self._actor_factory, self),
             complete_while_typing=False,
             key_bindings=_key_bindings(self),
         )
@@ -284,6 +325,10 @@ class ShellFactory:
             session = self._session(actor)
             self._web[key] = (self._shell(actor, session), session)
         return self._web[key][0]
+
+    def operator_shell(self, actor: ActionActor) -> UsmdShell:
+        """A shell lent to an elected operator of another node [ARCH 12.5]."""
+        return self._shell(actor, self._session(actor))
 
     def prompt(self, actor: ActionActor) -> str:
         """The prompt a web token's next line is typed at."""

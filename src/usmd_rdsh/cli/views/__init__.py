@@ -20,6 +20,7 @@ Walked with ``config`` / ``set`` / ``unset`` / ``edit`` / ``next`` / ``end``::
     config service               (table) catalogue entry and service file [ARCH-02 11.1]
     config trust
         config nal               (table) public key -> roles             [ARCH 4.3]
+        config usc-peer          (table) contact node of each other USD  [ARCH 12.5]
 
 Importing this package registers every node; ``main`` does it once.
 """
