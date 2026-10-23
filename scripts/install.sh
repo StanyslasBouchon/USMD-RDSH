@@ -143,6 +143,13 @@ if [[ -n "${IMPORT_STATE}" ]]; then
             && ! systemctl is-active --quiet usmd.service; then
         die "A node still runs on this machine (UDP 9992/5222): 'exit' its console first."
     fi
+    # Nor its services: a database copied while it writes is not a backup.
+    BUSY="$(ps -eo pid=,args= | grep -F -- "${IMPORT_STATE}/" | grep -v -e install.sh -e 'grep -F' || true)"
+    if [[ -n "${BUSY}" ]]; then
+        echo "${BUSY}" >&2
+        die "Processes still use '${IMPORT_STATE}' (services of the node): in its console, " \
+            "'execute node transmute' (no mutation: every service unbuilt), then 'exit'."
+    fi
 fi
 
 # Find Python 3.11+
@@ -225,19 +232,42 @@ if [[ -n "${IMPORT_STATE}" ]]; then
     rm -f "${STATE_DIR}/usmd.sock"
     chown -R "${SERVICE_USER}:${SERVICE_USER}" "${STATE_DIR}"
     [[ -f "${CONFIG_FILE}" ]] && cp -p "${CONFIG_FILE}" "${CONFIG_FILE}.${STAMP}.bak"
-    if [[ -f "${IMPORT_STATE}/usmd.yaml" ]]; then
-        cp "${IMPORT_STATE}/usmd.yaml" "${CONFIG_FILE}"
-    else
-        # The configuration the node saved (config.json), in the usmd.yaml layout;
-        # already founded or admitted: no bootstrap, the identity stays identity.json.
-        USMD_STATE_DIR="${STATE_DIR}" "${VENV_DIR}/bin/python" - > "${CONFIG_FILE}" <<'EOF'
+    # The configuration the node saved (config.json, or usmd.yaml in its state),
+    # in the usmd.yaml layout. Already founded or admitted: no bootstrap. Paths
+    # into the old state now point into the copy; any other file the services
+    # name must be readable by the service, which cannot see /home.
+    CONFIG_TMP="$(mktemp)"
+    USMD_STATE_DIR="${STATE_DIR}" "${VENV_DIR}/bin/python" - "${IMPORT_STATE}" "${STATE_DIR}" \
+        > "${CONFIG_TMP}" <<'EOF'
+import os
+import sys
+from pathlib import Path
+
 from usmd_rdsh.cli import yaml_config
 from usmd_rdsh.cli.store import ConfigStore
 
+old, new = sys.argv[1].rstrip("/") + "/", sys.argv[2].rstrip("/") + "/"
+own = Path(new) / "usmd.yaml"
+if own.exists():
+    loaded = yaml_config.parse(own.read_text(encoding="utf-8"))
+    document, keys_file = loaded.document, loaded.keys_file
+else:
+    document, keys_file = ConfigStore().load(), ""
+text = yaml_config.dump(document, keys_file=keys_file).replace(old, new)
 print("# /etc/usmd/usmd.yaml — taken over from a node run by hand (install.sh --import-state)")
-print(yaml_config.dump(ConfigStore().load()), end="")
+print(text, end="")
+for name, row in yaml_config.parse(text).document.rows(("service",)).items():
+    for path in [row.get("service_file") or "", *(row.get("files") or [])]:
+        if not path:
+            continue
+        hidden = path.startswith(("/home/", "/root/", "/tmp/"))
+        if hidden or not os.path.isfile(path):
+            print(f"service '{name}' names {path}: "
+                  f"{'the service cannot read /home, /root or /tmp' if hidden else 'missing'}; "
+                  "copy it under /etc/usmd/services and 'set' the new path", file=sys.stderr)
 EOF
-    fi
+    install -m 600 -o "${SERVICE_USER}" -g "${SERVICE_USER}" "${CONFIG_TMP}" "${CONFIG_FILE}"
+    rm -f "${CONFIG_TMP}" "${STATE_DIR}/usmd.yaml"
     success "Node taken over: identity, USD and configuration in ${STATE_DIR} and ${CONFIG_FILE}."
     info "'${IMPORT_STATE}' is left as it was; remove it once the service runs."
 elif [[ -f "${CONFIG_FILE}" && "${RESET_CONFIG}" == "false" ]]; then
