@@ -121,6 +121,33 @@ def test_group_line_asks_once_and_reports_each_node():
     assert remote.prompt("op") == "op>[3 nodes](config-x)#"
 
 
+class _RemoteConsole:
+    """A remote node completing its own commands."""
+
+    async def send(self, target, session, request):
+        typed = request.get("complete", "")
+        return {"candidates": [{"value": w, "display": w, "description": "", "start": "0"}
+                               for w in ("show", "exit") if w.startswith(typed)]}
+
+
+def test_disconnect_is_offered_inside_a_remote_console():
+    remote = operate.Remote([operate.Target("A")], _RemoteConsole())
+    shell = type("Shell", (), {"remote": remote})()
+    values = lambda text: [c["value"] for c in asyncio.run(remote.completions(text))]  # noqa: E731
+    assert values("") == ["show", "exit", "disconnect"]
+    assert values("dis") == ["disconnect"] and values("show ") == []
+    lines = []
+    sink = set_log_sink(lines.append)
+    try:
+        asyncio.run(operate.remote_line(shell, "?"))
+        asyncio.run(operate.remote_line(shell, "dis?"))
+    finally:
+        reset_log_sink(sink)
+    assert sum("disconnect" in line for line in lines) == 2
+    assert any(line.strip().startswith("show") for line in lines)
+    assert shell.remote is remote  # '?' leaves nobody
+
+
 @pytest.fixture(name="factory")
 def _factory(tmp_path, monkeypatch):
     monkeypatch.setenv("USMD_STATE_DIR", str(tmp_path))

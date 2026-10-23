@@ -391,6 +391,7 @@ FLEET = Fleet()
 #: What ``?`` says of each word, at the root and after ``on``.
 ENTRIES = {"node": "Console of one node of the USD / USC (elected operators) [ARCH 12.5]",
            "on": "Run lines on several nodes: on <targets> [<line>] [ARCH 12.5]"}
+DISCONNECT_HELP = "Back to the console of this node (leaves the remote node(s)) [ARCH 12.5]"
 SELECTOR_HELP = {"all": "Every node in reach", "node": "One node: identifier or address",
                  "usd": "The nodes of a USD", "mutation": "The nodes hosting a mutation",
                  "area": "The nodes serving a service area", "state": "The nodes in a state",
@@ -573,10 +574,26 @@ class Remote:
         await self._all({"close": True})
 
     async def completions(self, text: str) -> list[dict[str, str]]:
-        if not self.targets:
-            return []
-        answer = await self.fleet.send(self.targets[0], self.session, {"complete": text})
-        return list(answer.get("candidates") or [])
+        """The remote console's candidates, and ``disconnect``, which is this console's."""
+        found: list[dict[str, str]] = []
+        if self.targets:
+            answer = await self.fleet.send(self.targets[0], self.session, {"complete": text})
+            found = list(answer.get("candidates") or [])
+        typed = text.lstrip()
+        if " " not in typed and "disconnect".startswith(typed):
+            found.append({"value": "disconnect", "display": "disconnect",
+                          "description": DISCONNECT_HELP, "start": str(-len(typed))})
+        return found
+
+    async def answer_question(self, typed: str) -> None:
+        """``?`` on the first word: the remote console's commands, ``disconnect`` among them."""
+        candidates = await self.completions(typed)
+        if not candidates:
+            log(f"% Unrecognized command: {typed.strip() or '?'}", LogLevel.ERROR)
+            return
+        width = max(len(c["display"]) for c in candidates)
+        for candidate in candidates:
+            emit(f"  {candidate['display'].ljust(width)}  {candidate['description']}".rstrip())
 
     def _print(self, answers: dict[str, dict[str, Any]], *, quiet: set[str]) -> None:
         for target in self.targets:
@@ -662,6 +679,11 @@ async def remote_line(shell: "UsmdShell", line: str) -> None:
     """A line typed while the console is another node's (or several)."""
     remote = shell.remote
     assert remote is not None
+    stripped = line.rstrip()
+    if stripped.endswith("?") and " " not in stripped[:-1].strip() \
+            and stripped.count('"') % 2 == 0:
+        await remote.answer_question(stripped[:-1].strip())
+        return
     if line.strip() == "disconnect":
         shell.remote = None
         await remote.close()
