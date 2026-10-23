@@ -103,6 +103,22 @@ build:
 
 The installer lists `systemctl`, `journalctl`, `apt-get`, `apt`, `dpkg`, `ip`, `sysctl` and `install` the first time; the list is root's to edit, and an upgrade keeps it. Each command listed gives root to whoever writes a service file the authority signs: list only what the services need.
 
+**Services reached from outside USMD.** A service whose file declares `expose` is reached on every node hosting it at **60000 + its service id** (`0d1` → 60209), on the node's own addresses: the kernel (nftables, table `ip usmd`) redirects that port to the local instance and keeps the client's address. Applications that do not speak SP, and the members of a clustered service, use it as any port. The installer reserves 60001-64094 (`/etc/sysctl.d/60-usmd.conf`) and needs `nftables`.
+
+```yaml
+name: pg
+type: dynamic
+expose: {port: 5432, protocol: tcp, allow: [192.168.0.0/16]}   # allow: empty = any source
+build:
+  - command: '"$USMD_FILES_DIR/pg.sh" start'      # gets $USMD_PEERS, $USMD_EXPOSE_PORT...
+peers_changed:                                   # the other instances changed
+  - command: '"$USMD_FILES_DIR/pg.sh" reconfigure'
+probe:                                           # exit 0: this instance takes clients now
+  - command: '"$USMD_FILES_DIR/pg.sh" is-primary'
+```
+
+The sequences get `USMD_NODE_ADDRESS`, `USMD_EXPOSE_PORT`, and `USMD_PEERS` / `USMD_PEER_ADDRESSES`: the other Active nodes running the service (`address:60000+id`, and their addresses alone for an engine's own cluster ports). `show service exposure` lists what this node exposes.
+
 **Useful commands after installation:**
 
 ```bash

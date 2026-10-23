@@ -747,6 +747,23 @@ Un usd-operator élu gère tous les nœuds de son USD, un usc-operator élu tous
 | ARCH-B-9 | DEF | Maintien de l'EDB (par l'administrateur ou par les nœuds) | open | — |
 | ARCH-B-10 | DEF | Réattribution d'un identifiant de gestion libéré : délai minimal ou horodatage minimal imposé au nouveau titulaire, pour que ses identifiants de données ne rencontrent pas ceux de l'ancien (ARCH-03) | open | Dépend de ARCH-B-2 |
 
+### Annexe C. Exposition hors USMD (extension, hors draft, demandée le 2026-10-24)
+
+Étape 1 de trois (2 : VIP de répartition sur l'interface physique, propriétaire élu par le maître Raft, substitution d'adresse ; 3 : retour direct). Tout moteur de base de données (ou autre service) doit pouvoir être monté : USMD fournit les mécanismes, le fichier de service les met en œuvre.
+
+| ID | Niveau | Exigence | État | Remarque |
+|---|---|---|---|---|
+| EXPO-1 | Demande | Un service est joignable hors USMD, sur chaque nœud qui l'héberge, au port 60000 + identifiant de service (001..ffe → 60001..64094) | done | Clé `expose: {port, protocol: tcp\|udp, allow: [préfixes]}` du fichier de service (`services.Exposure`) ; `exposure.public_port` ; test `test_exposure.py` |
+| EXPO-2 | Choix | Redirection dans le noyau (nftables), adresse du client conservée | done | Table `ip usmd` remplacée d'un bloc (`exposure.ruleset`), DNAT vers VIP:port de l'instance locale, sur les adresses propres du nœud (`fib daddr type local`), chaînes prerouting et output ; vérifiée par `nft -c` (nftables 1.0.9) ; tests `test_exposure.py` |
+| EXPO-3 | Demande | La redirection suit l'hébergement : retirée quand le service n'est plus hébergé (unbuild, check_health raté, arrêt) | done | `Node.refresh_interface` → `refresh_exposure` ; `stop_services` ; test `test_authority_services.py::test_an_exposed_service_gets_its_port_peers_and_probe` |
+| EXPO-4 | Demande | Sources autorisées par service | done | `allow` → `ip saddr { … }` ; liste vide : toute source |
+| EXPO-5 | Demande | Les membres d'un cluster se connaissent | done | Variables `USMD_PEERS` (adresse:60000+id des autres nœuds Actifs dont la mutation porte le service), `USMD_PEER_ADDRESSES`, `USMD_EXPOSE_PORT`, `USMD_NODE_ADDRESS` (`Node.service_environment`, `service_peers`) |
+| EXPO-6 | Demande | Séquence `peers_changed` quand les autres instances changent | done | `Node._peers_loop` / `check_peers` (toutes les 5 s, pas au premier regard) |
+| EXPO-7 | Demande | Séquence `probe` : l'instance accepte-t-elle des clients (primaire vs réplica…) | done | `Node.run_probe` après chaque check_health réussi ; résultat dans `show service exposure` ; utilisé à l'étape 2 par la VIP de répartition |
+| EXPO-8 | Demande | Aucune connexion sortante ne prend un port exposé comme port source | done | `scripts/install.sh` : `net.ipv4.ip_local_reserved_ports` (60001-64094, en conservant les réservations existantes) dans `/etc/sysctl.d/60-usmd.conf` ; retiré par `uninstall.sh` |
+| EXPO-9 | Demande | Consultation | done | `show service exposure` (port, instance, sources, hébergé, clients, autres instances, erreur nftables) |
+| EXPO-10 | Limite | Les ports propres au moteur entre membres (Galera 4567/4568/4444, etcd…) ne passent pas par 60000 + id | open | Les membres se joignent sur leurs adresses physiques (`USMD_PEER_ADDRESSES`) ; un pare-feu doit les ouvrir. Une exposition de plusieurs ports par service reste à concevoir |
+
 ---
 
 # Partie 2 — NCP

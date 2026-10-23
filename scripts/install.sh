@@ -83,6 +83,9 @@ ROOT_RELAY="/usr/local/sbin/usmd-root"
 ROOT_COMMANDS_DIR="/etc/usmd-root"
 ROOT_COMMANDS="${ROOT_COMMANDS_DIR}/commands"
 SUDOERS_FILE="/etc/sudoers.d/usmd"
+SYSCTL_FILE="/etc/sysctl.d/60-usmd.conf"
+#: Services are reached from outside USMD at 60000 + service id (001..ffe).
+EXPOSED_PORTS="60001-64094"
 #: Commands the services' sequences may run as root unless the list exists already.
 DEFAULT_ROOT_COMMANDS="systemctl journalctl apt-get apt dpkg ip sysctl install"
 SERVICE_USER="usmd"
@@ -118,6 +121,7 @@ done
 
 command -v systemctl &>/dev/null || die "systemd is required but was not found."
 command -v ip &>/dev/null || die "'ip' (iproute2) is required: the node configures its SP interface with it."
+command -v nft &>/dev/null || warn "'nft' (nftables) is missing: services cannot be reached from outside USMD (port 60000 + id). Install it: apt install nftables"
 [[ -e /dev/net/tun ]] || warn "/dev/net/tun is missing: SP (the services' data plane) will not start."
 
 [[ -f "${SOURCE_DIR}/pyproject.toml" ]] \
@@ -403,6 +407,30 @@ EOF
 
 chmod 644 "${SERVICE_FILE}"
 success "systemd service written: ${SERVICE_FILE}"
+
+# ---------------------------------------------------------------------------
+# Ports of the services reached from outside USMD (60000 + service id)
+# ---------------------------------------------------------------------------
+# The kernel's ephemeral range (32768-60999 by default) overlaps them: an
+# outgoing connection could take 60209 as its source port before service 0d1
+# is exposed there. Reserve them, keeping what other software reserved.
+CURRENT_RESERVED="$(sysctl -n net.ipv4.ip_local_reserved_ports 2>/dev/null || true)"
+case ",${CURRENT_RESERVED}," in
+    *",${EXPOSED_PORTS},"*) RESERVED="${CURRENT_RESERVED}" ;;
+    ",,") RESERVED="${EXPOSED_PORTS}" ;;
+    *) RESERVED="${CURRENT_RESERVED},${EXPOSED_PORTS}" ;;
+esac
+cat > "${SYSCTL_FILE}" <<EOF
+# Written by USMD-RDSH scripts/install.sh: services are reached from outside
+# USMD at 60000 + service id; no outgoing connection may take those ports.
+net.ipv4.ip_local_reserved_ports = ${RESERVED}
+EOF
+chmod 644 "${SYSCTL_FILE}"
+if sysctl -q -p "${SYSCTL_FILE}"; then
+    success "Ports ${EXPOSED_PORTS} reserved for exposed services (${SYSCTL_FILE})."
+else
+    warn "Could not reserve ports ${EXPOSED_PORTS} now; they will be at the next boot."
+fi
 
 # ---------------------------------------------------------------------------
 # Console command

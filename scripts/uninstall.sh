@@ -43,6 +43,7 @@ COMMAND_FILE="/usr/local/bin/usmd"
 ROOT_RELAY="/usr/local/sbin/usmd-root"
 ROOT_COMMANDS_DIR="/etc/usmd-root"
 SUDOERS_FILE="/etc/sudoers.d/usmd"
+SYSCTL_FILE="/etc/sysctl.d/60-usmd.conf"
 SERVICE_USER="usmd"
 
 # ---------------------------------------------------------------------------
@@ -122,6 +123,9 @@ fi
 # Remove the system command relay, its list and its sudoers rule
 # ---------------------------------------------------------------------------
 rm -f "${SUDOERS_FILE}" "${ROOT_RELAY}"
+# The ports of exposed services stay reserved until the next boot.
+rm -f "${SYSCTL_FILE}"
+command -v nft &>/dev/null && nft delete table ip usmd 2>/dev/null || true
 if [[ "${KEEP_CONFIG}" == "false" ]]; then
     rm -rf "${ROOT_COMMANDS_DIR}"
 fi

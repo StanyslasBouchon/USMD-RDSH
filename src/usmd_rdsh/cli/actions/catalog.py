@@ -1,5 +1,6 @@
-"""``show service catalog``, ``show service instances``, ``show service-area summary``,
-``show usd master``, ``show mutation status`` [ARCH-02 8, 11, 12]."""
+"""``show service catalog``, ``show service instances``, ``show service exposure``,
+``show service-area summary``, ``show usd master``, ``show mutation status``
+[ARCH-02 8, 11, 12]."""
 
 from __future__ import annotations
 
@@ -147,6 +148,59 @@ def instance_rows() -> list[dict]:
             + "\n\nNearest: the instance this node's SP would choose (NNDP, own areas only)."))
 async def show_service_instances() -> list[dict]:
     return instance_rows()
+
+
+class ExposureRow(BaseModel):
+    service: str
+    port: str
+    target: str
+    allow: str
+    hosted: bool
+    clients: str
+    peers: str
+
+
+def exposure_rows() -> list[dict]:
+    """The services of this node's mutation that are reached from outside USMD."""
+    node = RUNTIME.node
+    if node is None or not node.mutation:
+        return []
+    from usmd_rdsh.node.exposure import public_port  # pylint: disable=import-outside-toplevel
+
+    rows = []
+    for spec in node.mutation_specs(node.mutation):
+        entry = node.signed.service_by_name(spec.name)
+        if spec.expose is None or entry is None:
+            continue
+        probe = node.probes.get(spec.name)
+        rows.append({
+            "service": spec.name,
+            "port": f"{public_port(entry.service_id)}/{spec.expose.protocol}",
+            "target": f"{entry.vip}:{spec.expose.port}",
+            "allow": ", ".join(spec.expose.allow) or "any",
+            "hosted": entry.service_id in node.hosted,
+            "clients": "yes" if probe is None and entry.service_id in node.hosted
+            else "no probe yet" if probe is None else "yes" if probe else "no (probe)",
+            "peers": ", ".join(f"{a}:{p}" for a, p in node.service_peers(spec.name)) or "-",
+        })
+    return rows
+
+
+def _exposure_text(rows: list[dict]) -> str:
+    node = RUNTIME.node
+    text = table(rows, [("service", "Service"), ("port", "Port"), ("target", "Instance"),
+                        ("allow", "Allowed"), ("hosted", "Hosted"), ("clients", "Clients"),
+                        ("peers", "Other instances")])
+    error = node.exposure.error if node is not None else ""
+    return text + (f"\n\nnftables: {error}" if error else
+                   "\n\nPort: 60000 + service id, on this node's addresses (nftables).")
+
+
+@action(cli="show service exposure",
+        description="Ports reached from outside USMD: 60000 + service id (extension)",
+        permissions=[READ], rows=ExposureRow, cli_output=printer(_exposure_text))
+async def show_service_exposure() -> list[dict]:
+    return exposure_rows()
 
 
 @action(cli="show service-area summary", description="Service areas in force [ARCH-02 11.2]",

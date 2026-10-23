@@ -365,6 +365,60 @@ def test_a_deleted_mutation_is_retired_and_its_hosts_unbuild(authority_node, tmp
     _commit(services=services, mutations={})  # retired once: nothing more to sign
 
 
+def test_an_exposed_service_gets_its_port_peers_and_probe(authority_node, tmp_path, monkeypatch):
+    """60000 + id redirected to the hosted instance; USMD_PEERS for its
+    sequences; peers_changed when the other instances change; probe."""
+    import sys  # pylint: disable=import-outside-toplevel
+
+    import yaml  # pylint: disable=import-outside-toplevel
+
+    from usmd_rdsh.node.exposure import ExposureTable  # pylint: disable=import-outside-toplevel
+    from usmd_rdsh.node.states import State  # pylint: disable=import-outside-toplevel
+
+    marker = tmp_path / "mark.py"
+    marker.write_text("import os, pathlib, sys\n"
+                      "pathlib.Path(os.environ['USMD_DATA_DIR'], sys.argv[1]).write_text("
+                      "os.environ.get('USMD_PEERS', ''))\n")
+    run = f'"{sys.executable}" "{marker}"'
+    service_file = tmp_path / "pg.yaml"
+    service_file.write_text(yaml.safe_dump({
+        "name": "pg", "expose": {"port": 5432},
+        "probe": [{"command": f'"{sys.executable}" -c "raise SystemExit(1)"'}],
+        "peers_changed": [{"command": f"{run} peers"}]}))
+    _commit(services={"pg": ServiceConfig(name="pg", id="0d1", area="front", vip="10.80.0.20",
+                                          service_file=str(service_file))},
+            mutations={"frontal": MutationConfig(name="frontal", services=["pg"])})
+    node = authority_node
+    applied = []
+    node.exposure = ExposureTable(apply=lambda text: applied.append(text) or "")
+    node.settings.address = "192.168.1.11"
+    node.management[0x0D1] = 0x0001
+    node.mutation = "frontal"
+    node.set_state(State.ACTIVE, reason="test", force=True)
+    node.hosted.add(0x0D1)
+    node.refresh_interface()
+    assert "tcp dport 60209 dnat to 10.80.0.20:5432" in applied[-1]
+
+    peers = [("192.168.1.12", 60209)]
+    monkeypatch.setattr(node, "service_peers", lambda name: list(peers))
+    (spec,) = node.mutation_specs("frontal")
+    env = node.service_environment(spec, "build")
+    assert env["USMD_EXPOSE_PORT"] == "60209" and env["USMD_NODE_ADDRESS"] == "192.168.1.11"
+    assert env["USMD_PEERS"] == "192.168.1.12:60209" and env["USMD_PEER_ADDRESSES"] == "192.168.1.12"
+
+    asyncio.run(node.check_peers())  # first look: nothing to tell the instance
+    assert not (node.service_data_dir("pg") / "peers").exists()
+    peers.append(("192.168.1.13", 60209))
+    asyncio.run(node.check_peers())
+    assert (node.service_data_dir("pg") / "peers").read_text() == \
+        "192.168.1.12:60209,192.168.1.13:60209"
+    assert asyncio.run(node.run_probe(spec)) is False and node.probes["pg"] is False
+
+    node.hosted.clear()
+    node.refresh_exposure()
+    assert applied[-1] == "table ip usmd\ndelete table ip usmd\n"
+
+
 def test_service_file_names_and_sizes_are_checked():
     with pytest.raises(ValueError, match="not a file name"):
         parse_service_file("name: web\nfiles:\n  ../etc/passwd: aGk=\n")

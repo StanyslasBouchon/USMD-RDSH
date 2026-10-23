@@ -9,6 +9,12 @@ A service file is a UTF-8 YAML stream, one document per service [8.3]::
 
     files:               (extension) name -> base64 content, written to
                          $USMD_FILES_DIR before every sequence
+    expose:              (extension) {port: 5432, protocol: tcp, allow: [prefixes]}
+                         - the instance's port, reached from outside USMD on
+                         every hosting node at 60000 + service id
+    probe / peers_changed: (extension) sequences: whether the instance takes
+                         clients now (exit 0), and what to do when the other
+                         instances of the service changed ($USMD_PEERS)
 
 A sequence is a list of steps; a step has either ``command`` (run by the
 operating system) or ``action`` (the name of another sequence of the same
@@ -54,9 +60,11 @@ import yaml
 
 log = logging.getLogger("usmd_rdsh.services")
 
-SEQUENCES = ("build", "unbuild", "emergency", "check_health", "update")
+SEQUENCES = ("build", "unbuild", "emergency", "check_health", "update",
+             "probe", "peers_changed")
 DEFAULT_TIMEOUT = 300
-KNOWN_KEYS = {"name", "type", "dependencies", "sp", "files", *SEQUENCES}
+KNOWN_KEYS = {"name", "type", "dependencies", "sp", "files", "expose", *SEQUENCES}
+PROTOCOLS = ("tcp", "udp")
 #: A file delivered with a service: a plain name, no directory, not hidden.
 FILE_NAME = re.compile(r"^[A-Za-z0-9_-][A-Za-z0-9._-]{0,127}$")
 #: Every file of one service together, decoded; the mutation travels in one
@@ -129,6 +137,16 @@ class Step:
     timeout: int
 
 
+@dataclass(frozen=True, slots=True)
+class Exposure:
+    """The instance's port that clients outside USMD reach, at 60000 + service id
+    on every hosting node, and the source prefixes allowed (empty: any)."""
+
+    port: int
+    protocol: str = "tcp"
+    allow: tuple[str, ...] = ()
+
+
 @dataclass(slots=True)
 class ServiceSpec:
     name: str
@@ -136,6 +154,31 @@ class ServiceSpec:
     dependencies: list[str] = field(default_factory=list)
     sequences: dict[str, list[Step]] = field(default_factory=dict)
     files: dict[str, bytes] = field(default_factory=dict)
+    expose: Exposure | None = None
+
+
+def _parse_expose(value: object) -> Exposure | None:
+    """``expose: {port: 5432, protocol: tcp, allow: [192.168.0.0/16]}``."""
+    import ipaddress  # pylint: disable=import-outside-toplevel
+
+    if value is None:
+        return None
+    if not isinstance(value, dict) or set(value) - {"port", "protocol", "allow"}:
+        raise ServiceFileError("'expose' has port, protocol (tcp or udp) and allow")
+    port = value.get("port")
+    if not isinstance(port, int) or isinstance(port, bool) or not 1 <= port <= 65535:
+        raise ServiceFileError("'expose: port' is the instance's port, 1 to 65535")
+    protocol = value.get("protocol", "tcp")
+    if protocol not in PROTOCOLS:
+        raise ServiceFileError("'expose: protocol' is tcp or udp")
+    allow = value.get("allow") or []
+    if not isinstance(allow, list):
+        raise ServiceFileError("'expose: allow' is a list of IPv4 prefixes")
+    try:
+        prefixes = tuple(str(ipaddress.IPv4Network(str(p), strict=False)) for p in allow)
+    except ValueError as exc:
+        raise ServiceFileError(f"'expose: allow': {exc}") from exc
+    return Exposure(port, protocol, prefixes)
 
 
 def check_file_name(name: str) -> str:
@@ -205,7 +248,8 @@ def parse_service_file(text: str | bytes) -> list[ServiceSpec]:
                 parsed.append(Step(step.get("command"), action, timeout))
             sequences[sequence] = parsed
         services.append(ServiceSpec(name, kind, dependencies, sequences,
-                                    _parse_files(document.get("files"))))
+                                    _parse_files(document.get("files")),
+                                    _parse_expose(document.get("expose"))))
     names = [s.name for s in services]
     if len(names) != len(set(names)):
         raise ServiceFileError("a service appears twice")
@@ -268,7 +312,7 @@ class RunResult:
 
 
 #: Sequences that need the instance's SP address [ARCH-03 8.7].
-NEEDS_ADDRESS = ("build", "update", "check_health")
+NEEDS_ADDRESS = ("build", "update", "check_health", "probe", "peers_changed")
 
 #: (service, sequence) -> the USMD_* variables, or None without an SP address.
 Environment = Callable[[ServiceSpec, str], "dict[str, str] | None"]

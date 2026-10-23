@@ -58,12 +58,14 @@ from usmd_rdsh.node.ncp.transport import NcpRemoteError, NcpTimeout, NcpTranspor
 from usmd_rdsh.node.nndp import Neighbor, NndpHooks, NndpService
 from usmd_rdsh.node.raft import Raft, assign_record, operator_record, voter_record
 from usmd_rdsh.node.services import (
+    NEEDS_ADDRESS,
     ServiceRunner,
     ServiceSpec,
     dependency_order,
     parse_service_file,
     write_files,
 )
+from usmd_rdsh.node.exposure import ExposureTable, Rule, public_port
 from usmd_rdsh.node.signed import SignedConfig, is_retired, parameter
 from usmd_rdsh.node.sp.engine import CatalogService, Peer, SpEngine
 from usmd_rdsh.node.states import State
@@ -193,6 +195,10 @@ class Node(NcpHandlers):  # pylint: disable=too-many-instance-attributes,too-man
         self.operators_term = 0
         self._unfilled: set[Role] = set()  # operator roles without candidate, reported once
         self._dependencies_deferred = False  # dependency check waiting for another node, reported once
+        # Services reached from outside USMD at 60000 + id (extension, node/exposure.py).
+        self.exposure = ExposureTable()
+        self.probes: dict[str, bool] = {}  # service -> last probe: does it take clients
+        self._peers_seen: dict[str, tuple[str, ...]] = {}  # service -> USMD_PEERS last run
         # Operate [ARCH 12.5]: the console answering an operator, set by the CLI:
         # (origin, sender key, session, JSON) -> JSON.
         self.operate_handler = None
@@ -344,7 +350,8 @@ class Node(NcpHandlers):  # pylint: disable=too-many-instance-attributes,too-man
         self._start_raft()
         loops = [self._bootstrap_loop, self._load_loop, self._distance_loop,
                  self._properties_loop, self._reconcile_loop, self._healing_loop,
-                 self._health_loop, self._dependency_loop, self._maintenance_loop]
+                 self._health_loop, self._dependency_loop, self._maintenance_loop,
+                 self._peers_loop]
         self._tasks = [asyncio.create_task(loop(), name=loop.__name__) for loop in loops]
         if self.mutation:
             self._tasks.append(asyncio.create_task(self.resume_mutation(), name="resume_mutation"))
@@ -393,6 +400,7 @@ class Node(NcpHandlers):  # pylint: disable=too-many-instance-attributes,too-man
         for spec in reversed(self.mutation_specs(self.mutation) if self.mutation else []):
             await self.runner.run(spec, "unbuild")
         self.hosted.clear()
+        self.refresh_exposure()  # no port left open to a stopped instance
 
     async def stop(self) -> None:
         for task in self._tasks:
@@ -1705,7 +1713,7 @@ class Node(NcpHandlers):  # pylint: disable=too-many-instance-attributes,too-man
         a service can always be stopped cleanly [ARCH-03 8.7].
         """
         env = self.service_environment(spec, sequence)
-        if env is None and sequence not in ("build", "update", "check_health"):
+        if env is None and sequence not in NEEDS_ADDRESS:
             env = self.local_environment(spec, sequence)
         if env is not None:
             try:
@@ -1738,6 +1746,7 @@ class Node(NcpHandlers):  # pylint: disable=too-many-instance-attributes,too-man
         areas = {a.area_id: a.name for a in (self.signed.usd.areas if self.signed.usd else [])}
         data = self.service_data_dir(spec.name)
         data.mkdir(parents=True, exist_ok=True)
+        peers = self.service_peers(spec.name)
         return {
             "USMD_SERVICE": spec.name,
             "USMD_SERVICE_ID": f"{entry.service_id:03x}",
@@ -1753,6 +1762,12 @@ class Node(NcpHandlers):  # pylint: disable=too-many-instance-attributes,too-man
             "USMD_SEQUENCE": sequence,
             "USMD_DATA_DIR": str(data.resolve()),
             "USMD_FILES_DIR": str(self.service_files_dir(spec.name).resolve()),
+            # Outside USMD (extension): this node's address, the service's port
+            # there, and the other instances, for a service that is a cluster.
+            "USMD_NODE_ADDRESS": self.settings.address,
+            "USMD_EXPOSE_PORT": str(public_port(entry.service_id)),
+            "USMD_PEERS": ",".join(f"{a}:{p}" for a, p in peers),
+            "USMD_PEER_ADDRESSES": ",".join(a for a, _ in peers),
         }
 
     def _host(self, name: str) -> None:
@@ -1770,9 +1785,78 @@ class Node(NcpHandlers):  # pylint: disable=too-many-instance-attributes,too-man
         self.refresh_interface()
 
     def refresh_interface(self) -> None:
-        """VIPs of hosted services only, routes of our areas only [SP 5.1]."""
+        """VIPs of hosted services only, routes of our areas only [SP 5.1];
+        the exposed ports follow the hosted services."""
         if self.tun:
             self.tun.configure(self.sp_vips(), self.sp_routes(), self.sp_groups())
+        self.refresh_exposure()
+
+    def exposure_rules(self) -> list[Rule]:
+        """60000 + id -> the local instance, for each hosted service that exposes a port."""
+        catalog = self.signed.catalog()
+        rules = []
+        for spec in self.mutation_specs(self.mutation) if self.mutation else []:
+            entry = self.signed.service_by_name(spec.name)
+            if spec.expose is None or entry is None or entry.service_id not in self.hosted \
+                    or entry.service_id not in catalog:
+                continue
+            rules.append(Rule(spec.name, public_port(entry.service_id), spec.expose.protocol,
+                              entry.vip, spec.expose.port, spec.expose.allow))
+        return rules
+
+    def refresh_exposure(self) -> None:
+        self.exposure.update(self.exposure_rules())
+
+    def service_peers(self, name: str) -> list[tuple[str, int]]:
+        """The other Active nodes whose mutation runs *name*: (address, 60000 + id),
+        in node-id order, as the sequences get them in $USMD_PEERS."""
+        entry = self.signed.service_by_name(name)
+        if entry is None:
+            return []
+        peers = []
+        for e in self.tables.nodes.sorted():
+            if e.key == self.key or self.peer_state(e.key) != State.ACTIVE \
+                    or self.tables.exclusions.is_excluded(e.key):
+                continue
+            if name in self.signed.mutation_services(e.record.mutation):
+                peers.append((e.record.address, public_port(entry.service_id)))
+        return peers
+
+    async def run_probe(self, spec: ServiceSpec) -> bool | None:
+        """Whether a healthy instance takes clients now (its probe exits 0): a
+        replica of a primary/replica database is healthy and takes none. A
+        service without probe takes clients whenever it is healthy (None)."""
+        if not spec.sequences.get("probe"):
+            self.probes.pop(spec.name, None)
+            return None
+        ok = (await self.runner.run(spec, "probe")).ok
+        if self.probes.get(spec.name) != ok:
+            self.event(f"{spec.name} {'takes' if ok else 'does not take'} clients (probe)")
+        self.probes[spec.name] = ok
+        return ok
+
+    async def _peers_loop(self) -> None:
+        while True:
+            await asyncio.sleep(5)
+            await self.check_peers()
+
+    async def check_peers(self) -> None:
+        """Run peers_changed when the other instances of a hosted service changed
+        since the last time its sequences saw them (build included)."""
+        if self.state != State.ACTIVE or not self.mutation:
+            self._peers_seen.clear()
+            return
+        for spec in self.mutation_specs(self.mutation):
+            entry = self.signed.service_by_name(spec.name)
+            if entry is None or entry.service_id not in self.hosted:
+                self._peers_seen.pop(spec.name, None)
+                continue
+            now = tuple(f"{a}:{p}" for a, p in self.service_peers(spec.name))
+            before = self._peers_seen.get(spec.name)
+            self._peers_seen[spec.name] = now
+            if before is not None and before != now and spec.sequences.get("peers_changed"):
+                self.event(f"Instances of {spec.name} changed: {', '.join(now) or 'none'}")
+                await self.runner.run(spec, "peers_changed")
 
     def _withdraw(self, name: str) -> None:
         entry = self.signed.service_by_name(name)
@@ -1877,8 +1961,10 @@ class Node(NcpHandlers):  # pylint: disable=too-many-instance-attributes,too-man
                 if not (await self.runner.run(spec, "check_health")).ok:
                     failed = True
                     self._withdraw(spec.name)
+                    self.probes.pop(spec.name, None)
                 else:
                     self._host(spec.name)
+                    await self.run_probe(spec)
             self.delegation.health_failures = self.delegation.health_failures + 1 if failed else 0
             if self.delegation.health_failures >= 3:
                 self.delegation.health_failures = 0

@@ -344,6 +344,12 @@ def test_web_service_file_upload(factory):
     assert read("/etc/passwd").status == 422
 
 
+def test_show_service_exposure_is_the_action_not_a_row(factory):
+    out = _run(factory, "show service exposure")
+    assert "60000 + service id" in out
+    assert "Traceback" not in out and "no such" not in out.lower()
+
+
 def test_show_service_instances_is_the_action_not_a_row(factory):
     out = _run(factory, "show service instances")
     assert "Service" in out and "SP address" in out
