@@ -432,5 +432,17 @@ function; a build sequence loads it and sets the prefix
 tables use `id uuid PRIMARY KEY DEFAULT usmd_id()`. `show data-id id=<uuid>`
 tells which instance created a row, and when.
 
+**Protocol capture.** Every NNDP datagram, NCP message (reassembled and
+decrypted) and SP frame the node sends or receives is kept in a ring buffer
+and dissected into named fields, Wireshark style. The **Capture** tab of the
+web interface lists them live (packet list, field tree, bytes with the
+selected field highlighted) and filters them with Wireshark's display-filter
+syntax: `nndp && ip.src == 127.0.0.2`, `ncp.command == DECLARE_STATE`,
+`ncp.type == ERROR`, `sp && !sp.keepalive`, `frame.status != ok`,
+`ip.addr == 127.0.0.0/8`, `nndp.node_id contains "01JAB"`. On the console:
+`show capture filter="..." last=50`, `show capture detail=<n>`,
+`show capture fields`, `show capture statistics`, `clear capture`; settings
+(on/off, buffer size, bytes kept, protocols) under `config system capture`.
+
 The acceptance checklist mapping every requirement of the drafts to the code
 and its tests is `readme/recette.md`.

@@ -655,6 +655,9 @@ body.readonly .write-only { display: none !important; }
         </div>
       </section>
 
+      <!-- Capture (static/capture.js) -->
+      <section data-page="capture" class="page hidden" id="page-capture"></section>
+
       <!-- Configuration -->
       <section data-page="config" class="page config-layout hidden" id="config-layout">
         <aside class="card config-nav">
@@ -761,6 +764,7 @@ body.readonly .write-only { display: none !important; }
   <symbol id="i-pause" viewBox="0 0 24 24"><path d="M9 5v14M15 5v14"/></symbol>
 </svg>
 
+<script src="/static/capture.js"></script>
 <script>
 "use strict";
 const REFRESH = {{REFRESH}} * 1000;
@@ -877,11 +881,16 @@ const PAGES = {
   overview: { title: "Vue d'ensemble", icon: "grid", group: "Supervision", sub: "État du nœud en un coup d'œil" },
   network: { title: "Réseau", icon: "network", group: "Supervision", sub: "Voisins, nœuds de référence et table de l'USD" },
   services: { title: "Services", icon: "layers", group: "Supervision", sub: "Catalogue, instances proches et sessions SP" },
+  capture: { title: "Capture", icon: "activity", group: "Supervision", sub: "Trames NNDP, NCP et SP en direct, filtres à la Wireshark" },
   config: { title: "Configuration", icon: "sliders", group: "Administration", sub: "Arbre de configuration du nœud" },
   logs: { title: "Journaux", icon: "list", group: "Administration", sub: "200 derniers messages du nœud" },
   console: { title: "Console", icon: "terminal", group: "Administration", sub: "Ligne de commande, comme sur le nœud" },
 };
 const NEW_KEY = "\u0000new";
+const capture = UsmdCapture.mount($("page-capture"), {
+  token: () => token, onUnauthorized: () => logout("Jeton refusé ou révoqué."),
+  canWrite: () => canWrite,
+});
 let currentPage = null, currentHash = "";
 
 function parseHash() {
@@ -912,6 +921,7 @@ function showPage(name) {
   $("app").classList.remove("nav-open");
   if (changed) window.scrollTo({ top: 0 });
   if (name === "console") setTimeout(() => $("cmd").focus(), 0);
+  if (name === "capture") capture.activate(); else capture.deactivate();
 }
 
 function buildNav() {
@@ -1626,7 +1636,7 @@ function toggleTheme() { const t = currentTheme() === "dark" ? "light" : "dark";
 function togglePause() { paused = !paused; tickLive(); if (!paused) refresh(); toast(paused ? "Actualisation suspendue" : "Actualisation reprise"); }
 
 // ---- Session ------------------------------------------------------------
-const QUICK = ["show node", "show running-config", "show logging", "help"];
+const QUICK = ["show node", "show running-config", "show logging", "show capture", "help"];
 
 function start() {
   $("login").classList.add("hidden"); $("app").classList.remove("hidden");
@@ -1638,7 +1648,7 @@ function start() {
 }
 
 function logout(message) {
-  clearInterval(timer); token = null; keepToken(null);
+  clearInterval(timer); token = null; keepToken(null); capture.deactivate();
   controls = []; configSchema = null; summary = null; lastUpdate = 0;
   $("term").innerHTML = "";
   $("app").classList.add("hidden"); $("login").classList.remove("hidden");

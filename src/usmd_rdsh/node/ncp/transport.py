@@ -32,7 +32,9 @@ import time
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable
 
+from usmd_rdsh.node.capture import CAPTURE
 from usmd_rdsh.node.crypto import AgreementKey, CryptoError, SigningKey, hkdf, open_sealed, seal
+from usmd_rdsh.node.dissect import dissect_ncp, dissect_ncp_fragment
 from usmd_rdsh.node.ncp.codec import (
     Message,
     MessageType,
@@ -237,12 +239,41 @@ class NcpTransport(asyncio.DatagramProtocol):  # pylint: disable=too-many-instan
     def datagram_received(self, data: bytes, addr) -> None:  # type: ignore[override]
         if not self.datagram_limit.allow(addr[0], time.monotonic()):
             self.stats["dropped"] += 1  # over the per-source rate, before any work [10]
+            self._capture_fragment(data, addr, "rate limit [NCP 10]")
             return
         try:
             self._on_fragment(data, (addr[0], addr[1]))
         except (WireError, CryptoError) as exc:
             self.stats["dropped"] += 1
             log.debug("[NCP] Dropped fragment from %s: %s", addr[0], exc)
+            self._capture_fragment(data, addr, str(exc) or type(exc).__name__)
+
+    # -- capture -------------------------------------------------------------
+
+    def _local(self) -> str:
+        name = self._transport.get_extra_info("sockname") if self._transport else None
+        return f"{name[0]}:{name[1]}" if name else f"0.0.0.0:{PORT}"
+
+    def _capture_fragment(self, data: bytes, addr, reason: str) -> None:
+        """A datagram that never became a message: only its clear envelope."""
+        if CAPTURE.wants("NCP"):
+            info, dissection = dissect_ncp_fragment(data)
+            CAPTURE.record("NCP", "in", f"{addr[0]}:{addr[1]}", self._local(), data, info,
+                           dissection, status="dropped", reason=reason)
+
+    def _capture_message(self, direction: str, event: int, plaintext: bytes,
+                         address: tuple[str, int], *, status: str = "ok",
+                         reason: str = "") -> None:
+        """A whole message, decrypted; its length is that of the datagrams."""
+        if not CAPTURE.wants("NCP"):
+            return
+        fragments = max(1, -(-len(plaintext) // MAX_PLAIN))
+        info, dissection = dissect_ncp(event, plaintext, fragments=fragments)
+        peer, local = f"{address[0]}:{address[1]}", self._local()
+        CAPTURE.record("NCP", direction, peer if direction == "in" else local,
+                       local if direction == "in" else peer, b"", info, dissection,
+                       status=status, reason=reason,
+                       length=len(plaintext) + fragments * (73 + 16))
 
     def close(self) -> None:
         if self._transport is not None:
@@ -263,11 +294,15 @@ class NcpTransport(asyncio.DatagramProtocol):  # pylint: disable=too-many-instan
 
     # -- sending -------------------------------------------------------------
 
-    def _build(self, event: int, kind: int, request_id: int, body: bytes,
-               recipient_ed: bytes, recipient_x: bytes) -> tuple[list[bytes], bytes]:
+    def _build(  # pylint: disable=too-many-arguments
+            self, event: int, kind: int, request_id: int, body: bytes, recipient_ed: bytes,
+            recipient_x: bytes, address: tuple[str, int]) -> tuple[list[bytes], bytes, bytes]:
+        """The datagrams of one message, its salt and its plaintext (captured)."""
         message = Message(event, kind, request_id, now_ms(), self._signing.public, body)
         plaintext = message.encode(self._signing, recipient_ed)
-        return seal_message(event, plaintext, recipient_x)
+        datagrams, salt = seal_message(event, plaintext, recipient_x)
+        self._capture_message("out", event, plaintext, address)
+        return datagrams, salt, plaintext
 
     async def request(  # pylint: disable=too-many-arguments
         self,
@@ -279,8 +314,8 @@ class NcpTransport(asyncio.DatagramProtocol):  # pylint: disable=too-many-instan
     ) -> bytes:
         """Send a request and await its response body; NcpRemoteError or NcpTimeout."""
         request_id = secrets.randbits(64) or 1
-        datagrams, salt = self._build(event, MessageType.REQUEST, request_id, body,
-                                      recipient_ed, recipient_x)
+        datagrams, salt, plaintext = self._build(event, MessageType.REQUEST, request_id, body,
+                                                 recipient_ed, recipient_x, address)
         future: asyncio.Future = asyncio.get_running_loop().create_future()
         key = (recipient_ed, request_id)
         self._waiting[key] = future
@@ -306,6 +341,10 @@ class NcpTransport(asyncio.DatagramProtocol):  # pylint: disable=too-many-instan
                     )
                     self._send(pending, address)
                     self.stats["retransmitted"] += 1
+                    self._capture_message("out", event, plaintext, address,
+                                          status="retransmission",
+                                          reason=f"attempt {attempt + 2}/{tries}, "
+                                                 f"{len(pending)} fragment(s)")
                     delay *= 2
             raise NcpTimeout(f"no response from {address[0]} to 0x{event:04X}")
         finally:
@@ -314,8 +353,8 @@ class NcpTransport(asyncio.DatagramProtocol):  # pylint: disable=too-many-instan
 
     def _reply(self, request: Message, kind: int, body: bytes, address: tuple[str, int],
                recipient_x: bytes) -> list[bytes]:
-        datagrams, salt = self._build(request.event, kind, request.request_id, body,
-                                      request.sender, recipient_x)
+        datagrams, salt, _ = self._build(request.event, kind, request.request_id, body,
+                                         request.sender, recipient_x, address)
         self._outgoing[salt] = _Outgoing(datagrams, address)
         self._send(datagrams, address)
         if len(datagrams) > 1:
@@ -436,8 +475,8 @@ class NcpTransport(asyncio.DatagramProtocol):  # pylint: disable=too-many-instan
         if recipient_x is None:
             return
         body = fragment_ack_body(salt, assembly.count, set(assembly.pieces))
-        datagrams, _ = self._build(assembly.event, MessageType.FRAGMENT_ACK, 0, body,
-                                   assembly.sender, recipient_x)
+        datagrams, _, _ = self._build(assembly.event, MessageType.FRAGMENT_ACK, 0, body,
+                                      assembly.sender, recipient_x, address)
         self._send(datagrams, address)
 
     def _expire(self, now: float) -> None:
@@ -451,13 +490,17 @@ class NcpTransport(asyncio.DatagramProtocol):  # pylint: disable=too-many-instan
                           completed: _Completed | None = None) -> None:
         try:
             message = Message.decode(event, plaintext)
-        except WireError:
+        except WireError as exc:
             self.stats["dropped"] += 1
+            self._capture_message("in", event, plaintext, address, status="malformed",
+                                  reason=str(exc))
             return
         try:
             message.verify(self._signing.public)
         except CryptoError:
             self.stats["dropped"] += 1
+            self._capture_message("in", event, plaintext, address, status="dropped",
+                                  reason="bad signature")
             return  # an unauthenticated message is never answered [10]
         if message.type != MessageType.REQUEST and \
                 abs(message.timestamp - now_ms()) > self.freshness_ms:
@@ -466,7 +509,10 @@ class NcpTransport(asyncio.DatagramProtocol):  # pylint: disable=too-many-instan
             self.stats["dropped"] += 1
             log.debug("[NCP] Dropped stale message type 0x%02X from %s", message.type,
                       address[0])
+            self._capture_message("in", event, plaintext, address, status="dropped",
+                                  reason="stale timestamp")
             return
+        self._capture_message("in", event, plaintext, address)
         if message.type == MessageType.FRAGMENT_ACK:
             salt, _count, received = parse_fragment_ack(message.body)
             outgoing = self._outgoing.get(salt)

@@ -1,4 +1,4 @@
-"""``config system``: hostname, logging and the management web interface."""
+"""``config system``: hostname, logging, capture and the management web interface."""
 
 import ipaddress
 from enum import StrEnum
@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field, field_validator
 from usmd_rdsh.cli.logbuffer import SEVERITY_KEYWORDS
 from usmd_rdsh.cli.runtime import RUNTIME
 from usmd_rdsh.cli.views.common import NODE_ACCESS, IPv4, LogLevel, Port
+from usmd_rdsh.node.capture import CAPTURE
 
 
 class GlobalConfig(BaseModel):
@@ -62,6 +63,29 @@ class LoggingView(ConfigNode):
         buffer.console_enabled = config.console
         buffer.timestamp_msec = config.timestamp_msec
         buffer.sequence_numbers = config.sequence_numbers
+
+
+class CaptureConfig(BaseModel):
+    """The live capture of protocol frames (``show capture``, web Capture tab)."""
+
+    status: bool = Field(True, description="Record the frames this node sends and receives")
+    buffer_size: int = Field(5000, ge=100, le=200000, description="Frames kept")
+    snaplen: int = Field(4096, ge=64, le=65535, description="Bytes kept of each frame")
+    nndp: bool = Field(True, description="Capture NNDP Here I am datagrams")
+    ncp: bool = Field(True, description="Capture NCP messages (decrypted)")
+    sp: bool = Field(True, description="Capture SP handshakes and data frames")
+
+
+@view("system capture", model=CaptureConfig, **NODE_ACCESS)
+class CaptureView(ConfigNode):
+    """Live capture of NNDP, NCP and SP frames, Wireshark style."""
+
+    async def apply(self, config: CaptureConfig) -> None:
+        CAPTURE.enabled = config.status
+        CAPTURE.resize(config.buffer_size)
+        CAPTURE.snaplen = config.snaplen
+        CAPTURE.protocols = {name for name, on in
+                             (("NNDP", config.nndp), ("NCP", config.ncp), ("SP", config.sp)) if on}
 
 
 class TlsMode(StrEnum):

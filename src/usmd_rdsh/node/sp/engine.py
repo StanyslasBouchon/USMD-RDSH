@@ -18,7 +18,9 @@ from dataclasses import dataclass, field
 from typing import Callable, Protocol
 
 from usmd_rdsh.node import addresses
+from usmd_rdsh.node.capture import CAPTURE
 from usmd_rdsh.node.crypto import AgreementKey, CryptoError, SigningKey
+from usmd_rdsh.node.dissect import dissect_sp
 from usmd_rdsh.node.sp import handshake as hs
 from usmd_rdsh.node.sp import packets
 from usmd_rdsh.node.sp.flows import FlowTable
@@ -110,8 +112,10 @@ class SpEngine:  # pylint: disable=too-many-instance-attributes
         broadcast_rate: int = 1000,
         clock: Callable[[], float] = time.monotonic,
         wall_ms: Callable[[], int] = now_ms,
+        local_address: str = "0.0.0.0",
     ) -> None:
         self.context = context
+        self.local_address = local_address  # what the capture shows as our end
         self._signing = signing
         self._static = static
         self._send_udp = send_udp  # (frame, ipv4, outer tos)
@@ -278,7 +282,7 @@ class SpEngine:  # pylint: disable=too-many-instance-attributes
             peer = self.context.peer(peer_key)
             if peer is None:
                 return
-            self._send_udp(session.seal(payload, now), peer.address, tos)
+            self._out(session.seal(payload, now), peer.address, tos, payload)
             self.stats["tx_frames"] += 1
             if session.needs_rekey(now) and peer_key not in self._pending:
                 self._initiate(peer_key, now)
@@ -299,7 +303,7 @@ class SpEngine:  # pylint: disable=too-many-instance-attributes
         pending = _Pending(state, now, (previous.attempts + 1) if previous else 1,
                            previous.queue if previous else deque(maxlen=self.pending_per_peer))
         self._pending[peer_key] = pending
-        self._send_udp(data, peer.address, 0)
+        self._out(data, peer.address, 0)
         self.stats["handshakes"] += 1
         return pending
 
@@ -327,7 +331,8 @@ class SpEngine:  # pylint: disable=too-many-instance-attributes
             # themselves never call for another one [7.5].
             if session.can_send(now) and now - session.last_sent >= KEEPALIVE_S \
                     and now - session.last_data_received < KEEPALIVE_S:
-                self._send_udp(session.seal(Payload(keepalive=True), now), peer.address, 0)
+                keepalive = Payload(keepalive=True)
+                self._out(session.seal(keepalive, now), peer.address, 0, keepalive)
             if session.needs_rekey(now) and session.keys.initiator \
                     and session.peer not in self._pending \
                     and self.session_for(session.peer) is session:
@@ -372,6 +377,7 @@ class SpEngine:  # pylint: disable=too-many-instance-attributes
         """One datagram received on the SP port."""
         if port != self.port:
             return
+        opened: list[Payload] = []  # the decrypted payload, for the capture
         try:
             header = FrameHeader.decode(data)
             if header.event == hs.EVENT_INITIATION:
@@ -379,10 +385,29 @@ class SpEngine:  # pylint: disable=too-many-instance-attributes
             elif header.event == hs.EVENT_RESPONSE:
                 self._on_response(data, source)
             elif header.event == hs.EVENT_DATA:
-                self._on_data(data, source, outer_ecn)
+                self._on_data(data, source, outer_ecn, opened)
         except (WireError, CryptoError, packets.PacketError) as exc:
             self.stats["dropped"] += 1
             log.debug("[SP] Dropped frame from %s: %s", source, exc)
+            self._capture("in", data, source, opened[0] if opened else None, "dropped",
+                          str(exc) or type(exc).__name__)
+            return
+        self._capture("in", data, source, opened[0] if opened else None)
+
+    def _out(self, data: bytes, ip: str, tos: int, payload: Payload | None = None) -> None:
+        """Every frame leaves through here."""
+        self._send_udp(data, ip, tos)
+        self._capture("out", data, ip, payload)
+
+    def _capture(self, direction: str, data: bytes, peer: str,  # pylint: disable=too-many-arguments
+                 payload: Payload | None, status: str = "ok", reason: str = "") -> None:
+        if not CAPTURE.wants("SP"):
+            return
+        info, dissection = dissect_sp(data, payload)
+        local, remote = f"{self.local_address}:{self.port}", f"{peer}:{self.port}"
+        CAPTURE.record("SP", direction, remote if direction == "in" else local,
+                       local if direction == "in" else remote, data, info, dissection,
+                       status=status, reason=reason)
 
     def _on_initiation(self, data: bytes, source: str) -> None:
         """The checks of [7.7], cheapest first."""
@@ -409,7 +434,7 @@ class SpEngine:  # pylint: disable=too-many-instance-attributes
                                            index=self._free_index())
         self.sessions[keys.local_index] = Session(keys, source, now,
                                                   window=ReplayWindow(self.replay_window))
-        self._send_udp(response, source, 0)
+        self._out(response, source, 0)
 
     def _on_response(self, data: bytes, source: str) -> None:
         _index_r, index_i = hs.response_indexes(data)
@@ -427,12 +452,14 @@ class SpEngine:  # pylint: disable=too-many-instance-attributes
         self.sessions[keys.local_index] = session
         del self._pending[peer_key]
         if not pending.queue:
-            self._send_udp(session.seal(Payload(keepalive=True), now), source, 0)
+            keepalive = Payload(keepalive=True)
+            self._out(session.seal(keepalive, now), source, 0, keepalive)
         for payload, tos in pending.queue:
-            self._send_udp(session.seal(payload, now), source, tos)
+            self._out(session.seal(payload, now), source, tos, payload)
             self.stats["tx_frames"] += 1
 
-    def _on_data(self, data: bytes, source: str, outer_ecn: int) -> None:
+    def _on_data(self, data: bytes, source: str, outer_ecn: int,
+                 opened: list[Payload] | None = None) -> None:
         session = self.sessions.get(data_frame_index(data))
         if session is None:
             raise WireError("unknown session index")
@@ -441,6 +468,8 @@ class SpEngine:  # pylint: disable=too-many-instance-attributes
             raise WireError("frame from an address the NIT does not give the peer")
         now = self._clock()
         payload = session.open(data, now)
+        if opened is not None:
+            opened.append(payload)
         self.stats["rx_frames"] += 1
         if payload.keepalive:
             return
