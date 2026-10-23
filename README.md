@@ -11,6 +11,7 @@ USMD-RDSH is a distributed system for managing self-organizing nodes. Each node 
 - [Architecture](#architecture)
 - [Prerequisites](#prerequisites)
 - [Linux installation (production)](#linux-installation-production)
+- [Bundle for scp](#bundle-for-scp)
 - [Uninstall](#uninstall)
 - [Running from source (development)](#running-from-source-development)
 - [Configuration](#configuration)
@@ -100,6 +101,25 @@ systemctl disable usmd
 ```
 
 Configuration lives in `/etc/usmd/usmd.yaml`. After any change, run `systemctl restart usmd`.
+
+---
+
+## Bundle for scp
+
+`scripts/package.py` puts the node into one archive (the `usmd-rdsh` and `nan-actions` wheels, the runtime requirements and an installer), so a machine needs neither the repository nor `../nan-actions`:
+
+```bash
+# On the development machine (Windows or Linux), from the repository root
+python scripts/package.py                 # dist/usmd-rdsh-<version>.tar.gz, dependencies from PyPI at install
+python scripts/package.py --offline       # every dependency wheel included (Linux x86_64, CPython 3.13)
+python scripts/package.py --offline --arch aarch64
+
+# Copy and install
+scp dist/usmd-rdsh-0.0.1.0.tar.gz user@host:
+ssh user@host 'tar xzf usmd-rdsh-0.0.1.0.tar.gz && usmd-rdsh-0.0.1.0/install.sh'
+```
+
+`install.sh` creates (or updates) a virtualenv and links `usmd` into the PATH: `/opt/usmd-rdsh/venv` and `/usr/local/bin` as root, `~/.local/share/usmd-rdsh/venv` and `~/.local/bin` otherwise (`--prefix`, `--bin`, `--python` to change them). Running it again with a newer archive upgrades the node; its state (`~/.usmd` or `$USMD_STATE_DIR`) is kept. The target needs Python ≥ 3.13 with `venv`.
 
 ---
 
