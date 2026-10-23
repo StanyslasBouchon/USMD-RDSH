@@ -304,7 +304,7 @@ Constats transverses (à lire avant les tableaux) :
 
 | ID | Niveau | Exigence | État | Remarque |
 |---|---|---|---|---|
-| ARCH-6.4-1 | DEF | Tous les 0x0006 (300 s), mesurer la distance des nœuds de référence et d'un échantillon d'au plus 32 autres nœuds actifs tirés au hasard | done | `Node._distance_loop`, `distance.sample` |
+| ARCH-6.4-1 | DEF | Tous les 0x0006 (300 s), mesurer la distance des nœuds de référence et d'un échantillon d'au plus 32 autres nœuds actifs tirés au hasard | done | `Node._distance_loop`, `distance.sample`. Complément hors draft, constaté sur VM le 2026-10-23 : un nœud sans aucun nœud de référence remesure au rythme des HIA (pas 0x0006), et compte pour actifs les nœuds admis dont les HIA signés déclarent l'état Actif (`Node.heard_active`). Sans cela, après un redémarrage simultané, chaque fiche détenue porte l'état publié à l'arrêt, aucun nœud n'est « actif », personne n'a de référence, aucune fiche Active ne circule, pendant 5 minutes ; test `test_authority_services.py::test_nodes_heard_active_are_measured_before_their_records_say_so`. À reporter au draft. |
 | ARCH-6.4-2 | DEF | Remplacer un nœud de référence si un candidat est plus proche d'au moins 0,2 (hystérésis) | done | `distance.reselect` (`HYSTERESIS = 0.2`) |
 | ARCH-6.4-3 | DEF | Un nœud de référence qui quitte l'état Actif est remplacé sans attendre | done | `Node._on_neighbor_inactive` (retrait puis `measure_distances` immédiat) et `handlers._on_declare_state` (référence déclarée non active → `measure_distances`) |
 

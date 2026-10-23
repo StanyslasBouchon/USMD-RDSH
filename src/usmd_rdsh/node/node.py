@@ -827,7 +827,8 @@ class Node(NcpHandlers):  # pylint: disable=too-many-instance-attributes,too-man
     async def measure_distances(self) -> None:
         tolerance = parameter(self.signed.usd, 0x0002) or 1000
         nnr = parameter(self.signed.usd, 0x0001) or 5
-        targets = distance.sample(self.active_nodes(), self.references)
+        candidates = list(dict.fromkeys(self.active_nodes() + self.heard_active()))
+        targets = distance.sample(candidates, self.references)
         measures = await asyncio.gather(*(self.measure(n) for n in targets))
         self.distances = {}
         for m in measures:
@@ -861,9 +862,27 @@ class Node(NcpHandlers):  # pylint: disable=too-many-instance-attributes,too-man
 
     async def _distance_loop(self) -> None:
         while True:
-            await asyncio.sleep(parameter(self.signed.usd, 0x0006) or 300)
+            # Without reference nodes this node's records reach no one: it
+            # tries again at the HIA pace rather than a whole 0x0006 later.
+            await asyncio.sleep(self.settings.hia_interval if not self.references
+                                else parameter(self.signed.usd, 0x0006) or 300)
             if self.state == State.ACTIVE:
                 await self.measure_distances()
+
+    def heard_active(self) -> list[str]:
+        """Admitted nodes whose signed HIAs say Active now [NNDP 6.2]. After the
+        nodes restarted together, the records held here still carry the state
+        each one published while stopping; their HIAs already tell better."""
+        if self.nndp is None:
+            return []
+        heard = []
+        for neighbor in self.nndp.neighbors.values():
+            entry = self.tables.nodes.get(neighbor.public_key)
+            if neighbor.inactive or neighbor.state != State.ACTIVE or entry is None \
+                    or neighbor.public_key == self.key or not self.is_admitted_key(neighbor.public_key):
+                continue
+            heard.append(entry.record.node_id)
+        return heard
 
     # ------------------------------------------------------------------
     # Configuration propagation [ARCH 9.3, NCP 6.8-6.10]

@@ -296,6 +296,35 @@ def test_dependencies_wait_for_another_node(authority_node, monkeypatch):
     assert emergencies == [State.INACTIVE_EMERGENCY_DEPENDENCIES]
 
 
+def test_nodes_heard_active_are_measured_before_their_records_say_so(authority_node, monkeypatch):
+    """After the nodes restarted together, their records still say what each
+    published while stopping: an Active HIA from an admitted node counts."""
+    from types import SimpleNamespace  # pylint: disable=import-outside-toplevel
+
+    from usmd_rdsh.node.states import State  # pylint: disable=import-outside-toplevel
+
+    node = authority_node
+    admitted, stranger, silent = b"a" * 32, b"b" * 32, b"c" * 32
+    records = {admitted: "01M5MYAV9N0WM8GM6QBZZ8BAN5", silent: "01M5MYAWA86AWTGSN2JP7PET91"}
+    monkeypatch.setattr(node.tables.nodes, "get", lambda key: SimpleNamespace(
+        record=SimpleNamespace(node_id=records[key])) if key in records else None)
+
+    def heard(key, state, inactive=False):
+        return SimpleNamespace(public_key=key, state=int(state), inactive=inactive)
+
+    node.nndp = SimpleNamespace(neighbors={
+        (admitted, "172.25.237.90"): heard(admitted, State.ACTIVE),
+        (stranger, "172.25.237.91"): heard(stranger, State.ACTIVE),
+        (silent, "172.25.233.201"): heard(silent, State.ACTIVE, inactive=True),
+    })
+    try:
+        assert node.heard_active() == ["01M5MYAV9N0WM8GM6QBZZ8BAN5"]
+        node.nndp.neighbors[(admitted, "172.25.237.90")].state = int(State.INACTIVE)
+        assert node.heard_active() == []
+    finally:
+        node.nndp = None
+
+
 def test_service_file_names_and_sizes_are_checked():
     with pytest.raises(ValueError, match="not a file name"):
         parse_service_file("name: web\nfiles:\n  ../etc/passwd: aGk=\n")
