@@ -5,6 +5,7 @@ Walked with ``config`` / ``set`` / ``unset`` / ``edit`` / ``next`` / ``end``::
     config system
         config global            hostname, banner
         config logging           buffer, console and timestamp settings
+        config capture           live capture of NNDP, NCP and SP frames
         config web-interface     management web interface and token API
         config bootstrap         role, creation token, contact node, EDB  [ARCH 5.1]
         config trust-anchor      USC and USD public keys                  [ARCH 4.4]

@@ -1727,7 +1727,8 @@ class Node(NcpHandlers):  # pylint: disable=too-many-instance-attributes,too-man
                            mtu=parameter(self.signed.usd, 0x0013) or 1412,
                            selection_margin=s.sp_margin, pending_per_peer=s.sp_pending,
                            ineligible_s=s.sp_ineligible, replay_window=s.sp_replay_window,
-                           flow_idle_s=s.sp_flow_idle, broadcast_rate=s.sp_broadcast_rate)
+                           flow_idle_s=s.sp_flow_idle, broadcast_rate=s.sp_broadcast_rate,
+                           local_address=s.address or s.bind_address)
         if not self._check_mtu():
             # [SP 9.1] the SP MTU DOIT fit the path MTU minus 82: no SP until fixed.
             await self.stop_sp()

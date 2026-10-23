@@ -1,9 +1,15 @@
 """The web interface: a dashboard page, the token API, and a web console.
 
     GET  /                       the single-page dashboard (static/index.html)
+    GET  /static/capture.js      its Capture tab (packet list, field tree, bytes)
     *    /api/v1/...             nan_actions' token API: every action, as JSON
     POST /web/cli                one console line, run as the token's holder
     GET  /web/summary            everything the dashboard draws, in one call
+    GET  /web/capture            captured frames after ``since`` matching ``filter``;
+                                 ``wait`` seconds of long poll for new ones
+    GET  /web/capture/<n>        one frame: its field tree and its bytes
+    GET  /web/capture/fields     field names a filter may use
+    POST /web/capture/clear      empty the capture buffer
 
 Everything but the page itself needs ``Authorization: Bearer <token>``, minted
 at the console with ``execute api-token create``. The console line endpoint is
@@ -27,7 +33,7 @@ from dataclasses import dataclass, field
 from http import HTTPStatus
 from importlib import resources
 from typing import TYPE_CHECKING, Any, Mapping
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 from nan_actions import ActionActor, action_is_available
 from nan_actions.access import reset_current_action_actor, set_current_action_actor
@@ -45,6 +51,7 @@ from usmd_rdsh.cli.confirm import reset_web_confirmation, web_confirmation
 from usmd_rdsh.web import config_forms
 from usmd_rdsh.cli.permissions import READ, WRITE
 from usmd_rdsh.cli.runtime import RUNTIME
+from usmd_rdsh.node.capture import CAPTURE, FilterError, compile_filter, field_names
 
 if TYPE_CHECKING:  # pragma: no cover
     from usmd_rdsh.cli.shell import ShellFactory
@@ -128,6 +135,9 @@ class WebRouter:
             return await self._api.handle(method, path, headers, body, client=client)
         if route in ("/", "/index.html") and method == "GET":
             return self._page()
+        if route == "/static/capture.js" and method == "GET":
+            script = resources.files("usmd_rdsh.web").joinpath("static/capture.js").read_bytes()
+            return PageResponse(200, script, "text/javascript; charset=utf-8")
         if route == "/web/login" and method == "POST":
             return self._login(body, client)
         if route == "/web/login" and method == "GET":
@@ -145,6 +155,48 @@ class WebRouter:
                                          "can_write": action_is_available([WRITE], actor)})
             if route == "/web/config" and method == "POST":
                 return await self._config(actor, body)
+            if route.startswith("/web/capture"):
+                return await self._capture(actor, method, route, urlsplit(path).query)
+        return ApiResponse.error(404, "not_found", "Nothing is served here.")
+
+    @staticmethod
+    async def _capture(actor: ActionActor, method: str, route: str, query: str) -> ApiResponse:
+        """The packet list (long poll), one dissected frame, the fields, clearing."""
+        params = {k: v[-1] for k, v in parse_qs(query).items()}
+        if route == "/web/capture" and method == "GET":
+            try:
+                flt = compile_filter(params.get("filter"))
+                since = max(0, int(params.get("since", 0)))
+                wait = min(20.0, max(0.0, float(params.get("wait", 0))))
+                limit = min(20000, max(1, int(params.get("limit", 2000))))
+            except FilterError as exc:
+                return ApiResponse.error(422, "invalid_filter", str(exc))
+            except ValueError:
+                return ApiResponse.error(400, "bad_request", "since, wait and limit are numbers.")
+            await CAPTURE.wait(since, wait)
+            return ApiResponse(200, {
+                "packets": [p.row() for p in CAPTURE.packets(since=since, flt=flt, last=limit)],
+                "last": CAPTURE.last_number,
+                "held": CAPTURE.held(),
+                "capacity": CAPTURE.capacity,
+                "enabled": CAPTURE.enabled,
+                "protocols": sorted(CAPTURE.protocols),
+                "started": CAPTURE.started,
+            })
+        if route == "/web/capture/fields" and method == "GET":
+            return ApiResponse(200, {"fields": [{"name": n, "label": l}
+                                                for n, l in field_names()]})
+        if route == "/web/capture/clear" and method == "POST":
+            if not action_is_available([WRITE], actor):
+                return ApiResponse.error(403, "missing_permissions", f"'{WRITE}' is required.")
+            log.info("[WEB] %s cleared the capture buffer", actor.username)
+            return ApiResponse(200, {"cleared": CAPTURE.clear()})
+        number = route.removeprefix("/web/capture/")
+        if method == "GET" and number.isdigit():
+            packet = CAPTURE.get(int(number))
+            if packet is None:
+                return ApiResponse.error(404, "not_found", "Frame no longer in the buffer.")
+            return ApiResponse(200, packet.detail())
         return ApiResponse.error(404, "not_found", "Nothing is served here.")
 
     def _login(self, body: bytes, client: str | None) -> ApiResponse:

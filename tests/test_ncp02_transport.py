@@ -155,9 +155,10 @@ def test_stale_response_is_dropped():
     async def scenario():
         client, server = await _pair()
 
-        def stale_build(event, kind, request_id, body, recipient_ed, recipient_x):
+        def stale_build(event, kind, request_id, body, recipient_ed, recipient_x, _address):
             message = Message(event, kind, request_id, now_ms() - 60_000, server.ed.public, body)
-            return seal_message(event, message.encode(server.ed, recipient_ed), recipient_x)
+            plaintext = message.encode(server.ed, recipient_ed)
+            return (*seal_message(event, plaintext, recipient_x), plaintext)
 
         server.ncp._build = stale_build
         client.ncp.retransmit_s, client.ncp.attempts = 0.1, 2

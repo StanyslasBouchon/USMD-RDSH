@@ -22,7 +22,9 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 from usmd_rdsh.node import addresses
+from usmd_rdsh.node.capture import CAPTURE
 from usmd_rdsh.node.crypto import SigningKey, is_valid
+from usmd_rdsh.node.dissect import dissect_nndp
 from usmd_rdsh.node.states import State
 from usmd_rdsh.node.wire import HEADER_SIZE, FrameHeader, Reader, WireError, Writer, frame, now_ms
 
@@ -498,13 +500,13 @@ class NndpService:  # pylint: disable=too-many-instance-attributes
         targets = self.broadcast_targets if self.broadcast_targets is not None else [BROADCAST]
         for datagram in self.build():
             for target in targets:
-                self._send_transport.sendto(datagram, (target, self.destination_port))
+                self._sendto(datagram, target)
             self.sent += 1
         if self.hooks.state() == State.APPROVAL_REQUIRED:
             return
         for key, address in self.hooks.reference_addresses():
             for datagram in self.build(towards=key):
-                self._send_transport.sendto(datagram, (address, self.destination_port))
+                self._sendto(datagram, address)
                 self.sent += 1
 
     def trigger(self) -> None:
@@ -542,6 +544,7 @@ class NndpService:  # pylint: disable=too-many-instance-attributes
         # signature work [NNDP 8].
         if not self._rate_ok(address) or not self._rate_ok("key:" + data[:32].hex()):
             self.rejected += 1
+            self._capture_in(data, address, port, "dropped", "rate limit [NNDP 8]")
             return
         try:
             received = self.accept(data, address, port)
@@ -549,9 +552,29 @@ class NndpService:  # pylint: disable=too-many-instance-attributes
             self.rejected += 1
             self.last_rejection = f"{address}:{port}: {exc}"
             log.debug("[NNDP] Dropped HIA from %s: %s", address, exc)
+            self._capture_in(data, address, port, "dropped", str(exc))
             return
         if received is not None:
             self.received += 1
+            self._capture_in(data, address, port, "ok", "")
+        else:
+            self._capture_in(data, address, port, "ignored", "our own HIA")
+
+    def _capture_in(self, data: bytes, address: str, port: int, status: str,
+                    reason: str) -> None:
+        if CAPTURE.wants("NNDP"):
+            info, dissection = dissect_nndp(data)
+            CAPTURE.record("NNDP", "in", f"{address}:{port}",
+                           f"{self.bind_address}:{self.destination_port}", data, info,
+                           dissection, status=status, reason=reason)
+
+    def _sendto(self, datagram: bytes, target: str) -> None:
+        assert self._send_transport is not None
+        self._send_transport.sendto(datagram, (target, self.destination_port))
+        if CAPTURE.wants("NNDP"):
+            info, dissection = dissect_nndp(datagram)
+            CAPTURE.record("NNDP", "out", f"{self.bind_address}:{self.source_port}",
+                           f"{target}:{self.destination_port}", datagram, info, dissection)
 
     def accept(self, data: bytes, address: str, port: int, *, now: int | None = None) -> Neighbor | None:
         """Run every check; record the sender. None for our own HIA."""
