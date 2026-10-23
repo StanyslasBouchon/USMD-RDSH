@@ -1,5 +1,6 @@
 """Trust tables [ARCH-02 4.3]: ``show nit``, ``show nal``, ``show nel``,
-``show node-table``, ``show exclusions``, ``show references``, ``clear exclusions``."""
+``show node-table``, ``show exclusions``, ``show references``, ``clear exclusions``,
+``execute nit locate``."""
 
 from __future__ import annotations
 
@@ -195,6 +196,64 @@ async def clear_exclusions(data: ClearExclusion) -> dict:
     count = len(node.tables.exclusions.by_key)
     node.tables.exclusions.by_key.clear()
     return {"cleared": count}
+
+
+class LocateInput(BaseModel):
+    node: str = Field(description="Node ID, as 'show node-table' lists it")
+    address: str = Field(description="The IPv4 address that node now has")
+
+
+@action(cli="execute nit locate",
+        description="Tell this node a peer's new address, after the peer's address changed",
+        permissions=[WRITE],
+        cli_output=printer(lambda r: f"{r['node']} now at {r['address']} in the NIT"
+                           f"{' (exclusion lifted)' if r['lifted'] else ''}: {r['check']}"))
+async def execute_nit_locate(data: LocateInput) -> dict:
+    """[ARCH 4.3, NCP 7.6] A node whose address changed (DHCP, a reboot of the
+    VMs) is refused from its new address: its key is known with the old one,
+    and its new record cannot arrive from an address the NIT does not hold.
+    The administrator states the new address; this node checks it at once
+    with a Get_status sealed for the key it knows, which only that node can
+    open and answer (even "unknown key" proves it). The association is then
+    renewed by the node's HIAs, and the records follow by the usual exchanges.
+    """
+    import ipaddress  # pylint: disable=import-outside-toplevel
+
+    from nan_actions.errors import SdkError  # pylint: disable=import-outside-toplevel
+
+    from usmd_rdsh.node.ncp.codec import Command  # pylint: disable=import-outside-toplevel
+    from usmd_rdsh.node.ncp.transport import NcpRemoteError, NcpTimeout  # pylint: disable=import-outside-toplevel
+    from usmd_rdsh.node.wire import Writer  # pylint: disable=import-outside-toplevel
+
+    node = RUNTIME.node
+    if node is None:
+        raise SdkError("the node is not running")
+    try:
+        address = str(ipaddress.IPv4Address(data.address.strip()))
+    except ValueError as exc:
+        raise SdkError(f"'{data.address}' is not an IPv4 address") from exc
+    entry = node.tables.nodes.by_id(data.node.strip().upper())
+    if entry is None:
+        raise SdkError(f"no node {data.node} in the node table ('show node-table')")
+    if entry.key == node.key:
+        raise SdkError("this is this node: its address is 'config system global' / 'set address'")
+    node.tables.nit.associate(entry.key, entry.record.node_id, address, entry.record.x25519)
+    verdict = node.tables.exclusions.by_key.get(entry.key)
+    lifted = verdict is not None and verdict.state == State.EXCLUDED_NIT_ASSOCIATION
+    if lifted:
+        del node.tables.exclusions.by_key[entry.key]
+    try:
+        await node.call(entry.key, Command.GET_STATUS, Writer().u64(now_ms()).bytes(),
+                        address=address, attempts=2)
+        check = "it answered: the nodes talk again"
+    except NcpRemoteError as exc:
+        check = (f"it answered ({exc}): that node does not know this node's address yet; "
+                 "run the same command there for this node")
+    except NcpTimeout:
+        check = "no answer yet: check the address, or run the same command there for this node"
+    node.event(f"{entry.record.node_id} located at {address} by the administrator"
+               f"{' (exclusion lifted)' if lifted else ''}")
+    return {"node": entry.record.node_id, "address": address, "lifted": lifted, "check": check}
 
 
 @action(cli="show references", description="Reference nodes and distances [ARCH 6]",

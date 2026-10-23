@@ -107,6 +107,7 @@ async def _scenario(tmp_path):
         assert b.state == State.SYNCHRONISING
         # The endorser pushes the table and the signed properties [NCP 7.2].
         assert await _until(lambda: b.signed.usd is not None and len(b.tables.nodes.entries) >= 2)
+        assert await _until(lambda: "frontal" in b.signed.mutations)
         assert b.signed.mutations["frontal"].version == mutation.version
         await b.finish_synchronisation()
         assert b.state == State.ACTIVE and a.node_id in b.references
@@ -117,6 +118,25 @@ async def _scenario(tmp_path):
 
         status = await b.call(a.node_id, Command.GET_STATUS)
         assert status[-2:] == int(State.ACTIVE).to_bytes(2, "big")
+
+        # A's address "changed" for B (VMs rebooted): B holds a stale address and
+        # excluded A. The administrator locates A; B checks it and talks again.
+        from usmd_rdsh.cli.actions.tables import LocateInput, execute_nit_locate  # pylint: disable=import-outside-toplevel
+        from usmd_rdsh.cli.runtime import RUNTIME  # pylint: disable=import-outside-toplevel
+
+        b.tables.nit.remove(a.key)
+        b.tables.nit.associate(a.key, a.node_id, "127.0.0.9", a.identity.x25519_public)
+        b.tables.exclusions.exclude(a.key, State.EXCLUDED_NIT_ASSOCIATION)
+        RUNTIME.node = b
+        try:
+            wrong = await execute_nit_locate(LocateInput(node=a.node_id, address="127.0.0.8"))
+            assert wrong["lifted"] and wrong["check"].startswith("no answer")
+            located = await execute_nit_locate(LocateInput(node=a.node_id, address="127.0.0.2"))
+            assert located["check"].startswith("it answered: the nodes talk again")
+        finally:
+            RUNTIME.node = None
+        assert b.tables.nit.accepts(a.key, "127.0.0.2")
+        assert not b.tables.exclusions.is_excluded(a.key)
 
         # Transmutation: management id from the master, build, health, Active.
         assert await b.transmute("frontal", reason="test")
