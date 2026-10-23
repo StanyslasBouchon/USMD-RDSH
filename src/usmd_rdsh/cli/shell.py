@@ -13,7 +13,11 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Iterator
 
 from nan_actions import ActionActor, access, registry as action_registry
-from nan_actions.access import set_actor_fallback
+from nan_actions.access import (
+    reset_current_action_actor,
+    set_actor_fallback,
+    set_current_action_actor,
+)
 from nan_actions.cli.completer import ShellCompleter
 from nan_actions.cli.continuation import CONTINUATION_PROMPT, QuotedContinuation
 from nan_actions.cli.history import as_history
@@ -90,8 +94,19 @@ class _OperatorCompleter(ShellCompleter):
         self._shell = shell
 
     def get_completions(self, document: Document, complete_event: CompleteEvent):
-        with _operator(self._actor_factory()):
-            found = list(super().get_completions(document, complete_event))
+        from usmd_rdsh.cli import operate  # pylint: disable=import-outside-toplevel
+
+        actor = self._actor_factory()
+        text = document.text_before_cursor
+        with _operator(actor):
+            offered = operate.offered(actor)
+            fleet = operate.completions(text, lambda rest: super(  # pylint: disable=super-with-arguments
+                _OperatorCompleter, self).get_completions(Document(rest, len(rest)),
+                                                          complete_event)) if offered else None
+            found = fleet if fleet is not None else list(
+                super().get_completions(document, complete_event))
+            if offered and " " not in text.lstrip():
+                found += list(operate.root_completions(text.lstrip()))
         yield from found
 
     async def get_completions_async(self, document: Document, complete_event: CompleteEvent):
@@ -156,12 +171,12 @@ class UsmdShell(Shell):
         if self.remote is not None:
             await operate.remote_line(self, line)
             return False
+        if self._is_question(line):  # 'on all show ?' is answered here, not by the nodes
+            self._answer(line.rstrip()[:-1])
+            return False
         if line.strip().split()[:1] in (["node"], ["on"]) and not (
                 self._views is not None and self._views.active):
             await operate.enter(self, line, self._actor_factory())
-            return False
-        if self._is_question(line):
-            self._answer(line.rstrip()[:-1])
             return False
         return await super().execute_line(self._full_show(line))
 
@@ -183,8 +198,19 @@ class UsmdShell(Shell):
         return self.completions(text)
 
     def completions(self, text: str) -> list[dict[str, str]]:  # type: ignore[override]
-        with _operator(self._actor_factory()):
-            found = super().completions(text)
+        # The shell's own completer, so 'node' and 'on' are offered here too.
+        actor = self._actor_factory()
+        completer = _OperatorCompleter(self._registry, self._views, self._actor_factory, self)
+        token = set_current_action_actor(actor)
+        try:
+            found = [{"value": c.text, "display": c.display_text,
+                      "description": c.display_meta_text, "start": str(c.start_position)}
+                     for c in completer.get_completions(Document(text, len(text)),
+                                                        CompleteEvent())]
+        except AmbiguousToken:
+            found = []
+        finally:
+            reset_current_action_actor(token)
         # Both trees answer some lines (`show protocol ` offers `|` twice).
         unique: dict[str, dict[str, str]] = {}
         for candidate in found:
@@ -210,6 +236,10 @@ class UsmdShell(Shell):
 
     def _complete_command(self, line: str) -> bool:
         """Whether *line* could be run as it stands."""
+        if line.split()[:1] in (["node"], ["on"]):
+            from usmd_rdsh.cli import operate  # pylint: disable=import-outside-toplevel
+
+            return operate.is_complete(line, self._complete_command)
         try:
             expanded = self._expand_verb(line)
         except AmbiguousToken:

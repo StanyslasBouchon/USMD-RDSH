@@ -261,6 +261,10 @@ class Fleet:
     def own(self) -> list[Target]:
         return [Target.of(row) for row in node_rows(self._node())]
 
+    def known(self) -> list[Target]:
+        """This USD, and the other USDs as last listed: what Tab offers without waiting."""
+        return self.own() + [t for _, targets in self._foreign.values() for t in targets]
+
     def other_usds(self) -> list[str]:
         """The other USDs of the USC in force."""
         node = self._node()
@@ -349,6 +353,10 @@ def _reason(exc: BaseException) -> str:
     if isinstance(exc, NcpTimeout):
         return "no answer"
     if isinstance(exc, NcpRemoteError):
+        if exc.code == 0x0003 and exc.text == "unknown command":
+            # A node of an earlier version: it predates Operate (0x0016).
+            return ("this node does not know Operate (NCP 0x0016): install this version "
+                    "of USMD-RDSH on it")
         return exc.text or f"error 0x{exc.code:04X}"
     return str(exc) or type(exc).__name__
 
@@ -378,6 +386,114 @@ def _matches(target: Target, kind: str, value: str) -> bool:
 
 
 FLEET = Fleet()
+
+
+#: What ``?`` says of each word, at the root and after ``on``.
+ENTRIES = {"node": "Console of one node of the USD / USC (elected operators) [ARCH 12.5]",
+           "on": "Run lines on several nodes: on <targets> [<line>] [ARCH 12.5]"}
+SELECTOR_HELP = {"all": "Every node in reach", "node": "One node: identifier or address",
+                 "usd": "The nodes of a USD", "mutation": "The nodes hosting a mutation",
+                 "area": "The nodes serving a service area", "state": "The nodes in a state",
+                 "role": "The nodes elected to a role"}
+
+
+def offered(actor: ActionActor) -> bool:
+    """Whether ``node`` and ``on`` are offered at this prompt: an elected operator's own."""
+    if actor.source == SOURCE:
+        return False
+    try:
+        return bool(FLEET.scope())
+    except OperateError:
+        return False
+
+
+def _values(kind: str) -> list[tuple[str, str]]:
+    """(value, description) a selector may take, from what this node knows now."""
+    node = RUNTIME.node
+    if kind == "node":
+        out = []
+        for target in FLEET.known():
+            where = f" (USD {target.usdn})" if target.foreign else ""
+            out.append((target.node_id, f"{target.address} {target.state}"
+                        f"{' ' + target.mutation if target.mutation else ''}{where}"))
+            if target.address:
+                out.append((target.address, target.node_id + where))
+        return out
+    if kind == "usd":
+        own = node.signed.usd.usdn if node.signed.usd else ""
+        usds = [(own, "this node's USD")] if own else []
+        return usds + [(u, "another USD of the USC") for u in FLEET.other_usds()
+                       if FLEET.scope() == "usc"]
+    if kind == "mutation":
+        return [(name, "mutation") for name in sorted(node.signed.mutations)]
+    if kind == "area":
+        usd = node.signed.usd
+        return [(a.name, f"area {a.area_id}") for a in usd.areas] if usd else []
+    if kind == "state":
+        return [(_name(s.name), "") for s in State]
+    if kind == "role":
+        return [(_name(r.name), "") for r in Role]
+    return []
+
+
+def _choices(typed: str, pairs: list[tuple[str, str]]):
+    from prompt_toolkit.completion import Completion  # pylint: disable=import-outside-toplevel
+
+    seen = set()
+    for value, description in pairs:
+        if value.lower().startswith(typed.lower()) and value not in seen:
+            seen.add(value)
+            yield Completion(value, start_position=-len(typed), display=value,
+                             display_meta=description)
+
+
+def root_completions(typed: str):
+    """``node`` and ``on`` among the first words."""
+    return _choices(typed, list(ENTRIES.items()))
+
+
+def completions(text: str, inner) -> list | None:
+    """Tab after ``node`` / ``on``; None for any other line.
+
+    *inner(text)* completes an ordinary console line: the line ``on`` runs.
+    """
+    stripped = text.lstrip()
+    verb, space, rest = stripped.partition(" ")
+    if not space or verb not in ENTRIES:
+        return None
+    words = list(re.finditer(r"\S+", rest))
+    typing = words[-1].group() if words and not rest.endswith(" ") else ""
+    settled = words[:-1] if typing else words
+    if verb == "node":
+        return [] if settled else list(_choices(typing, _values("node")))
+    index, expect = 0, None
+    while index < len(settled) and settled[index].group() in SELECTORS:
+        kind = settled[index].group()
+        if SELECTORS[kind] and index + 1 == len(settled):
+            expect = kind
+            break
+        index += 1 + SELECTORS[kind]
+    if expect:
+        return list(_choices(typing, _values(expect)))
+    if index < len(settled):  # the line itself: the console's own completion
+        start = len(text) - len(rest) + settled[index].start()
+        return list(inner(text[start:]))
+    found = list(_choices(typing, list(SELECTOR_HELP.items())))
+    if index:  # a target given: the line may start here
+        found += list(inner(typing))
+    return found
+
+
+def is_complete(line: str, command_complete) -> bool:
+    """Whether a ``node`` / ``on`` line could run as it stands (``<cr>`` of ``?``)."""
+    verb, _, rest = line.strip().partition(" ")
+    if verb == "node":
+        return len(rest.split()) == 1
+    try:
+        selectors, command = parse_targets(rest)
+    except OperateError:
+        return False
+    return bool(selectors) and (not command or command_complete(command))
 
 
 def parse_targets(text: str) -> tuple[list[tuple[str, str]], str]:

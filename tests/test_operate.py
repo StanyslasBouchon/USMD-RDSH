@@ -154,6 +154,36 @@ def test_lent_console_writes_but_never_manages(factory):
     assert closed == {"closed": True} and server.sessions == 0
 
 
+def test_node_and_on_are_completed_for_an_elected_operator(factory, tmp_path):
+    shell = factory.console()
+    values = lambda text: [c["value"] for c in shell.completions(text)]  # noqa: E731
+    assert "node" not in values("")  # no node running: nothing to manage
+    node = Node(StateDirectory(tmp_path / "op"))
+    node.settings.address = "10.0.0.1"
+    RUNTIME.node = node
+    assert "node" not in values("")  # running, not elected
+    node.operators = {int(Role.USD_OPERATOR): {node.node_id}}
+    assert {"node", "on"} <= set(values("")) and values("no") == ["node"]
+    assert values("node 10") == ["10.0.0.1"] and node.node_id in values("node ")
+    assert values("node x ") == []
+    assert values("on ") == list(operate.SELECTOR_HELP)
+    assert "show" in values("on all ") and values("on all sh") == ["show"]
+    assert "usd" in values("on all show us")  # the line itself: the console's completion
+    assert values("on role usd") == ["usd-operator"] and "active" in values("on state ")
+    lines = []
+    sink = set_log_sink(lines.append)
+    try:
+        asyncio.run(shell.execute_line("on all ?"))
+        asyncio.run(shell.execute_line("node ?"))
+    finally:
+        reset_log_sink(sink)
+        RUNTIME.node = None
+    assert any(line.strip().startswith("state") for line in lines)  # answered here
+    assert "  <cr>" in lines and any("10.0.0.1" in line for line in lines)
+    assert operate._reason(NcpRemoteError(0x0003, "unknown command")).startswith(
+        "this node does not know Operate")
+
+
 # -- two USDs of one USC, on loopback addresses ---------------------------------------
 
 
