@@ -192,6 +192,7 @@ class Node(NcpHandlers):  # pylint: disable=too-many-instance-attributes,too-man
         self.operators: dict[int, set[str]] = {}
         self.operators_term = 0
         self._unfilled: set[Role] = set()  # operator roles without candidate, reported once
+        self._dependencies_deferred = False  # dependency check waiting for another node, reported once
         # Operate [ARCH 12.5]: the console answering an operator, set by the CLI:
         # (origin, sender key, session, JSON) -> JSON.
         self.operate_handler = None
@@ -1807,20 +1808,38 @@ class Node(NcpHandlers):  # pylint: disable=too-many-instance-attributes,too-man
         """[ARCH 8.4]: K least loaded active hosts per dependency, else 0x3302."""
         while True:
             await asyncio.sleep(parameter(self.signed.usd, 0x0009) or 30)
-            if self.state != State.ACTIVE or not self.mutation:
-                continue
-            for spec in self.mutation_specs(self.mutation):
-                for dependency in spec.dependencies:
-                    entry = self.signed.service_by_name(dependency)
-                    if entry is None:
-                        continue
-                    reachable = entry.service_id in self.hosted or (
-                        self.nndp is not None and self.nndp.services.best(entry.service_id))
-                    if not reachable and self.state == State.ACTIVE:
-                        self.set_state(State.INACTIVE_EMERGENCY_DEPENDENCIES,
-                                       reason=f"no active host of {dependency}")
-                        self.publish_record()
-                        await self.emergency(State.INACTIVE_EMERGENCY_DEPENDENCIES)
+            await self.check_dependencies()
+
+    def hears_others(self) -> bool:
+        """Whether this node hears another node of the USD: a reference node,
+        or a neighbour whose HIAs still arrive."""
+        return bool(self.references) or (self.nndp is not None and any(
+            not neighbor.inactive for neighbor in self.nndp.neighbors.values()))
+
+    async def check_dependencies(self) -> None:
+        """One round of [ARCH 8.4]. A node that hears no other node yet (just
+        started, or its address changed) cannot tell its dependencies are gone,
+        and would have no one to hand its services to: the round waits."""
+        if self.state != State.ACTIVE or not self.mutation:
+            return
+        if not self.hears_others():
+            if not self._dependencies_deferred:
+                self._dependencies_deferred = True
+                self.event("Dependencies not checked: no other node heard yet", logging.WARNING)
+            return
+        self._dependencies_deferred = False
+        for spec in self.mutation_specs(self.mutation):
+            for dependency in spec.dependencies:
+                entry = self.signed.service_by_name(dependency)
+                if entry is None:
+                    continue
+                reachable = entry.service_id in self.hosted or (
+                    self.nndp is not None and self.nndp.services.best(entry.service_id))
+                if not reachable and self.state == State.ACTIVE:
+                    self.set_state(State.INACTIVE_EMERGENCY_DEPENDENCIES,
+                                   reason=f"no active host of {dependency}")
+                    self.publish_record()
+                    await self.emergency(State.INACTIVE_EMERGENCY_DEPENDENCIES)
 
     async def check_weakness(self) -> None:
         """[ARCH 7.1]."""

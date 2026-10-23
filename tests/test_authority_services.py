@@ -269,6 +269,33 @@ def test_restart_rebuilds_the_mutation_and_stop_unbuilds_it(authority_node, tmp_
     assert not asyncio.run(node.resume_mutation(wait_s=0))
 
 
+def test_dependencies_wait_for_another_node(authority_node, monkeypatch):
+    """node3 after the reboot: alone, it keeps its mutation; once it hears a
+    node, a dependency without instance is an emergency again [ARCH 8.4]."""
+    from usmd_rdsh.node.states import State  # pylint: disable=import-outside-toplevel
+
+    services = {"web": ServiceConfig(name="web", id="0a1", area="front", vip="10.80.0.10",
+                                     dependencies=["db"]),
+                "db": ServiceConfig(name="db", id="0a2", area="front", vip="10.80.0.11")}
+    _commit(services=services)
+    node = authority_node
+    node.mutation = "frontal"
+    node.set_state(State.ACTIVE, reason="test", force=True)
+    emergencies = []
+
+    async def emergency(reason):
+        emergencies.append(reason)
+
+    monkeypatch.setattr(node, "emergency", emergency)
+    monkeypatch.setattr(node, "publish_record", lambda: None)
+    node.references = []
+    asyncio.run(node.check_dependencies())
+    assert node.state == State.ACTIVE and node.mutation == "frontal" and not emergencies
+    node.references = ["01M5MYAV9N0WM8GM6QBZZ8BAN5"]
+    asyncio.run(node.check_dependencies())
+    assert emergencies == [State.INACTIVE_EMERGENCY_DEPENDENCIES]
+
+
 def test_service_file_names_and_sizes_are_checked():
     with pytest.raises(ValueError, match="not a file name"):
         parse_service_file("name: web\nfiles:\n  ../etc/passwd: aGk=\n")

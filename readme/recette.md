@@ -410,7 +410,7 @@ Constats transverses (à lire avant les tableaux) :
 | ARCH-8.4-3 | DOIT | L'autorité NE DOIT PAS publier de propriétés violant cette règle | done | Comme 8.4-2 : refus au moment de la signature (`AuthorityBridge.settle`). |
 | ARCH-8.4-4 | DEF | Instances disponibles des dépendances connues par la table des services les plus proches (11.5) | done | `Node._dependency_loop` (`nndp.services.best`) |
 | ARCH-8.4-5 | DEF | Tous les 0x0009 (30 s), vérifier qu'au moins une instance accessible de chaque dépendance existe | done | `Node._dependency_loop` (0x0009) parcourt toutes les dépendances à chaque tour, sans plus terminer la tâche |
-| ARCH-8.4-6 | DEF | Sinon : se déclarer en 0x3302 et émettre une demande urgente | done | `Node._dependency_loop` (`INACTIVE_EMERGENCY_DEPENDENCIES`, `emergency`) |
+| ARCH-8.4-6 | DEF | Sinon : se déclarer en 0x3302 et émettre une demande urgente | done | `Node._dependency_loop` → `check_dependencies` (`INACTIVE_EMERGENCY_DEPENDENCIES`, `emergency`). Complément hors draft : un nœud qui n'entend aucun autre nœud (ni nœud de référence, ni voisin NNDP actif), au démarrage ou après un changement d'adresse, reporte le contrôle (`hears_others`) : il ne peut juger ses dépendances absentes ni déléguer, et l'urgence ne ferait que lui retirer sa mutation. Test `test_authority_services.py::test_dependencies_wait_for_another_node`. À reporter au draft. |
 
 #### 8.5 Mises à jour
 
