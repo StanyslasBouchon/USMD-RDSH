@@ -56,7 +56,9 @@ from usmd_rdsh.node.ncp.codec import (
 )
 from usmd_rdsh.node.ncp.transport import NcpRemoteError, NcpTimeout, NcpTransport
 from usmd_rdsh.node.nndp import Neighbor, NndpHooks, NndpService
-from usmd_rdsh.node.raft import Raft, assign_record, operator_record, voter_record
+from usmd_rdsh.node import balance
+from usmd_rdsh.node.balance import BalanceHost, Plan
+from usmd_rdsh.node.raft import Raft, assign_record, balance_record, operator_record, voter_record
 from usmd_rdsh.node.services import (
     NEEDS_ADDRESS,
     ServiceRunner,
@@ -126,6 +128,7 @@ class LocalSettings:  # pylint: disable=too-many-instance-attributes
     ncp_attempts: int = 3
     sp_margin: float = 0.1
     service_data: dict = field(default_factory=dict)  # service -> data path [ARCH 7.1]
+    balance_interface: str = ""  # physical interface of the balance VIPs ("": the node's)
     sp_flow_idle: float = 300.0
     sp_pending: int = 32
     sp_ineligible: float = 30.0
@@ -199,6 +202,14 @@ class Node(NcpHandlers):  # pylint: disable=too-many-instance-attributes,too-man
         self.exposure = ExposureTable()
         self.probes: dict[str, bool] = {}  # service -> last probe: does it take clients
         self._peers_seen: dict[str, tuple[str, ...]] = {}  # service -> USMD_PEERS last run
+        # Balance VIPs (extension, node/balance.py): the owner the master elected
+        # per service id, as last known, and what the owner learnt of the instances.
+        self.balance_owners: dict[int, str] = {}
+        self.balance_term = 0
+        self.balance_status: dict[tuple[int, str], int] = {}  # (service id, node) -> status
+        self._balance_default: tuple[str, str] | None = None  # (address, its interface)
+        self.balancer = BalanceHost(on_change=self._save_balance)
+        self.balancer.adopt(state_dir.read_json("balance.json", default=None) or [])
         # Operate [ARCH 12.5]: the console answering an operator, set by the CLI:
         # (origin, sender key, session, JSON) -> JSON.
         self.operate_handler = None
@@ -351,7 +362,7 @@ class Node(NcpHandlers):  # pylint: disable=too-many-instance-attributes,too-man
         loops = [self._bootstrap_loop, self._load_loop, self._distance_loop,
                  self._properties_loop, self._reconcile_loop, self._healing_loop,
                  self._health_loop, self._dependency_loop, self._maintenance_loop,
-                 self._peers_loop]
+                 self._peers_loop, self._balance_loop]
         self._tasks = [asyncio.create_task(loop(), name=loop.__name__) for loop in loops]
         if self.mutation:
             self._tasks.append(asyncio.create_task(self.resume_mutation(), name="resume_mutation"))
@@ -401,6 +412,7 @@ class Node(NcpHandlers):  # pylint: disable=too-many-instance-attributes,too-man
             await self.runner.run(spec, "unbuild")
         self.hosted.clear()
         self.refresh_exposure()  # no port left open to a stopped instance
+        self.balancer.stop()  # the VIP moves to the next owner the master elects
 
     async def stop(self) -> None:
         for task in self._tasks:
@@ -1397,6 +1409,193 @@ class Node(NcpHandlers):  # pylint: disable=too-many-instance-attributes,too-man
         return key is not None and self.peer_state(key) == State.ACTIVE and \
             not self.tables.exclusions.is_excluded(key)
 
+    # ------------------------------------------------------------------
+    # Balance VIPs: one owner per service, elected by the master (extension)
+    # ------------------------------------------------------------------
+
+    def balance_specs(self) -> dict[str, ServiceSpec]:
+        """Service name -> the definition declaring its balance: from this node's
+        mutation first, else from the first mutation in force (by name)."""
+        order = sorted(self.signed.in_force())
+        if self.mutation in order:
+            order.remove(self.mutation)
+            order.insert(0, self.mutation)
+        specs: dict[str, ServiceSpec] = {}
+        for mutation in order:
+            for spec in self.mutation_specs(mutation):
+                if spec.balance is not None:
+                    specs.setdefault(spec.name, spec)
+        return specs
+
+    def balanced_services(self) -> dict[int, ServiceSpec]:
+        """Service id -> definition, for the catalogued services with a balance VIP."""
+        specs = self.balance_specs()
+        return {service_id: specs[entry.name] for service_id, entry in
+                sorted(self.signed.catalog().items()) if entry.name in specs}
+
+    def service_hosts(self, name: str) -> list[str]:
+        """Node ids of the Active nodes whose mutation runs *name*, this one included."""
+        hosts = []
+        for node_id in self.active_nodes():
+            entry = self.tables.nodes.by_id(node_id)
+            if entry is not None and self._serving(node_id) and \
+                    name in self.signed.mutation_services(entry.record.mutation):
+                hosts.append(node_id)
+        if self.state == State.ACTIVE and self.mutation and \
+                name in self.signed.mutation_services(self.mutation):
+            hosts.append(self.node_id)
+        return sorted(set(hosts))
+
+    async def elect_balance(self) -> bool:
+        """The master's side; at most one change per call, True when made.
+
+        The owner stays while it is Active and runs the service; otherwise the
+        oldest such node (smallest ULID) is elected at once - the VIP must not
+        wait as long as an operator role. Without any, the VIP is released.
+        """
+        raft = self.raft
+        if raft is None or not raft.is_leader:
+            return False
+        wanted = self.balanced_services()
+        catalog = self.signed.catalog()
+        for service_id in sorted(raft.state.balance):
+            if service_id not in wanted:
+                name = catalog[service_id].name if service_id in catalog else f"{service_id:03x}"
+                if await raft.propose([balance_record(raft.term, service_id, None)], 5):
+                    self.event(f"Balance VIP of {name} released: no longer declared",
+                               logging.WARNING)
+                return True
+        for service_id, spec in wanted.items():
+            owner = raft.state.balance.get(service_id)
+            hosts = self.service_hosts(spec.name)
+            if owner in hosts:
+                continue
+            if not hosts:
+                if owner is None:
+                    continue
+                if await raft.propose([balance_record(raft.term, service_id, None)], 5):
+                    self.event(f"Balance VIP of {spec.name} released: no Active node runs it",
+                               logging.WARNING)
+                return True
+            if await raft.propose([balance_record(raft.term, service_id, hosts[0])], 5):
+                self.event(f"{hosts[0]} holds the balance VIP of {spec.name} "
+                           f"({spec.balance.vip})" + (f", instead of {owner}" if owner else ""),
+                           logging.WARNING)
+            return True
+        return False
+
+    def set_balance_owners(self, owners: dict[int, str], term: int) -> None:
+        self.balance_owners = dict(owners)
+        self.balance_term = max(self.balance_term, term)
+        self.refresh_balance()
+
+    def _sync_balance(self) -> None:
+        """A voter reads the owners off its own applied state."""
+        raft = self.raft
+        if raft is None or not raft.is_voter or not raft.commit_index:
+            return
+        if raft.state.balance != self.balance_owners or raft.term > self.balance_term:
+            self.set_balance_owners(raft.state.balance, raft.term)
+
+    def balance_body(self) -> bytes:
+        """Send_balance (0x0017): term ‖ master ‖ List<(service id, owner)>."""
+        out = Writer().u64(self.balance_term).ident(self.node_id)
+        out.u16(len(self.balance_owners))
+        for service_id, node_id in sorted(self.balance_owners.items()):
+            out.u16(service_id).ident(node_id)
+        return out.bytes()
+
+    async def announce_balance(self) -> None:
+        """The master tells the nodes outside the configuration, which have no log."""
+        body = self.balance_body()
+        voters = self.raft.voters if self.raft else {}
+        await asyncio.gather(*(self._quiet(self.call(n, Command.SEND_BALANCE, body))
+                               for n in self.active_nodes() if n not in voters))
+
+    def balance_answer(self, service_id: int) -> int:
+        """Balance_status (0x0018): does this node's instance of *service_id* take clients."""
+        entry = self.signed.catalog().get(service_id)
+        if entry is None or self.state != State.ACTIVE or service_id not in self.hosted:
+            return balance.NOT_HOSTED
+        return balance.NO_CLIENTS if self.probes.get(entry.name) is False \
+            else balance.TAKES_CLIENTS
+
+    async def poll_balance(self) -> None:
+        """The owner asks the other hosts of each service it balances."""
+        asks = []
+        for service_id, node_id in self.balance_owners.items():
+            entry = self.signed.catalog().get(service_id)
+            if node_id != self.node_id or entry is None:
+                continue
+            for host in self.service_hosts(entry.name):
+                if host != self.node_id:
+                    asks.append((service_id, host))
+        answers = await asyncio.gather(*(self._ask_balance(s, h) for s, h in asks))
+        self.balance_status = dict(zip(asks, answers))
+
+    async def _ask_balance(self, service_id: int, node_id: str) -> int:
+        try:
+            reader = Reader(await self.call(node_id, Command.BALANCE_STATUS,
+                                            Writer().u16(service_id).bytes(), attempts=1))
+            status = reader.u8()
+        except (NcpTimeout, NcpRemoteError, WireError, OSError, ValueError):
+            return balance.NOT_HOSTED  # an earlier version, or unreachable
+        return status if status in (balance.NO_CLIENTS, balance.TAKES_CLIENTS) \
+            else balance.NOT_HOSTED
+
+    def balance_interface(self) -> str:
+        """``system service-host balance-interface``, else the interface holding
+        the node's address (looked up again when the address changes)."""
+        if self.settings.balance_interface:
+            return self.settings.balance_interface
+        cached = self._balance_default
+        if cached is None or cached[0] != self.settings.address:
+            cached = (self.settings.address,
+                      balance.default_interface(self.settings.address) or "eth0")
+            self._balance_default = cached
+        return cached[1]
+
+    def balance_plans(self) -> list[Plan]:
+        """The VIPs this node holds as owner, each with the instances taking clients."""
+        plans: list[Plan] = []
+        mine = {s for s, owner in self.balance_owners.items() if owner == self.node_id}
+        if not mine or self.state != State.ACTIVE:
+            return plans
+        catalog = self.signed.catalog()
+        specs = self.balance_specs()
+        for service_id in sorted(mine):
+            entry = catalog.get(service_id)
+            spec = specs.get(entry.name) if entry is not None else None
+            if spec is None or spec.balance is None or spec.expose is None:
+                continue
+            backends = []
+            if self.balance_answer(service_id) == balance.TAKES_CLIENTS:
+                backends.append((entry.vip, spec.expose.port))  # its own instance, directly
+            for host in self.service_hosts(entry.name):
+                if host == self.node_id or self.balance_status.get(
+                        (service_id, host)) != balance.TAKES_CLIENTS:
+                    continue
+                record = self.tables.nodes.by_id(host)
+                if record is not None:
+                    backends.append((record.record.address, public_port(service_id)))
+            plans.append(Plan(spec.name, spec.balance.vip, self.balance_interface(),
+                              spec.balance.vlan, spec.balance.port, spec.expose.protocol,
+                              tuple(backends), entry.vip))
+        return plans
+
+    def refresh_balance(self) -> None:
+        self.balancer.update(self.balance_plans())
+
+    def _save_balance(self, held: list[dict]) -> None:
+        self.state_dir.write_json(held, "balance.json")
+
+    async def _balance_loop(self) -> None:
+        while True:
+            await asyncio.sleep(2)
+            if any(n == self.node_id for n in self.balance_owners.values()):
+                await self.poll_balance()
+            self.refresh_balance()
+
     async def elect_operators(self, inactive_since: dict[tuple[int, str], float]) -> bool:
         """The master's side [ARCH 12.4]; at most one change per call, True when made.
 
@@ -1571,6 +1770,7 @@ class Node(NcpHandlers):  # pylint: disable=too-many-instance-attributes,too-man
                 self.set_state(State.ACTIVE, reason="load back under the threshold")
                 self.publish_record()
             self._sync_operators()
+            self._sync_balance()
             raft = self.raft
             if raft is None or not raft.is_leader:
                 continue
@@ -1579,6 +1779,11 @@ class Node(NcpHandlers):  # pylint: disable=too-many-instance-attributes,too-man
                 self._soon(self.announce_operators())
             elif ticks % 30 == 0 and self.operators:
                 self._soon(self.announce_operators())  # nodes added since, lost messages
+            if await self.elect_balance():
+                self._sync_balance()
+                self._soon(self.announce_balance())
+            elif ticks % 30 == 0 and (self.balance_owners or self.balanced_services()):
+                self._soon(self.announce_balance())  # a release reaches them too
             voters = raft.voters
             now = time.monotonic()
             for voter in list(voters):

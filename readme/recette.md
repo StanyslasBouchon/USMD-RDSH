@@ -749,7 +749,7 @@ Un usd-operator élu gère tous les nœuds de son USD, un usc-operator élu tous
 
 ### Annexe C. Exposition hors USMD (extension, hors draft, demandée le 2026-10-24)
 
-Étape 1 de trois (2 : VIP de répartition sur l'interface physique, propriétaire élu par le maître Raft, substitution d'adresse ; 3 : retour direct). Tout moteur de base de données (ou autre service) doit pouvoir être monté : USMD fournit les mécanismes, le fichier de service les met en œuvre.
+Étapes 1 et 2 de trois (2 : VIP de répartition sur l'interface physique, propriétaire élu par le maître Raft, substitution d'adresse ; 3 : retour direct). Tout moteur de base de données (ou autre service) doit pouvoir être monté : USMD fournit les mécanismes, le fichier de service les met en œuvre.
 
 | ID | Niveau | Exigence | État | Remarque |
 |---|---|---|---|---|
@@ -763,6 +763,23 @@ Un usd-operator élu gère tous les nœuds de son USD, un usc-operator élu tous
 | EXPO-8 | Demande | Aucune connexion sortante ne prend un port exposé comme port source | done | `scripts/install.sh` : `net.ipv4.ip_local_reserved_ports` (60001-64094, en conservant les réservations existantes) dans `/etc/sysctl.d/60-usmd.conf` ; retiré par `uninstall.sh` |
 | EXPO-9 | Demande | Consultation | done | `show service exposure` (port, instance, sources, hébergé, clients, autres instances, erreur nftables) |
 | EXPO-10 | Limite | Les ports propres au moteur entre membres (Galera 4567/4568/4444, etcd…) ne passent pas par 60000 + id | open | Les membres se joignent sur leurs adresses physiques (`USMD_PEER_ADDRESSES`) ; un pare-feu doit les ouvrir. Une exposition de plusieurs ports par service reste à concevoir |
+
+Étape 2 : VIP de répartition (`node/balance.py`).
+
+| ID | Niveau | Exigence | État | Remarque |
+|---|---|---|---|---|
+| EXPO-11 | Demande | Une VIP partagée par les nœuds qui hébergent le service, sur l'interface physique, dans un VLAN ou non, au port public choisi par l'administrateur | done | Clé `balance: {vip: adresse/préfixe, port, vlan: 0..4094, mode: snat}` du fichier de service, signée avec la mutation (`services.Balance`) ; exige `expose` ; deux services ne partagent pas une VIP ; `mode: dr` refusé tant que l'étape 3 n'est pas faite ; test `test_balance.py` |
+| EXPO-12 | Choix | Un seul porteur de la VIP à la fois, élu par le maître Raft | done | Enregistrements Raft d'extension `BALANCE_OWNER` (0x08 : id de service ‖ nœud, 28 o) et `BALANCE_RELEASE` (0x09 : id, 2 o), `StateMachine.balance`, instantané (page 0, après les attributions : une version antérieure les ignore) et persistance ; `Node.elect_balance` dans la boucle de maintenance du maître |
+| EXPO-13 | Demande | Bascule : un autre nœud reprend la VIP dès que le porteur n'est plus Actif ou ne porte plus le service | done | Le porteur est gardé tant qu'il sert ; sinon le plus ancien nœud Actif dont la mutation porte le service (plus petit ULID) est élu aussitôt (pas de délai 0x0015 comme pour les operators) ; sans aucun, la VIP est libérée. Un porteur qui s'arrête libère la VIP (`stop_services`) |
+| EXPO-14 | Choix | Les nœuds hors configuration Raft apprennent le porteur | done | Commande NCP d'extension `Send_balance` (0x0017 : terme ‖ maître ‖ List<(id, nœud)>), envoyée après chaque changement et toutes les 30 s, contrôles de `Send_operators` (émetteur votant, terme) ; un votant lit son journal |
+| EXPO-15 | Demande | Le porteur pose la VIP et l'annonce | done | `ip addr add` sur l'interface (`config system service-host` → `set balance-interface`, par défaut celle qui porte l'adresse du nœud), ou sur `<interface>.<vlan>` créée si besoin (une sous-interface déjà présente est utilisée et laissée) ; ARP gratuit ×3 (socket AF_PACKET, CAP_NET_RAW ajouté à l'unité par `install.sh`) ; vérifié sous WSL (interface factice, VLAN 30) |
+| EXPO-16 | Choix | Répartition dans le noyau, avec substitution d'adresse | done | Table `ip usmd_balance` (priorité -101, avant `ip usmd`) : DNAT `numgen inc` vers chaque instance qui prend des clients — la sienne directement (VIP SP:port), les autres à adresse:60000+id — puis `masquerade` ; vérifiée par `nft -f` sous WSL (nftables 1.0.9). Forwarding activé sur l'interface de la VIP seulement quand des connexions partent vers d'autres nœuds, valeur d'origine remise ensuite |
+| EXPO-17 | Demande | Seules les instances qui prennent des clients reçoivent des connexions | done | Commande NCP d'extension `Balance_status` (0x0018 : id → 0 non hébergé, 1 sain sans clients (`probe` en échec), 2 prend des clients), interrogée par le porteur toutes les 2 s ; sans instance, pas de règle : la VIP refuse les connexions |
+| EXPO-18 | Demande | Rien ne reste après un arrêt brutal | done | VIP tenues enregistrées dans `balance.json` (répertoire d'état) ; au redémarrage, `BalanceHost.adopt` puis la première mise à jour libère celles qui ne sont plus voulues |
+| EXPO-19 | Demande | Consultation | done | `show service balance` (VIP, VLAN, port, porteur, interface, instances servies, erreur) |
+| EXPO-20 | Limite | Substitution : l'instance voit l'adresse du porteur, pas celle du client ; tout le trafic passe deux fois par le porteur | open | Étape 3 (retour direct, IPVS DR) |
+| EXPO-21 | Limite | Mise à jour progressive : un nœud d'une version antérieure refuse les enregistrements Raft 0x08/0x09 (« malformed Raft record ») et ne connaît pas 0x0017/0x0018 | open | Mettre tous les nœuds à jour avant de déclarer une `balance` |
+| EXPO-22 | Limite | Partition réseau : un ancien porteur isolé garde la VIP tant qu'il se croit porteur | open | Un nœud qui n'est plus Actif la libère ; pas de clôture (fencing) au-delà |
 
 ---
 

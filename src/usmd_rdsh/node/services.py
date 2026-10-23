@@ -12,6 +12,10 @@ A service file is a UTF-8 YAML stream, one document per service [8.3]::
     expose:              (extension) {port: 5432, protocol: tcp, allow: [prefixes]}
                          - the instance's port, reached from outside USMD on
                          every hosting node at 60000 + service id
+    balance:             (extension) {vip: 192.168.1.50/24, port: 5432, vlan: 0,
+                         mode: snat} - with expose: one node elected by the
+                         master holds the VIP on its physical interface and
+                         spreads the clients over the instances (node/balance.py)
     probe / peers_changed: (extension) sequences: whether the instance takes
                          clients now (exit 0), and what to do when the other
                          instances of the service changed ($USMD_PEERS)
@@ -63,8 +67,9 @@ log = logging.getLogger("usmd_rdsh.services")
 SEQUENCES = ("build", "unbuild", "emergency", "check_health", "update",
              "probe", "peers_changed")
 DEFAULT_TIMEOUT = 300
-KNOWN_KEYS = {"name", "type", "dependencies", "sp", "files", "expose", *SEQUENCES}
+KNOWN_KEYS = {"name", "type", "dependencies", "sp", "files", "expose", "balance", *SEQUENCES}
 PROTOCOLS = ("tcp", "udp")
+BALANCE_MODES = ("snat",)  # dr (direct return) comes later
 #: A file delivered with a service: a plain name, no directory, not hidden.
 FILE_NAME = re.compile(r"^[A-Za-z0-9_-][A-Za-z0-9._-]{0,127}$")
 #: Every file of one service together, decoded; the mutation travels in one
@@ -147,14 +152,31 @@ class Exposure:
     allow: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True, slots=True)
+class Balance:
+    """The address clients outside USMD use for the whole service: *vip*
+    (address/prefix) on the physical interface of one elected node, in VLAN
+    *vlan* (0: none), port *port*, spread over the instances' exposed ports."""
+
+    vip: str  # 192.168.1.50/24
+    port: int
+    vlan: int = 0
+    mode: str = "snat"
+
+    @property
+    def address(self) -> str:
+        return self.vip.partition("/")[0]
+
+
 @dataclass(slots=True)
-class ServiceSpec:
+class ServiceSpec:  # pylint: disable=too-many-instance-attributes
     name: str
     type: str = "static"
     dependencies: list[str] = field(default_factory=list)
     sequences: dict[str, list[Step]] = field(default_factory=dict)
     files: dict[str, bytes] = field(default_factory=dict)
     expose: Exposure | None = None
+    balance: Balance | None = None
 
 
 def _parse_expose(value: object) -> Exposure | None:
@@ -179,6 +201,40 @@ def _parse_expose(value: object) -> Exposure | None:
     except ValueError as exc:
         raise ServiceFileError(f"'expose: allow': {exc}") from exc
     return Exposure(port, protocol, prefixes)
+
+
+def _parse_balance(value: object, expose: Exposure | None) -> Balance | None:
+    """``balance: {vip: 192.168.1.50/24, port: 5432, vlan: 0, mode: snat}``."""
+    import ipaddress  # pylint: disable=import-outside-toplevel
+
+    if value is None:
+        return None
+    if not isinstance(value, dict) or set(value) - {"vip", "port", "vlan", "mode"}:
+        raise ServiceFileError("'balance' has vip, port, vlan and mode")
+    if expose is None:
+        raise ServiceFileError("'balance' needs 'expose': the VIP spreads clients over "
+                               "the exposed ports of the instances")
+    try:
+        interface = ipaddress.IPv4Interface(str(value.get("vip", "")))
+    except ValueError as exc:
+        raise ServiceFileError(f"'balance: vip' is an IPv4 address/prefix: {exc}") from exc
+    broadcast = interface.network.prefixlen < 31 and \
+        interface.ip == interface.network.broadcast_address
+    if interface.ip.is_unspecified or interface.ip.is_multicast or interface.ip.is_loopback \
+            or broadcast:
+        raise ServiceFileError(f"'balance: vip' {interface.ip} cannot be held by an interface")
+    port = value.get("port")
+    if not isinstance(port, int) or isinstance(port, bool) or not 1 <= port <= 65535:
+        raise ServiceFileError("'balance: port' is the public port on the VIP, 1 to 65535")
+    vlan = value.get("vlan", 0)
+    if not isinstance(vlan, int) or isinstance(vlan, bool) or not 0 <= vlan <= 4094:
+        raise ServiceFileError("'balance: vlan' is 0 (none) or a VLAN id, 1 to 4094")
+    mode = value.get("mode", "snat")
+    if mode == "dr":
+        raise ServiceFileError("'balance: mode dr' (direct return) is not available yet: snat")
+    if mode not in BALANCE_MODES:
+        raise ServiceFileError("'balance: mode' is snat")
+    return Balance(str(interface), port, vlan, mode)
 
 
 def check_file_name(name: str) -> str:
@@ -247,12 +303,16 @@ def parse_service_file(text: str | bytes) -> list[ServiceSpec]:
                     raise ServiceFileError("timeout is a positive number of seconds")
                 parsed.append(Step(step.get("command"), action, timeout))
             sequences[sequence] = parsed
+        expose = _parse_expose(document.get("expose"))
         services.append(ServiceSpec(name, kind, dependencies, sequences,
-                                    _parse_files(document.get("files")),
-                                    _parse_expose(document.get("expose"))))
+                                    _parse_files(document.get("files")), expose,
+                                    _parse_balance(document.get("balance"), expose)))
     names = [s.name for s in services]
     if len(names) != len(set(names)):
         raise ServiceFileError("a service appears twice")
+    vips = [s.balance.address for s in services if s.balance]
+    if len(vips) != len(set(vips)):
+        raise ServiceFileError("two services balance on the same VIP")
     return services
 
 

@@ -119,6 +119,8 @@ probe:                                           # exit 0: this instance takes c
 
 The sequences get `USMD_NODE_ADDRESS`, `USMD_EXPOSE_PORT`, and `USMD_PEERS` / `USMD_PEER_ADDRESSES`: the other Active nodes running the service (`address:60000+id`, and their addresses alone for an engine's own cluster ports). `show service exposure` lists what this node exposes.
 
+**One address for the whole service (balance VIP).** With `expose`, a service file may add `balance: {vip: 192.168.1.50/24, port: 5432, vlan: 0, mode: snat}`. The USD master elects (Raft) one node running the service to hold the VIP; it puts it on its physical interface (`config system service-host` → `set balance-interface eth0`, by default the interface holding the node's address), or on `eth0.<vlan>` when `vlan` is set, announces it by gratuitous ARP, and spreads new connections over the instances whose `probe` passes (table `ip usmd_balance`, DNAT in turn, address substitution: the instance sees the holder's address). When the holder stops or leaves Active, another node takes the VIP over. `show service balance` shows the VIP, its holder and where connections go. The unit holds `CAP_NET_RAW` for the ARP; every node must run this version before a `balance` is declared.
+
 **Useful commands after installation:**
 
 ```bash

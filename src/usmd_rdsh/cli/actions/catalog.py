@@ -1,5 +1,6 @@
 """``show service catalog``, ``show service instances``, ``show service exposure``,
-``show service-area summary``, ``show usd master``, ``show mutation status``
+``show service balance``, ``show service-area summary``, ``show usd master``,
+``show mutation status``
 [ARCH-02 8, 11, 12]."""
 
 from __future__ import annotations
@@ -201,6 +202,62 @@ def _exposure_text(rows: list[dict]) -> str:
         permissions=[READ], rows=ExposureRow, cli_output=printer(_exposure_text))
 async def show_service_exposure() -> list[dict]:
     return exposure_rows()
+
+
+class BalanceRow(BaseModel):
+    service: str
+    vip: str
+    port: str
+    interface: str
+    owner: str
+    instances: str
+
+
+def balance_rows() -> list[dict]:
+    """The balance VIPs of the USD: the owner the master elected, and, on the
+    owner, the instances its connections go to."""
+    node = RUNTIME.node
+    if node is None:
+        return []
+    held ={p.service: p for p in node.balancer.plans}
+    rows = []
+    for service_id, spec in node.balanced_services().items():
+        owner = node.balance_owners.get(service_id, "")
+        plan = held.get(spec.name)
+        if plan is not None:
+            instances = ", ".join(f"{a}:{p}" for a, p in plan.backends) or "none takes clients"
+        elif owner:
+            instances = "(known by the owner)"
+        else:
+            instances = "-"
+        hosts = node.service_hosts(spec.name)
+        rows.append({
+            "service": spec.name,
+            "vip": spec.balance.vip + (f" vlan {spec.balance.vlan}" if spec.balance.vlan else ""),
+            "port": f"{spec.balance.port}/{spec.expose.protocol}",
+            "interface": plan.device if plan is not None else "",
+            "owner": (owner + " (self)" if owner == node.node_id else owner) if owner
+            else "none" + ("" if hosts else " (no Active node runs it)"),
+            "instances": instances,
+        })
+    return rows
+
+
+def _balance_text(rows: list[dict]) -> str:
+    node = RUNTIME.node
+    text = table(rows, [("service", "Service"), ("vip", "VIP"), ("port", "Port"),
+                        ("owner", "Owner"), ("interface", "Interface"),
+                        ("instances", "Connections go to")])
+    error = node.balancer.error if node is not None else ""
+    return text + (f"\n\nBalance: {error}" if error else
+                   "\n\nOwner elected by the USD master; address substitution (SNAT).")
+
+
+@action(cli="show service balance",
+        description="Balance VIPs: one address for a whole service (extension)",
+        permissions=[READ], rows=BalanceRow, cli_output=printer(_balance_text))
+async def show_service_balance() -> list[dict]:
+    return balance_rows()
 
 
 @action(cli="show service-area summary", description="Service areas in force [ARCH-02 11.2]",

@@ -121,7 +121,7 @@ done
 
 command -v systemctl &>/dev/null || die "systemd is required but was not found."
 command -v ip &>/dev/null || die "'ip' (iproute2) is required: the node configures its SP interface with it."
-command -v nft &>/dev/null || warn "'nft' (nftables) is missing: services cannot be reached from outside USMD (port 60000 + id). Install it: apt install nftables"
+command -v nft &>/dev/null || warn "'nft' (nftables) is missing: services cannot be reached from outside USMD (port 60000 + id, balance VIPs). Install it: apt install nftables"
 [[ -e /dev/net/tun ]] || warn "/dev/net/tun is missing: SP (the services' data plane) will not start."
 
 [[ -f "${SOURCE_DIR}/pyproject.toml" ]] \
@@ -385,11 +385,13 @@ SyslogIdentifier=usmd
 RuntimeDirectory=usmd
 RuntimeDirectoryMode=0755
 
-# The SP interface (tun, its addresses and routes) needs CAP_NET_ADMIN: the
-# node holds it and nothing else. The bounding set also lets 'sudo' change
-# user, so that a sequence can reach ${ROOT_RELAY} (sudoers: ${SUDOERS_FILE}).
-AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
-CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_SETUID CAP_SETGID CAP_AUDIT_WRITE
+# The SP interface (tun, its addresses and routes), the exposed ports and the
+# balance VIPs (address, VLAN, nftables) need CAP_NET_ADMIN; announcing a VIP
+# by gratuitous ARP needs CAP_NET_RAW: the node holds these and nothing else.
+# The bounding set also lets 'sudo' change user, so that a sequence can reach
+# ${ROOT_RELAY} (sudoers: ${SUDOERS_FILE}).
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE CAP_SETUID CAP_SETGID CAP_AUDIT_WRITE
 
 # Security hardening: the node and the services it runs write only its
 # configuration and its data (services keep theirs in \$USMD_DATA_DIR).

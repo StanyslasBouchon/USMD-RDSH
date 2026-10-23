@@ -28,6 +28,7 @@ SNAPSHOT_PAGE_BYTES = 1000 * 1111  # body bound of one Raft_install_snapshot pag
 _SNAPSHOT_HEAD = 8 + 26 + 8 + 8 + 2 + 2  # term, leader, index, term, page, pages
 _VOTER_SIZE = 26 + 32
 _OPERATOR_SIZE = 1 + 26
+_BALANCE_SIZE = 2 + 26
 _ASSIGNMENT_SIZE = 2 + 2 + 26 + 32
 
 
@@ -60,15 +61,24 @@ def operator_record(term: int, role: int, node_id: str, *, elected: bool) -> Log
     return LogRecord(term, kind, Writer().u8(role).ident(node_id).bytes())
 
 
+def balance_record(term: int, service: int, node_id: str | None) -> LogRecord:
+    """*node_id* now holds the balance VIP of *service*; None: nobody does (extension)."""
+    if node_id is None:
+        return LogRecord(term, RecordType.BALANCE_RELEASE, Writer().u16(service).bytes())
+    return LogRecord(term, RecordType.BALANCE_OWNER, Writer().u16(service).ident(node_id).bytes())
+
+
 @dataclass
 class StateMachine:
     assignments: dict[tuple[int, int], Assignment] = field(default_factory=dict)
     voters: dict[str, bytes] = field(default_factory=dict)
     operators: dict[int, set[str]] = field(default_factory=dict)  # role -> elected node ids
+    balance: dict[int, str] = field(default_factory=dict)  # service id -> VIP owner
 
     def copy(self) -> "StateMachine":
         return StateMachine(dict(self.assignments), dict(self.voters),
-                            {r: set(ids) for r, ids in self.operators.items()})
+                            {r: set(ids) for r, ids in self.operators.items()},
+                            dict(self.balance))
 
     def apply(self, record: LogRecord) -> None:
         reader = Reader(record.data)
@@ -83,6 +93,11 @@ class StateMachine:
         elif record.type == RecordType.DEPOSE_OPERATOR:
             role = reader.u8()
             self.operators.get(role, set()).discard(reader.ident())
+        elif record.type == RecordType.BALANCE_OWNER:
+            service = reader.u16()
+            self.balance[service] = reader.ident()
+        elif record.type == RecordType.BALANCE_RELEASE:
+            self.balance.pop(reader.u16(), None)
 
     def operator_pairs(self) -> list[tuple[int, str]]:
         return sorted((r, n) for r, ids in self.operators.items() for n in ids)
@@ -109,6 +124,7 @@ class _PendingSnapshot:
     pages: int
     voters: dict[str, bytes] | None = None  # from page 0
     operators: list[tuple[int, str]] = field(default_factory=list)  # from page 0
+    balance: dict[int, str] = field(default_factory=dict)  # from page 0
     parts: dict[int, list[Assignment]] = field(default_factory=dict)
 
 
@@ -218,6 +234,7 @@ class Raft:  # pylint: disable=too-many-instance-attributes
         snap.voters = {k: bytes.fromhex(v) for k, v in data["snapshot_voters"].items()}
         for role, node_id in data.get("snapshot_operators", []):
             snap.operators.setdefault(role, set()).add(node_id)
+        snap.balance = {int(s): n for s, n in data.get("snapshot_balance", {}).items()}
         self.snapshot_state = snap
         self.log = [LogRecord(r[0], r[1], bytes.fromhex(r[2])) for r in data["log"]]
         self.commit_index = self.applied = self.snapshot_index
@@ -232,6 +249,7 @@ class Raft:  # pylint: disable=too-many-instance-attributes
                                      for a in snap.assignments.values()],
             "snapshot_voters": {k: v.hex() for k, v in snap.voters.items()},
             "snapshot_operators": [list(p) for p in snap.operator_pairs()],
+            "snapshot_balance": {str(s): n for s, n in snap.balance.items()},
             "log": [[r.term, r.type, r.data.hex()] for r in self.log],
         }
         self.storage.parent.mkdir(parents=True, exist_ok=True)
@@ -425,12 +443,16 @@ class Raft:  # pylint: disable=too-many-instance-attributes
         """The current snapshot as Raft_install_snapshot bodies [6.18].
 
         Each body stays within ``snapshot_page_bytes``; the voters and the
-        elected operators travel in page 0 only.
+        elected operators travel in page 0 only; so do the balance VIP owners
+        (extension), after the assignments, which an earlier version ignores.
         """
         index, term, state = self.snapshot_index, self.snapshot_term, self.snapshot_state
         assignments = list(state.assignments.values())
         operators = state.operator_pairs()
+        balance = sorted(state.balance.items())
         voters_size = 2 + _VOTER_SIZE * len(state.voters) + 2 + _OPERATOR_SIZE * len(operators)
+        if balance:
+            voters_size += 2 + _BALANCE_SIZE * len(balance)
         first = (self.snapshot_page_bytes - _SNAPSHOT_HEAD - voters_size - 2) // _ASSIGNMENT_SIZE
         other = (self.snapshot_page_bytes - _SNAPSHOT_HEAD - 2) // _ASSIGNMENT_SIZE
         if first < 0 or other < 1:
@@ -454,6 +476,10 @@ class Raft:  # pylint: disable=too-many-instance-attributes
             out.u16(len(chunk))
             for a in chunk:
                 out.u16(a.service).u16(a.management).ident(a.node_id).raw(a.key)
+            if page == 0 and balance:
+                out.u16(len(balance))
+                for service, node_id in balance:
+                    out.u16(service).ident(node_id)
             bodies.append(out.bytes())
         return bodies
 
@@ -486,6 +512,11 @@ class Raft:  # pylint: disable=too-many-instance-attributes
         chunk = []
         for _ in range(reader.u16()):
             chunk.append(Assignment(reader.u16(), reader.u16(), reader.ident(), reader.raw(32)))
+        balance: dict[int, str] = {}
+        if page == 0 and reader.remaining:
+            for _ in range(reader.u16()):
+                service = reader.u16()
+                balance[service] = reader.ident()
         if term < self.term:
             return Writer().u64(self.term).bytes()
         if term > self.term or self.role != "follower":
@@ -500,12 +531,12 @@ class Raft:  # pylint: disable=too-many-instance-attributes
             self._snapshot_pages = {key: _PendingSnapshot(last_term, pages)}
             pending = self._snapshot_pages[key]
         if voters is not None:
-            pending.voters, pending.operators = voters, operators
+            pending.voters, pending.operators, pending.balance = voters, operators, balance
         pending.parts[page] = chunk
         if pending.voters is None or len(pending.parts) < pages:
             return Writer().u64(self.term).bytes()
         del self._snapshot_pages[key]
-        snap = StateMachine(voters=dict(pending.voters))
+        snap = StateMachine(voters=dict(pending.voters), balance=dict(pending.balance))
         for role, node_id in pending.operators:
             snap.operators.setdefault(role, set()).add(node_id)
         for part in range(pages):

@@ -19,7 +19,8 @@ CONTEXT = b"USMD-NCP-v1"
 
 
 class Command(IntEnum):
-    """The twenty-one commands [6.1], Send_operators and Operate [ARCH 12.4, 12.5]."""
+    """The twenty-one commands [6.1], Send_operators and Operate [ARCH 12.4, 12.5],
+    Send_balance and Balance_status (extension, node/balance.py)."""
 
     GET_STATUS = 0x0001
     CHECK_DISTANCE_TO_NODE = 0x0002
@@ -43,6 +44,8 @@ class Command(IntEnum):
     RAFT_INSTALL_SNAPSHOT = 0x0014
     SEND_OPERATORS = 0x0015
     OPERATE = 0x0016  # [ARCH 12.5], outside the drafts
+    SEND_BALANCE = 0x0017  # extension: balance VIP owners, master -> nodes without the log
+    BALANCE_STATUS = 0x0018  # extension: owner -> instance, does it take clients
 
 
 class MessageType(IntEnum):
@@ -622,6 +625,8 @@ class RecordType(IntEnum):
     NOOP = 0x05
     ELECT_OPERATOR = 0x06
     DEPOSE_OPERATOR = 0x07
+    BALANCE_OWNER = 0x08  # extension: the node holding a service's balance VIP
+    BALANCE_RELEASE = 0x09
 
 
 @dataclass(frozen=True, slots=True)
@@ -636,7 +641,7 @@ class LogRecord:
     @classmethod
     def read(cls, reader: Reader) -> "LogRecord":
         term, kind, data = reader.u64(), reader.u8(), reader.blob()
-        expected = {1: 62, 2: 4, 3: 58, 4: 26, 5: 0, 6: 27, 7: 27}.get(kind)
+        expected = {1: 62, 2: 4, 3: 58, 4: 26, 5: 0, 6: 27, 7: 27, 8: 28, 9: 2}.get(kind)
         if expected is None or len(data) != expected:
             raise WireError("malformed Raft record")
         return cls(term, kind, data)

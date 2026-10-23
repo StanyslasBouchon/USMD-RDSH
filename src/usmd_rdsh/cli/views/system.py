@@ -117,11 +117,21 @@ class ServiceHostConfig(BaseModel):
     data_paths: list[str] = Field(
         [], description="service=path pairs: data of dynamic services (V of Tm)")
     volumes: list[str] = Field([], description="Volumes the services use (disk rate)")
+    balance_interface: str = Field(
+        "", description="Physical interface of the balance VIPs (default: the node address's)")
+
+    @field_validator("balance_interface")
+    @classmethod
+    def _interface(cls, value: str) -> str:
+        if value and (len(value) > 15 or not all(c.isalnum() or c in "._-" for c in value)):
+            raise ValueError(f"'{value}' is not an interface name")
+        return value
 
 
 @view("system service-host", model=ServiceHostConfig, **NODE_ACCESS)
 class ServiceHostView(ConfigNode):
-    """Privileges, data paths and volumes of hosted services [ARCH 6.1, 7.1, 14]."""
+    """Privileges, data paths, volumes and balance interface of hosted services
+    [ARCH 6.1, 7.1, 14]."""
 
     async def apply(self, config: ServiceHostConfig) -> None:
         node = RUNTIME.node
@@ -135,6 +145,7 @@ class ServiceHostView(ConfigNode):
             node.settings.service_data = pairs
             node.runner.run_as = config.run_as or None
             node.load.volumes = list(config.volumes) or ["/"]
+            node.settings.balance_interface = config.balance_interface
 
 
 @view("system web-interface", model=WebInterfaceConfig, **NODE_ACCESS)

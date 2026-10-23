@@ -572,6 +572,36 @@ class NcpHandlers:  # pylint: disable=too-many-public-methods
         self.set_operators(operators, term)
         return _ok(ack_body(True))
 
+    # -- Balance VIPs (extension, node/balance.py) ----------------------------------
+
+    async def _on_send_balance(self: "Node", message: Message, ip: str) -> Answer:
+        """The master's owners of the balance VIPs, for a node without the log."""
+        reader = Reader(message.body)
+        term, master = reader.u64(), reader.ident()
+        owners = {}
+        for _ in range(reader.u16()):
+            service_id = reader.u16()
+            owners[service_id] = reader.ident()
+        reader.end()
+        entry = self.tables.nodes.get(message.sender)
+        voters = set(self.raft.voters if self.raft else {}) | set(self.known_voters)
+        if entry is None or entry.record.node_id != master or not (
+                entry.record.voter or master in voters):
+            return _error(ErrorCode.VOTERS_ONLY)
+        if self.raft is not None and self.raft.is_voter:
+            return _ok(ack_body(True))  # a voter reads its own log
+        if term < self.balance_term:
+            return _ok(ack_body(False))  # from a deposed master
+        self.set_balance_owners(owners, term)
+        return _ok(ack_body(True))
+
+    async def _on_balance_status(self: "Node", message: Message, ip: str) -> Answer:
+        """The owner of a balance VIP asks whether our instance takes clients."""
+        reader = Reader(message.body)
+        service_id = reader.u16()
+        reader.end()
+        return _ok(Writer().u8(self.balance_answer(service_id)).bytes())
+
     # -- Operate [ARCH 12.5] ---------------------------------------------------------
 
     async def _on_operate(self: "Node", message: Message, ip: str) -> Answer:

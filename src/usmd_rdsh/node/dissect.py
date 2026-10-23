@@ -517,6 +517,22 @@ def _req_operators(cursor: _Cursor, item: Item) -> str:
     return f"term={term} master={master} operators={count}"
 
 
+def _req_balance(cursor: _Cursor, item: Item) -> str:
+    """Send_balance (extension): term, master, (service id, owner)*."""
+    term, _ = cursor.add_int(item, "ncp.term", 8)
+    master = cursor.add_ident(item, "ncp.node_id")[0]
+    count = int.from_bytes(cursor.take(2)[1], "big")
+    for _ in range(min(count, 256)):
+        cursor.add_int(item, "ncp.service", 2, fmt=lambda v: f"{v:03x}")
+        cursor.add_ident(item, "ncp.node_id")
+    return f"term={term} master={master} owners={count}"
+
+
+def _req_balance_status(cursor: _Cursor, item: Item) -> str:
+    service, _ = cursor.add_int(item, "ncp.service", 2, fmt=lambda v: f"{v:03x}")
+    return f"service {service:03x}"
+
+
 def _req_operate(cursor: _Cursor, item: Item) -> str:
     """[ARCH 12.5]: flags, session, target, the console JSON, credentials."""
     flags, _ = cursor.add_int(item, "ncp.operate.flags", 1, fmt=lambda v: f"0x{v:02X}")
@@ -549,6 +565,8 @@ _REQUESTS: dict[int, Callable[[_Cursor, Item], str]] = {
     Command.SEND_MUTATION_PROPERTIES: _req_mutations,
     Command.SEND_NODE_TABLE: _req_node_table,
     Command.SEND_OPERATORS: _req_operators,
+    Command.SEND_BALANCE: _req_balance,
+    Command.BALANCE_STATUS: _req_balance_status,
 }
 
 
