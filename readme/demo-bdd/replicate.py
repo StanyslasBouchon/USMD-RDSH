@@ -5,7 +5,8 @@ Every minute each instance sends the rows IT created - their identifiers
 start with its SP address, $USMD_DATA_ID_PREFIX - to the group address; the
 other instances insert them, ignoring those they hold. Identifiers of two
 instances never collide, so there is nothing to arbitrate. On start an
-instance asks the others to send their rows of the last 24 hours again.
+instance asks the others to send their rows of the last 24 hours again, and
+asks once more one and three minutes later (answers already held are ignored).
 """
 
 import json
@@ -19,6 +20,9 @@ import psycopg
 VIP, GROUP = os.environ["USMD_VIP"], os.environ["USMD_GROUP"]
 PREFIX, ME = os.environ["USMD_DATA_ID_PREFIX"], os.environ["USMD_SP_ADDRESS"]
 PORT, PERIOD, WINDOW = 7000, 60, 180  # the window overlaps: a lost datagram is resent
+# The catch-up request is sent on start and again a little later: when the
+# nodes start together, the first one may leave before SP reaches the others.
+SYNC_SPAN, SYNC_AGAIN = 86400, (60, 180)
 DSN = "host=127.0.0.1 dbname=app user=app"  # the VIP appears only once the service is hosted
 
 
@@ -84,14 +88,20 @@ def main():
     threading.Thread(target=listen, daemon=True).start()
     while True:
         try:
-            send({"sync": 86400})
+            send({"sync": SYNC_SPAN})
             break
         except OSError:
             time.sleep(2)
+    started = time.monotonic()
+    pending = list(SYNC_AGAIN)
     while True:
         time.sleep(PERIOD)
         try:
             log("sent", push(WINDOW), "own rows")
+            while pending and time.monotonic() - started >= pending[0]:
+                pending.pop(0)
+                send({"sync": SYNC_SPAN})
+                log("asked the other instances for their rows again")
         except (OSError, psycopg.Error) as exc:
             log("replication failed:", exc)
 
