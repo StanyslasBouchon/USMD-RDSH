@@ -21,7 +21,7 @@
 #   sudo bash scripts/install.sh [--source <path>] [--address <ipv4>]
 #                                [--found [--usd-label <name>]]
 #                                [--reset-config] [--import-state <dir>]
-#                                [--no-start]
+#                                [--python <exe>] [--no-start]
 #
 #   --source <path>      Source directory (default: this repository)
 #   --address <ipv4>     The node's IPv4 address (default: auto, the outbound one)
@@ -35,6 +35,8 @@
 #                        terminal, state in <dir>, e.g. /home/me/.usmd): its
 #                        identity, USD, tokens, tables and configuration become
 #                        the service's. Stop that node first ('exit').
+#   --python <exe>       Python >= 3.13 to use (default: the system's, else the
+#                        standalone one an scp bundle installed); not under /home
 #   --no-start           Install without starting the service
 #
 # Run again to upgrade: the package, the service and the console command are
@@ -67,6 +69,7 @@ RESET_CONFIG=false
 ADDRESS="auto"
 USD_LABEL="usd"
 IMPORT_STATE=""
+PYTHON=""
 
 INSTALL_DIR="/opt/usmd"
 VENV_DIR="${INSTALL_DIR}/venv"
@@ -97,6 +100,7 @@ while [[ $# -gt 0 ]]; do
         --reset-config) RESET_CONFIG=true; shift ;;
         --import-state) IMPORT_STATE="$(realpath "$2")"; shift 2 ;;
         --no-start)     NO_START=true; shift ;;
+        --python)       PYTHON="$2"; shift 2 ;;
         -h|--help)
             sed -n '/^# Usage/,/^# ===/p' "$0" | head -n -1 | sed 's/^# \?//'
             exit 0
@@ -152,21 +156,40 @@ if [[ -n "${IMPORT_STATE}" ]]; then
     fi
 fi
 
-# Find Python 3.11+
-PYTHON=""
-for candidate in python3.14 python3.13 python3; do
-    if command -v "$candidate" &>/dev/null; then
-        ver=$("$candidate" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
-        major="${ver%%.*}"
-        minor="${ver#*.}"
-        if [[ $major -ge 3 && $minor -ge 13 ]]; then
+# Find Python 3.13+: --python, the system's, or the standalone one an scp
+# bundle (scripts/package.py --with-python) left, copied where the service can
+# read it (it cannot see /home).
+python_ok() { "$1" -c 'import sys; sys.exit(sys.version_info < (3, 13))' 2>/dev/null; }
+SUDO_HOME=""
+[[ -n "${SUDO_USER:-}" ]] && SUDO_HOME="$(getent passwd "${SUDO_USER}" | cut -d: -f6)"
+if [[ -n "${PYTHON}" ]]; then
+    python_ok "${PYTHON}" || die "--python: '${PYTHON}' is not Python >= ${PYTHON_MIN}."
+    case "$(realpath "$(command -v "${PYTHON}")")" in
+        /home/*|/root/*) die "--python: the service cannot read /home or /root; use a Python installed elsewhere." ;;
+    esac
+else
+    for candidate in python3.14 python3.13 python3; do
+        if command -v "$candidate" &>/dev/null && python_ok "$candidate"; then
             PYTHON="$candidate"
             break
         fi
+    done
+    if [[ -z "${PYTHON}" ]]; then
+        for standalone in /opt/usmd-rdsh/python ${SUDO_HOME:+"${SUDO_HOME}/.local/share/usmd-rdsh/python"}; do
+            if [[ -x "${standalone}/bin/python3" ]] && python_ok "${standalone}/bin/python3"; then
+                info "Using the standalone Python of the scp bundle (${standalone}), copied to ${INSTALL_DIR}/python"
+                install -d -m 755 "${INSTALL_DIR}"
+                rm -rf "${INSTALL_DIR}/python"
+                cp -a "${standalone}" "${INSTALL_DIR}/python"
+                PYTHON="${INSTALL_DIR}/python/bin/python3"
+                break
+            fi
+        done
     fi
-done
-[[ -n "$PYTHON" ]] || die "Python >= ${PYTHON_MIN} is required but was not found."
-info "Python detected: $("$PYTHON" --version)"
+fi
+[[ -n "$PYTHON" ]] || die "Python >= ${PYTHON_MIN} is required but was not found: install it, or pass" \
+    "--python <exe> (outside /home), or install once from a bundle built with --with-python."
+info "Python detected: $("$PYTHON" --version) ($(command -v "$PYTHON"))"
 
 # ---------------------------------------------------------------------------
 # System user creation
@@ -205,7 +228,8 @@ if systemctl is-active --quiet usmd.service; then
 fi
 
 info "Creating virtualenv in '${VENV_DIR}'..."
-"$PYTHON" -m venv "${VENV_DIR}"
+# --clear: the virtualenv follows the Python chosen above, even on an upgrade.
+"$PYTHON" -m venv --clear "${VENV_DIR}" || die "venv creation failed (Debian/Ubuntu: apt install python3-venv)."
 
 info "Upgrading pip..."
 "${VENV_DIR}/bin/pip" install --quiet --upgrade pip
@@ -382,6 +406,9 @@ success "systemd service written: ${SERVICE_FILE}"
 # Console command
 # ---------------------------------------------------------------------------
 info "Installing the console command ${COMMAND_FILE}..."
+# An scp bundle installed as root left a link here into its own virtualenv:
+# replace the link, never write through it.
+rm -f "${COMMAND_FILE}"
 cat > "${COMMAND_FILE}" <<EOF
 #!/bin/sh
 # The console of the USMD-RDSH node running on this machine (usmd.service).
@@ -391,6 +418,16 @@ cat > "${COMMAND_FILE}" <<EOF
 USMD_ATTACH_ONLY=1 exec ${VENV_DIR}/bin/python -m usmd_rdsh "\$@"
 EOF
 chmod 755 "${COMMAND_FILE}"
+
+# An scp bundle installed without root linked 'usmd' into ~/.local/bin, which
+# comes first in PATH: typed there, it would start a second node on the old
+# state, beside the service. Set it aside so 'usmd' is the service's console.
+if [[ -n "${SUDO_HOME}" && -L "${SUDO_HOME}/.local/bin/usmd" ]] \
+        && [[ "$(readlink "${SUDO_HOME}/.local/bin/usmd")" == *"/.local/share/usmd-rdsh/"* ]]; then
+    mv "${SUDO_HOME}/.local/bin/usmd" "${SUDO_HOME}/.local/bin/usmd.before-service"
+    warn "~${SUDO_USER}/.local/bin/usmd (the scp bundle's, which starts a node by hand) renamed" \
+         "usmd.before-service: 'usmd' is now the console of the service."
+fi
 
 # The administrator who ran the installer may use the console without sudo.
 if [[ -n "${SUDO_USER:-}" && "${SUDO_USER}" != "root" ]]; then
