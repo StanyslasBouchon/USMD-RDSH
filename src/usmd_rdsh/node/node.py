@@ -64,7 +64,7 @@ from usmd_rdsh.node.services import (
     parse_service_file,
     write_files,
 )
-from usmd_rdsh.node.signed import SignedConfig, parameter
+from usmd_rdsh.node.signed import SignedConfig, is_retired, parameter
 from usmd_rdsh.node.sp.engine import CatalogService, Peer, SpEngine
 from usmd_rdsh.node.states import State
 from usmd_rdsh.node.tables import Tables
@@ -358,6 +358,13 @@ class Node(NcpHandlers):  # pylint: disable=too-many-instance-attributes,too-man
         mutation = self.mutation
         if not mutation or mutation not in self.signed.mutations:
             return False
+        if is_retired(self.signed.mutations[mutation]):
+            # Retired while this node was stopped: its services stopped with it.
+            self.mutation = ""
+            self.publish_record()
+            self.event(f"Mutation {mutation} was retired by the authority while this node "
+                       "was stopped: not resumed", logging.WARNING)
+            return False
         waited = 0.0
         while self.state != State.ACTIVE:
             if waited >= wait_s or self.mutation != mutation:
@@ -582,7 +589,7 @@ class Node(NcpHandlers):  # pylint: disable=too-many-instance-attributes,too-man
         if self.node_id not in entry.record.reference_nodes:
             return
         mutation = entry.record.mutation
-        props = self.signed.mutations.get(mutation)
+        props = self.signed.in_force().get(mutation)
         if props is None or self.instance_count(mutation) >= max(props.min_instances, 1):
             return
         if self._can_take(0, mutation):
@@ -1618,6 +1625,8 @@ class Node(NcpHandlers):  # pylint: disable=too-many-instance-attributes,too-man
         props = self.signed.mutations.get(mutation) if mutation else None
         if mutation and props is None:
             raise ValueError(f"unknown mutation '{mutation}'")
+        if props is not None and is_retired(props):
+            raise ValueError(f"mutation '{mutation}' was retired by the authority")
         if not (self.state == State.ACTIVE or self.state.inactive):
             raise ValueError(f"no transmutation from {self.state.name} [ARCH 5.6]")
         if props is not None:
@@ -1688,14 +1697,36 @@ class Node(NcpHandlers):  # pylint: disable=too-many-instance-attributes,too-man
         return self.state_dir.path("service-files", name)
 
     def sequence_environment(self, spec: ServiceSpec, sequence: str) -> dict[str, str] | None:
-        """The runner's environment: the service's files in place, then its variables."""
+        """The runner's environment: the service's files in place, then its variables.
+
+        Without an SP address (the service left the catalogue, no management
+        id yet) build, update and check_health are refused; unbuild and
+        emergency still get the variables that do not depend on it, so that
+        a service can always be stopped cleanly [ARCH-03 8.7].
+        """
         env = self.service_environment(spec, sequence)
-        if env is not None or sequence not in ("build", "update", "check_health"):
+        if env is None and sequence not in ("build", "update", "check_health"):
+            env = self.local_environment(spec, sequence)
+        if env is not None:
             try:
                 write_files(self.service_files_dir(spec.name), spec.files)
             except OSError as exc:
                 self.event(f"Files of {spec.name} could not be written: {exc}", logging.ERROR)
         return env
+
+    def local_environment(self, spec: ServiceSpec, sequence: str) -> dict[str, str]:
+        """The ``USMD_*`` variables that exist without an SP address."""
+        data = self.service_data_dir(spec.name)
+        data.mkdir(parents=True, exist_ok=True)
+        return {
+            "USMD_SERVICE": spec.name,
+            "USMD_USDN": self.signed.usd.usdn if self.signed.usd else "",
+            "USMD_NODE_ID": self.node_id,
+            "USMD_MUTATION": self.mutation,
+            "USMD_SEQUENCE": sequence,
+            "USMD_DATA_DIR": str(data.resolve()),
+            "USMD_FILES_DIR": str(self.service_files_dir(spec.name).resolve()),
+        }
 
     def service_environment(self, spec: ServiceSpec, sequence: str) -> dict[str, str] | None:
         """The ``USMD_*`` variables of a sequence; None without an SP address
@@ -1759,13 +1790,46 @@ class Node(NcpHandlers):  # pylint: disable=too-many-instance-attributes,too-man
         """[ARCH 8.5]: a host runs ``update`` then ``check_health`` on the new
         version before keeping (and propagating) it. On failure the previous
         version is put back and rebuilt; if that fails too, 0x3304."""
-        if mutation != self.mutation or previous is None:
+        if mutation != self.mutation:
+            return True
+        current = self.signed.mutations.get(mutation)
+        if current is not None and is_retired(current):
+            await self.leave_retired_mutation(previous)
+            return True
+        if previous is None:
             return True
         self.updating[mutation] = previous  # pushed instead of the new one meanwhile
         try:
             return await self._run_update(mutation, previous)
         finally:
             self.updating.pop(mutation, None)
+
+    async def leave_retired_mutation(self, previous: MutationProperties | None) -> None:
+        """The authority retired this node's mutation: the services it ran are
+        unbuilt (from the version they were built with), the node holds no
+        mutation and stays Active - nothing failed, nothing to hand over."""
+        mutation = self.mutation
+        specs: list[ServiceSpec] = []
+        if previous is not None and not is_retired(previous):
+            try:
+                specs = dependency_order(parse_service_file(previous.service_file))
+            except ValueError:
+                specs = []
+        for spec in reversed(specs):
+            await self.runner.run(spec, "unbuild")
+            self._withdraw(spec.name)
+        for service_id in self.hosted:  # services the catalogue no longer names
+            if service_id in self.management and self.nndp:
+                self.nndp.services.withdraw_local(addresses.pack(service_id,
+                                                                 self.management[service_id]))
+        if self.hosted and self.nndp:
+            self.nndp.trigger()
+        self.hosted.clear()
+        self.mutation = ""
+        self.publish_record()
+        self.refresh_interface()
+        self.event(f"Mutation {mutation} retired by the authority: its services were unbuilt",
+                   logging.WARNING)
 
     async def _run_update(self, mutation: str, previous: MutationProperties) -> bool:
         updated = []

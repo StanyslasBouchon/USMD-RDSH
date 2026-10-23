@@ -77,7 +77,7 @@ class TransmuteInput(BaseModel):
         permissions=[WRITE], cli_confirm="Transmute this node to '{mutation}'?")
 async def execute_node_transmute(data: TransmuteInput) -> dict:
     node = _node()
-    if data.mutation and data.mutation not in node.signed.mutations:
+    if data.mutation and data.mutation not in node.signed.in_force():
         raise SdkError(f"no mutation '{data.mutation}' in force")
     try:
         ok = await node.transmute(data.mutation, reason="administrator")

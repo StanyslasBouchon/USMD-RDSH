@@ -39,7 +39,7 @@ from usmd_rdsh.node.services import (
     load_yaml_stream,
     parse_service_file,
 )
-from usmd_rdsh.node.signed import USD_PARAMETERS
+from usmd_rdsh.node.signed import USD_PARAMETERS, is_retired
 from usmd_rdsh.node.wire import WireError, is_ulid, now_ms
 
 log = logging.getLogger("usmd_rdsh.cli")
@@ -295,10 +295,11 @@ class AuthorityBridge:
         if usd is not None and (node.signed.usd is None and _non_default_usd(usd)
                                 or node.signed.usd is not None and _changed(node.signed.usd, usd)):
             return True
-        held = node.signed.mutations
-        if {m.name for m in mutations} != set(held):
-            return bool(mutations) or bool(held)
-        return any(_mutation_differs(held[m.name], m) for m in mutations)
+        held = node.signed.in_force()
+        built = [m for m in mutations if not is_retired(m)]
+        if {m.name for m in built} != set(held):
+            return True
+        return any(_mutation_differs(held[m.name], m) for m in built)
 
     # -- tree -> signed objects ------------------------------------------------
 
@@ -334,11 +335,19 @@ class AuthorityBridge:
                     parameters[code] = int(value)
             usd = UsdProperties(usd_name, 0, usd_key, areas, catalog, parameters,
                                 label=usd_cfg.label)
+        for name, m in mutations_cfg.items():
+            if not m.services:
+                raise ValueError(f"mutation '{name}' runs no service: give it one, or delete it "
+                                 "to retire it [ARCH 8]")
         mutations = [
             MutationProperties(name, 0, m.average_transmutation * 1000, m.min_instances,
                                m.max_instances, _service_file(m.services, services_cfg))
             for name, m in sorted(mutations_cfg.items())
         ]
+        # A mutation in force that the tree no longer holds is retired: a newer
+        # version with no service, so that its hosts unbuild what it ran.
+        for name in sorted(set(node.signed.in_force()) - set(mutations_cfg)):
+            mutations.append(MutationProperties(name, 0, 0, 0, 0, b""))
         return usc, usd, mutations
 
 
@@ -533,7 +542,7 @@ def reflect() -> None:
                 doc.set_field(("service",), field_name, value, key=entry.name)
     if signed.mutations:
         doc.purge(("mutation",))
-        for name, props in signed.mutations.items():
+        for name, props in signed.in_force().items():  # a retired mutation is gone
             values = {"name": name, "services": signed.mutation_services(name),
                       "min_instances": props.min_instances, "max_instances": props.max_instances,
                       "average_transmutation": props.average_transmutation_ms // 1000}

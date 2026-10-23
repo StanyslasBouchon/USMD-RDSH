@@ -61,6 +61,14 @@ def check_ranges(usd: UsdProperties) -> None:
         raise WireError("X (0x0003) cannot exceed NNR (0x0001)")
 
 
+def is_retired(mutation: MutationProperties) -> bool:
+    """A mutation the authority withdrew: a newer version signed with no service
+    at all (an empty service file). It stays held so that the newer version
+    keeps going round and every host unbuilds what it ran; nothing else uses it.
+    A mutation in force runs at least one service (the authority refuses less)."""
+    return not mutation.service_file.strip()
+
+
 @dataclass
 class SignedConfig:
     """What this node applies; only the authority can change it."""
@@ -97,6 +105,10 @@ class SignedConfig:
         return True
 
     # -- derived views --------------------------------------------------------------
+
+    def in_force(self) -> dict[str, MutationProperties]:
+        """The mutations a node may hold: those the authority has not retired."""
+        return {name: m for name, m in self.mutations.items() if not is_retired(m)}
 
     def areas(self) -> dict[int, ipaddress.IPv4Network]:
         if self.usd is None:

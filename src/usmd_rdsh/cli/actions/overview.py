@@ -81,7 +81,7 @@ async def show_tables() -> list[dict]:
         ("Master assignments", len(raft.state.assignments) if raft else 0,
          "show usd assignments", "ARCH 12"),
         ("Service catalogue", len(node.signed.catalog()), "show service catalog", "ARCH 11.1"),
-        ("Mutations", len(node.signed.mutations), "show mutation status", "ARCH 8"),
+        ("Mutations", len(node.signed.in_force()), "show mutation status", "ARCH 8"),
         ("Log buffer", len(RUNTIME.logbuffer.messages()), "show logging", "-"),
     ]
     return [{"table": t, "entries": n, "command": c, "reference": r} for t, n, c, r in rows]

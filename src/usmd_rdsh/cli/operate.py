@@ -426,7 +426,7 @@ def _values(kind: str) -> list[tuple[str, str]]:
         return usds + [(u, "another USD of the USC") for u in FLEET.other_usds()
                        if FLEET.scope() == "usc"]
     if kind == "mutation":
-        return [(name, "mutation") for name in sorted(node.signed.mutations)]
+        return [(name, "mutation") for name in sorted(node.signed.in_force())]
     if kind == "area":
         usd = node.signed.usd
         return [(a.name, f"area {a.area_id}") for a in usd.areas] if usd else []

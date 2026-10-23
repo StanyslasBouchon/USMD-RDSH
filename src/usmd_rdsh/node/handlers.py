@@ -188,7 +188,7 @@ class NcpHandlers:  # pylint: disable=too-many-public-methods
         estimate = requester_load // 2
         if self.load.reference + estimate >= weak:
             return False
-        props = self.signed.mutations.get(mutation)
+        props = self.signed.in_force().get(mutation)  # never a retired one
         if props is None:
             return False
         if props.max_instances and self.instance_count(mutation) >= props.max_instances:

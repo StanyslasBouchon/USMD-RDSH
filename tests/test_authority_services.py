@@ -325,6 +325,46 @@ def test_nodes_heard_active_are_measured_before_their_records_say_so(authority_n
         node.nndp = None
 
 
+def test_a_deleted_mutation_is_retired_and_its_hosts_unbuild(authority_node, tmp_path):
+    """Deleting a mutation signs it empty: hosts unbuild (with their variables,
+    even without an SP address), drop it, and nobody can take it again."""
+    import sys  # pylint: disable=import-outside-toplevel
+
+    import yaml  # pylint: disable=import-outside-toplevel
+
+    from usmd_rdsh.node.signed import is_retired  # pylint: disable=import-outside-toplevel
+    from usmd_rdsh.node.states import State  # pylint: disable=import-outside-toplevel
+
+    marker = tmp_path / "mark.py"
+    marker.write_text("import os, pathlib, sys\n"
+                      "pathlib.Path(os.environ['USMD_DATA_DIR'], sys.argv[1]).touch()\n")
+    service_file = tmp_path / "web.yaml"
+    service_file.write_text(yaml.safe_dump({
+        "name": "web", "unbuild": [{"command": f'"{sys.executable}" "{marker}" unbuilt'}]}))
+    services = {"web": ServiceConfig(name="web", id="0a1", area="front", vip="10.80.0.10",
+                                     service_file=str(service_file))}
+    _commit(services=services)
+    node = authority_node
+    node.settings.address = "192.168.1.11"
+    node.mutation = "frontal"
+    node.hosted.add(0x0A1)
+    node.set_state(State.ACTIVE, reason="test", force=True)
+    previous = node.signed.mutations["frontal"]
+
+    with pytest.raises(ValueError, match="runs no service"):
+        _commit(services=services,
+                mutations={"frontal": MutationConfig(name="frontal", services=[])})
+    _commit(services=services, mutations={})
+    assert is_retired(node.signed.mutations["frontal"]) and node.signed.in_force() == {}
+    assert not node.management  # no management id: the SP address is unknown
+    assert asyncio.run(node.apply_mutation_update("frontal", previous))
+    assert (node.service_data_dir("web") / "unbuilt").exists()
+    assert node.mutation == "" and not node.hosted and node.state == State.ACTIVE
+    with pytest.raises(ValueError, match="retired"):
+        asyncio.run(node.transmute("frontal"))
+    _commit(services=services, mutations={})  # retired once: nothing more to sign
+
+
 def test_service_file_names_and_sizes_are_checked():
     with pytest.raises(ValueError, match="not a file name"):
         parse_service_file("name: web\nfiles:\n  ../etc/passwd: aGk=\n")
