@@ -1,0 +1,27 @@
+# Service file of "pg" (config service / edit pg / service-file).
+# Attach with it (files): pg.sh, pg.env.
+# vip: a free address of the nodes' physical network, outside the DHCP range.
+name: pg
+type: dynamic
+expose: {port: 5432, protocol: tcp}
+balance: {vip: 172.27.191.240/20, port: 5432, vlan: 0, mode: snat}
+build:
+  - command: '"$USMD_FILES_DIR/pg.sh" start'
+    timeout: 900          # a replica copies the primary first
+check_health:
+  - command: '"$USMD_FILES_DIR/pg.sh" check'
+    timeout: 30
+probe:                    # exit 0 on the primary: the VIP sends clients there
+  - command: '"$USMD_FILES_DIR/pg.sh" probe'
+    timeout: 10
+peers_changed:            # follow a new primary at once, not at the next check
+  - command: '"$USMD_FILES_DIR/pg.sh" check || true'
+    timeout: 60
+unbuild:
+  - command: '"$USMD_FILES_DIR/pg.sh" stop'
+    timeout: 120
+update:                   # new pg.env or pg.sh signed: passwords, settings
+  - command: '"$USMD_FILES_DIR/pg.sh" start'
+    timeout: 900
+emergency:
+  - action: unbuild
