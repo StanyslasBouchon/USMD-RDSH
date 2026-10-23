@@ -256,3 +256,89 @@ def test_data_id_commands(factory):
     assert "not a USMD-RDSH data identifier" in out
     assert "node is not running" in out
     assert "Traceback" not in out
+
+
+def test_question_mark_lists_what_may_follow(factory):
+    """'?' as on IOS: bare, after a word, inside a word; actions included."""
+    root = _run(factory, "?")
+    assert "execute" in root and "show" in root and "config" in root
+    after_show = _run(factory, "show ?")
+    assert "logging" in after_show and "data-id" in after_show and "protocol" in after_show
+    assert after_show.count("  |") == 1  # both trees offer the pipe: listed once
+    assert "transmute" in _run(factory, "execute node tr?")
+    assert "level=" in _run(factory, "show logging ?")
+    assert "<cr>" in _run(factory, "show version ?")
+    assert "<cr>" not in _run(factory, "show data-id ?")  # id= is required
+    assert "Unrecognized command" in _run(factory, "frobnicate?")
+    assert "Traceback" not in root + after_show
+
+
+def test_completion_lends_the_operator_only_while_completing(factory):
+    from nan_actions import access  # pylint: disable=import-outside-toplevel
+
+    before = access._actor_fallback  # pylint: disable=protected-access
+    values = [c["value"] for c in factory.console().completions("execute node ")]
+    assert "transmute" in values
+    assert access._actor_fallback is before  # pylint: disable=protected-access
+
+
+def test_web_completion_follows_the_token_profile(factory):
+    monitor = RUNTIME.tokens.mint("mon", "monitor").plaintext
+    admin = RUNTIME.tokens.mint("adm", "admin").plaintext
+    router = _router(factory)
+
+    def complete(token, text):
+        body = json.dumps({"text": text}).encode()
+        response = asyncio.run(router.handle(
+            "POST", "/web/complete", {"Authorization": f"Bearer {token}"}, body))
+        return [c["value"] for c in response.body["candidates"]]
+
+    assert "execute" in complete(admin, "") and "logging" in complete(admin, "show ")
+    assert "transmute" in complete(admin, "execute node ")
+    assert "transmute" not in complete(monitor, "execute node ")
+    unauthenticated = asyncio.run(router.handle("POST", "/web/complete", {}, b"{}"))
+    assert unauthenticated.status == 401
+
+
+def test_local_console_keys(factory, monkeypatch):
+    """Tab and '?' at the local prompt: the operator's completer, and a '?'
+    that prints the candidates and keeps the line (inside quotes: a character)."""
+    from types import SimpleNamespace  # pylint: disable=import-outside-toplevel
+
+    from prompt_toolkit.buffer import Buffer  # pylint: disable=import-outside-toplevel
+    from prompt_toolkit.completion import CompleteEvent  # pylint: disable=import-outside-toplevel
+    from prompt_toolkit.document import Document  # pylint: disable=import-outside-toplevel
+
+    from usmd_rdsh.cli import shell as shell_module  # pylint: disable=import-outside-toplevel
+
+    shell = factory.console()
+    completer = shell_module._OperatorCompleter(  # pylint: disable=protected-access
+        shell._registry, shell._views, shell._actor_factory)  # pylint: disable=protected-access
+    found = [c.text for c in completer.get_completions(Document("execute node tr"), CompleteEvent())]
+    assert found == ["transmute"]
+
+    monkeypatch.setattr(shell_module, "run_in_terminal", lambda job: job())
+    bindings = shell_module._key_bindings(shell).get_bindings_for_keys(("?",))  # pylint: disable=protected-access
+    question = bindings[-1].handler  # prompt_toolkit runs the last match
+
+    def press(text):
+        buffer = Buffer(document=Document(text))
+        printed = []
+        monkeypatch.setattr("builtins.print", lambda *a, **k: printed.append(" ".join(map(str, a))))
+        out = _run_key(question, buffer)
+        return buffer.text, printed, out
+
+    def _run_key(handler, buffer):
+        lines = []
+        from nan_runtime.log import reset_log_sink, set_log_sink  # pylint: disable=import-outside-toplevel
+        token = set_log_sink(lines.append)
+        try:
+            handler(SimpleNamespace(app=SimpleNamespace(current_buffer=buffer)))
+        finally:
+            reset_log_sink(token)
+        return "\n".join(lines)
+
+    text, echoed, out = press("show ")
+    assert text == "show " and echoed[0].endswith("show ?") and "logging" in out
+    text, _, out = press('set banner "why')
+    assert text == 'set banner "why?' and out == ""

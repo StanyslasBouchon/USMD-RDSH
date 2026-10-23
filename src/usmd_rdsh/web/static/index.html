@@ -702,7 +702,7 @@ body.readonly .write-only { display: none !important; }
             <button class="btn primary sm" id="run" type="submit">Exécuter<svg class="i sm"><use href="#i-enter"/></svg></button>
           </form>
         </div>
-        <p class="muted" style="margin-top:10px;font-size:12.5px">Mêmes commandes et mêmes droits que la console locale. <kbd>↑</kbd> <kbd>↓</kbd> pour l'historique.</p>
+        <p class="muted" style="margin-top:10px;font-size:12.5px">Mêmes commandes et mêmes droits que la console locale. <kbd>Tab</kbd> complète, <kbd>?</kbd> liste ce qui peut suivre, <kbd>↑</kbd> <kbd>↓</kbd> pour l'historique.</p>
       </section>
     </div>
   </div>
@@ -1725,7 +1725,42 @@ $("term-form").addEventListener("submit", e => { e.preventDefault(); submit(); }
 $("term-clear").onclick = () => { $("term").innerHTML = ""; $("cmd").focus(); };
 $("term-copy").onclick = () => copyText($("term").innerText);
 $("term").addEventListener("click", () => { if (!getSelection().toString()) $("cmd").focus(); });
+// Tab completes, "?" lists what may be typed here, as on the local console.
+// Both go through the queue, after any line still running.
+const inQuotes = t => (t.match(/"/g) || []).length % 2 === 1;
+async function complete() {
+  const inp = $("cmd"), at = inp.selectionStart, before = inp.value.slice(0, at);
+  let r;
+  try { r = await call("POST", "/web/complete", { text: before }); }
+  catch (e) { if (e.message !== "401") termWrite(e.message, "err"); return; }
+  const found = r.candidates;
+  if (!found.length) return;
+  const start = at + Number(found[0].start);
+  const typed = inp.value.slice(start, at);
+  let insert = found[0].value;
+  if (found.length > 1) {
+    insert = found.map(c => c.value).reduce((a, b) => { let i = 0; while (i < a.length && a[i] === b[i]) i++; return a.slice(0, i); });
+    if (insert.length <= typed.length) {
+      termWrite($("prompt").textContent + before, "cmd");
+      const width = Math.max(...found.map(c => c.display.length));
+      for (const c of found) termWrite(`  ${c.display.padEnd(width)}  ${c.description}`.trimEnd());
+      return;
+    }
+  } else if (!/[= ]$/.test(insert)) insert += " ";
+  inp.value = inp.value.slice(0, start) + insert + inp.value.slice(at);
+  inp.selectionStart = inp.selectionEnd = start + insert.length;
+}
+async function ask() {
+  const before = $("cmd").value.slice(0, $("cmd").selectionStart);
+  termWrite($("prompt").textContent + before + "?", "cmd");
+  try {
+    const r = await call("POST", "/web/cli", { line: before + "?" });
+    for (const out of r.output) termWrite(out, /^%|✗/.test(out) ? "err" : "");
+  } catch (e) { if (e.message !== "401") termWrite(e.message, "err"); }
+}
 $("cmd").addEventListener("keydown", e => {
+  if (e.key === "Tab" && !e.shiftKey && !e.ctrlKey && !e.altKey) { e.preventDefault(); queue = queue.then(complete); return; }
+  if (e.key === "?" && !inQuotes($("cmd").value.slice(0, $("cmd").selectionStart))) { e.preventDefault(); queue = queue.then(ask); return; }
   if (e.key === "ArrowUp" && historyAt > 0) { $("cmd").value = cmdHistory[--historyAt]; e.preventDefault(); }
   else if (e.key === "ArrowDown") { historyAt = Math.min(cmdHistory.length, historyAt + 1);
     $("cmd").value = cmdHistory[historyAt] || ""; e.preventDefault(); }

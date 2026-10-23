@@ -4,6 +4,8 @@
     GET  /static/capture.js      its Capture tab (packet list, field tree, bytes)
     *    /api/v1/...             nan_actions' token API: every action, as JSON
     POST /web/cli                one console line, run as the token's holder
+                                 (a line ending in ``?`` lists what may follow)
+    POST /web/complete           Tab: candidates for the text before the cursor
     GET  /web/summary            everything the dashboard draws, in one call
     GET  /web/capture            captured frames after ``since`` matching ``filter``;
                                  ``wait`` seconds of long poll for new ones
@@ -150,6 +152,8 @@ class WebRouter:
                 return await self._summary(actor)
             if route == "/web/cli" and method == "POST":
                 return await self._cli(actor, body)
+            if route == "/web/complete" and method == "POST":
+                return self._complete(actor, body)
             if route == "/web/config" and method == "GET":
                 return ApiResponse(200, {**config_forms.schema(actor),
                                          "can_write": action_is_available([WRITE], actor)})
@@ -304,6 +308,16 @@ class WebRouter:
                  f" [{request.get('key')}]" if request.get("key") else "",
                  "committed" if result["ok"] else "refused")
         return ApiResponse(200 if result["ok"] else 422, result)
+
+    def _complete(self, actor: ActionActor, body: bytes) -> ApiResponse:
+        """Tab in the web console: what may follow the text before the cursor."""
+        try:
+            text = str(json.loads(body or b"{}").get("text", ""))
+        except (json.JSONDecodeError, AttributeError):
+            return ApiResponse.error(400, "bad_request", 'Send {"text": "<line>"}.')
+        if "\n" in text or len(text) > 4096:
+            return ApiResponse.error(400, "bad_request", "One line, at most 4096 characters.")
+        return ApiResponse(200, {"candidates": self._shells.shell_for(actor).completions(text)})
 
     async def _cli(self, actor: ActionActor, body: bytes) -> ApiResponse:
         try:
