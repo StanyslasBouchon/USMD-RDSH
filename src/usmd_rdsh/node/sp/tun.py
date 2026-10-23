@@ -6,7 +6,12 @@ the node to itself, joins the hosted group addresses with a route to
 
     Linux    /dev/net/tun (IFF_TUN | IFF_NO_PI), configured with ``ip``;
              needs CAP_NET_ADMIN. VIPs are never answered by ARP on physical
-             interfaces: arp_ignore=1 / arp_announce=2 are set.
+             interfaces: arp_ignore=1 / arp_announce=2 are set. The SP
+             interface accepts packets whose source is one of our own
+             addresses (accept_local=1, rp_filter=0, on it only): every
+             instance of a service holds the same VIP, so what another
+             instance sends from it, to the group address, arrives with our
+             VIP as its source, which Linux otherwise drops as a martian.
     Windows  Wintun (wintun.dll next to the program or on PATH), configured
              with ``netsh``; needs administrator rights.
     other    an in-memory interface: packets written are kept, nothing is
@@ -92,6 +97,21 @@ def _run(*command: str) -> None:
     subprocess.run(command, check=False, capture_output=True)
 
 
+def _set_interface_knob(knob: str, value: str, *, root: str = "/proc/sys/net/ipv4/conf") -> bool:
+    """One IPv4 setting of the SP interface; a failure is said, not ignored:
+    without accept_local the instances of a service never hear each other."""
+    path = os.path.join(root, NAME, knob)
+    try:
+        with open(path, "w", encoding="ascii") as setting:
+            setting.write(value)
+        return True
+    except OSError as exc:
+        log.error("[SP] Could not set %s=%s on %s (%s): the instances of a service will "
+                  "not receive what the others send to its group address", knob, value, NAME,
+                  exc.strerror or exc)
+        return False
+
+
 class LinuxTun(MemoryTun):
     """/dev/net/tun."""
 
@@ -109,6 +129,8 @@ class LinuxTun(MemoryTun):
         _run("ip", "link", "set", NAME, "mtu", str(mtu), "up")
         for knob, value in (("arp_ignore", "1"), ("arp_announce", "2")):
             _run("sysctl", "-w", f"net.ipv4.conf.all.{knob}={value}")
+        for knob, value in (("accept_local", "1"), ("rp_filter", "0")):
+            _set_interface_knob(knob, value)
         self._applied: tuple[list[str], list[str], list[str]] = ([], [], [])
         self._memberships = Memberships()
         self._ifindex = socket.if_nametoindex(NAME)

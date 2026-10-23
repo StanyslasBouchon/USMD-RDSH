@@ -98,3 +98,15 @@ def test_replay_window_accepts_out_of_order_inside_2048():
     assert not window.check(3) or 4000 - 3 >= 2048
     assert window.check(4000 - 100) and not window.check(4000)
     assert not window.check(4000 - 2048)
+
+
+def test_sp_interface_accepts_the_shared_vip_as_source(tmp_path, caplog):
+    """Every instance of a service holds the same VIP: the SP interface must
+    accept packets from it (accept_local), or the group address reaches no one."""
+    from usmd_rdsh.node.sp import tun  # pylint: disable=import-outside-toplevel
+
+    (tmp_path / tun.NAME).mkdir()
+    assert tun._set_interface_knob("accept_local", "1", root=str(tmp_path))  # pylint: disable=protected-access
+    assert (tmp_path / tun.NAME / "accept_local").read_text() == "1"
+    assert not tun._set_interface_knob("rp_filter", "0", root=str(tmp_path / "absent"))  # pylint: disable=protected-access
+    assert "will not receive what the others send" in caplog.text
