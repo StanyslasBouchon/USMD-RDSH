@@ -12,7 +12,8 @@
 #   --prefix <dir>   Virtualenv location parent
 #                    (root: /opt/usmd-rdsh, otherwise ~/.local/share/usmd-rdsh)
 #   --bin <dir>      Where to link `usmd` (root: /usr/local/bin, otherwise ~/.local/bin)
-#   --python <exe>   Python >= 3.13 to use (default: first found)
+#   --python <exe>   Python >= 3.13 to use (default: the bundle's own Python when
+#                    built with --with-python, otherwise the first one found)
 # =============================================================================
 
 set -euo pipefail
@@ -55,8 +56,15 @@ python_ok() {
     "$1" -c 'import sys; sys.exit(sys.version_info < (3, 13))' 2>/dev/null
 }
 
+mkdir -p "${PREFIX}"
 if [[ -n "$PYTHON" ]]; then
     python_ok "$PYTHON" || die "'$PYTHON' is not Python >= 3.13."
+elif [[ -f "${HERE}/python.tar.gz" ]]; then
+    info "Installing the bundled Python in ${PREFIX}/python..."
+    rm -rf "${PREFIX}/python"
+    tar xzf "${HERE}/python.tar.gz" -C "${PREFIX}"
+    PYTHON="${PREFIX}/python/bin/python3"
+    python_ok "$PYTHON" || die "The bundled Python does not run on this machine."
 else
     for candidate in python3.14 python3.13 python3; do
         if command -v "$candidate" &>/dev/null && python_ok "$candidate"; then
@@ -64,14 +72,15 @@ else
             break
         fi
     done
-    [[ -n "$PYTHON" ]] || die "Python >= 3.13 is required but was not found (use --python)."
+    [[ -n "$PYTHON" ]] || die "Python >= 3.13 is required but was not found. Use --python," \
+        "or rebuild the bundle with: python scripts/package.py --offline --with-python"
 fi
 info "Python: $("$PYTHON" --version) ($(command -v "$PYTHON"))"
 
 VENV="${PREFIX}/venv"
 info "Virtualenv: ${VENV}"
-mkdir -p "${PREFIX}"
-"$PYTHON" -m venv "${VENV}" \
+# --clear: the virtualenv follows the Python chosen above, even on an upgrade.
+"$PYTHON" -m venv --clear "${VENV}" \
     || die "venv creation failed (Debian/Ubuntu: apt install python3-venv)."
 
 PIP=("${VENV}/bin/python" -m pip install --quiet --disable-pip-version-check)

@@ -4,6 +4,9 @@
     python scripts/package.py --offline       same, with every dependency wheel
                                               (Linux x86_64, CPython 3.13)
     python scripts/package.py --offline --arch aarch64
+    python scripts/package.py --offline --with-python
+                                              also a standalone CPython 3.13, for
+                                              machines without Python >= 3.13
 
 The archive holds the usmd-rdsh and nan-actions wheels, the runtime
 requirements and install.sh (scripts/bundle-install.sh). On the machine:
@@ -17,11 +20,14 @@ is installed without its dependencies and requirements.txt lists the others.
 
 import argparse
 import io
+import json
+import re
 import subprocess
 import sys
 import tarfile
 import tempfile
 import tomllib
+import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -29,6 +35,9 @@ INSTALLER = ROOT / "scripts" / "bundle-install.sh"
 # Dependencies of pyproject.toml that a running node does not need.
 EXCLUDED = {"nan-actions", "pytest"}
 PYTHON_VERSION = "3.13"
+# Relocatable CPython builds, the ones uv installs.
+STANDALONE_RELEASE = (
+    "https://api.github.com/repos/astral-sh/python-build-standalone/releases/latest")
 
 
 def _project(path: Path) -> dict:
@@ -62,6 +71,27 @@ def _platforms(arch: str) -> list[str]:
             "linux_" + arch]
 
 
+def _standalone_python(arch: str, cache: Path) -> Path:
+    """Latest standalone CPython 3.13 for Linux ``arch``, downloaded once into ``cache``."""
+    pattern = re.compile(re.escape(f"cpython-{PYTHON_VERSION}.") + r"\d+\+\d+-"
+                         + re.escape(f"{arch}-unknown-linux-gnu-install_only_stripped.tar.gz"))
+    with urllib.request.urlopen(STANDALONE_RELEASE) as response:
+        release = json.load(response)
+    assets = [a for a in release["assets"] if pattern.fullmatch(a["name"])]
+    if not assets:
+        raise SystemExit(f"no standalone CPython {PYTHON_VERSION} for {arch} in release "
+                         f"{release['tag_name']}")
+    asset = assets[0]
+    target = cache / asset["name"]
+    if not target.is_file():
+        cache.mkdir(parents=True, exist_ok=True)
+        print(f"downloading {asset['name']} ({asset['size'] // 2**20} MiB)")
+        partial = target.with_suffix(".part")
+        urllib.request.urlretrieve(asset["browser_download_url"], partial)
+        partial.replace(target)
+    return target
+
+
 def _add_text(archive: tarfile.TarFile, name: str, text: str, mode: int = 0o644) -> None:
     # Unix line endings whatever git's autocrlf did to the working tree.
     data = text.replace("\r\n", "\n").encode()
@@ -77,8 +107,11 @@ def main() -> None:
                         metavar="DIR", help="nan-actions checkout (default ../nan-actions)")
     parser.add_argument("--offline", action="store_true",
                         help="include every dependency wheel (install without internet)")
+    parser.add_argument("--with-python", action="store_true",
+                        help=f"include a standalone CPython {PYTHON_VERSION} (used by install.sh)")
     parser.add_argument("--arch", default="x86_64",
-                        help="with --offline: target architecture (x86_64, aarch64)")
+                        help="with --offline or --with-python: target architecture "
+                             "(x86_64, aarch64)")
     parser.add_argument("-o", "--output", type=Path, default=ROOT / "dist", metavar="DIR")
     args = parser.parse_args()
 
@@ -110,6 +143,9 @@ def main() -> None:
             if args.offline:
                 _add_text(archive, f"{bundle}/wheels/OFFLINE",
                           f"linux {args.arch}, CPython {PYTHON_VERSION}\n")
+            if args.with_python:
+                python = _standalone_python(args.arch, args.output / "cache")
+                archive.add(python, f"{bundle}/python.tar.gz")
             for wheel in sorted(wheels.glob("*.whl")):
                 archive.add(wheel, f"{bundle}/wheels/{wheel.name}")
 

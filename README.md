@@ -113,13 +113,14 @@ Configuration lives in `/etc/usmd/usmd.yaml`. After any change, run `systemctl r
 python scripts/package.py                 # dist/usmd-rdsh-<version>.tar.gz, dependencies from PyPI at install
 python scripts/package.py --offline       # every dependency wheel included (Linux x86_64, CPython 3.13)
 python scripts/package.py --offline --arch aarch64
+python scripts/package.py --offline --with-python   # also a standalone CPython 3.13 (~35 MB more)
 
 # Copy and install
 scp dist/usmd-rdsh-0.0.1.0.tar.gz user@host:
 ssh user@host 'tar xzf usmd-rdsh-0.0.1.0.tar.gz && usmd-rdsh-0.0.1.0/install.sh'
 ```
 
-`install.sh` creates (or updates) a virtualenv and links `usmd` into the PATH: `/opt/usmd-rdsh/venv` and `/usr/local/bin` as root, `~/.local/share/usmd-rdsh/venv` and `~/.local/bin` otherwise (`--prefix`, `--bin`, `--python` to change them). Running it again with a newer archive upgrades the node; its state (`~/.usmd` or `$USMD_STATE_DIR`) is kept. The target needs Python ≥ 3.13 with `venv`.
+`install.sh` creates (or updates) a virtualenv and links `usmd` into the PATH: `/opt/usmd-rdsh/venv` and `/usr/local/bin` as root, `~/.local/share/usmd-rdsh/venv` and `~/.local/bin` otherwise (`--prefix`, `--bin`, `--python` to change them). Running it again with a newer archive upgrades the node; its state (`~/.usmd` or `$USMD_STATE_DIR`) is kept. The target needs Python ≥ 3.13 with `venv`, unless the archive was built with `--with-python`: `install.sh` then installs that Python (a [python-build-standalone](https://github.com/astral-sh/python-build-standalone) build, cached in `dist/cache`) next to the virtualenv and uses it, which suits distributions shipping an older Python (Ubuntu 24.04, Debian 12).
 
 ---
 
