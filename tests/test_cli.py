@@ -342,3 +342,34 @@ def test_local_console_keys(factory, monkeypatch):
     assert text == "show " and echoed[0].endswith("show ?") and "logging" in out
     text, _, out = press('set banner "why')
     assert text == 'set banner "why?' and out == ""
+
+
+def test_usc_label_and_generated_identifier(factory, tmp_path):
+    """[NCP-03 6.8, ARCH-03 9.1]: a readable label, a ULID generated when the
+    name is left empty, a hint when a name is not a ULID."""
+    from nan_runtime.state import StateDirectory  # pylint: disable=import-outside-toplevel
+
+    from usmd_rdsh.cli import bridge  # pylint: disable=import-outside-toplevel
+    from usmd_rdsh.node.node import Node  # pylint: disable=import-outside-toplevel
+    from usmd_rdsh.node.wire import is_ulid  # pylint: disable=import-outside-toplevel
+
+    plain = Node(StateDirectory(tmp_path / "plain"))
+    RUNTIME.node = plain
+    out = _run(factory, "config usc", "set label dho", "end")
+    assert "does not hold the USC key" in out and plain.signed.usc is None
+
+    authority = Node(StateDirectory(tmp_path / "authority"))
+    authority.authority.generate("usc")
+    authority.on_signed_change = bridge.reflect
+    RUNTIME.node = authority
+    out = _run(factory, "config usc", "set name dho", "end")
+    assert "put a readable name such as 'dho' in 'label'" in out
+    _run(factory, "config usc", "set label dho", "end")
+    usc = authority.signed.usc
+    assert usc is not None and usc.label == "dho" and is_ulid(usc.uscn)
+    usc.verify(authority.authority.usc.public)
+    # The generated identifier joined the tree: the next commit keeps it.
+    assert RUNTIME.document.fields(("usc",))["name"] == usc.uscn
+    _run(factory, "config usc", "set label dho-prod", "end")
+    assert authority.signed.usc.uscn == usc.uscn and authority.signed.usc.label == "dho-prod"
+    assert "dho-prod (" + usc.uscn + ")" in _run(factory, "show node")

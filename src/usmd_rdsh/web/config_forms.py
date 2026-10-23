@@ -22,6 +22,7 @@ from nan_actions.views import UNSET, ViewSession, views
 from nan_actions.views.errors import ViewError
 from nan_actions.views.node import ViewDef
 
+from usmd_rdsh.cli.bridge import after_commit
 from usmd_rdsh.cli.runtime import RUNTIME
 
 
@@ -158,7 +159,7 @@ async def apply(actor: ActionActor, request: dict[str, Any]) -> dict[str, Any]:
     session = ViewSession(
         views,
         RUNTIME.document,
-        on_commit=RUNTIME.config_store.save,
+        on_commit=after_commit,
         actor_factory=lambda: actor,
     )
     output: list[str] = []

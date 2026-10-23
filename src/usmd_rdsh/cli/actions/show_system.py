@@ -75,6 +75,13 @@ def state_text(state: State) -> str:
     return f"{state.name} (0x{state.value:04X})"
 
 
+def _named(r: dict, which: str) -> str:
+    """``dho (01JAB7...)``: the signed label, then the identifier [NCP-03 6.8]."""
+    if not r[which]:
+        return "(not configured)"
+    return f"{r[which + '_label']} ({r[which]})" if r[which + "_label"] else r[which]
+
+
 @action(cli="show node", description="Identity, state, keys and roles of this node",
         permissions=[READ], cli_output=printer(lambda r: fields([
             ("Hostname", r["hostname"]),
@@ -88,8 +95,8 @@ def state_text(state: State) -> str:
             ("Hosted services", ", ".join(r["hosted"]) or "(none)"),
             ("SP addresses", ", ".join(r["sp_addresses"]) or "(none)"),
             ("Reference nodes", ", ".join(r["references"]) or "(none)"),
-            ("USD", r["usd"] or "(not configured)"),
-            ("USC", r["usc"] or "(not configured)"),
+            ("USD", _named(r, "usd")),
+            ("USC", _named(r, "usc")),
             ("Ed25519 public key", r["ed25519_public_key"]),
             ("X25519 public key", r["x25519_public_key"]),
             ("Creation token", r["token"]),
@@ -120,6 +127,8 @@ async def show_node() -> dict:
         "references": list(node.references),
         "usd": node.signed.usd.usdn if node.signed.usd else "",
         "usc": node.signed.usc.uscn if node.signed.usc else "",
+        "usd_label": node.signed.usd.label if node.signed.usd else "",
+        "usc_label": node.signed.usc.label if node.signed.usc else "",
         "ed25519_public_key": b64u(node.key),
         "x25519_public_key": b64u(node.identity.x25519_public),
         "token": ("none" if token is None else

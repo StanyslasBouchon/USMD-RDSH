@@ -47,6 +47,33 @@ def _ulid_or_empty(value: str) -> str:
 
 #: USCN, USDN, node ids: ULIDs on the wire [NCP-02 6.1].
 Ulid = Annotated[str, AfterValidator(_ulid_or_empty)]
+
+
+def _label(value: str) -> str:
+    from usmd_rdsh.node.ncp.codec import check_label  # pylint: disable=import-outside-toplevel
+    from usmd_rdsh.node.wire import WireError  # pylint: disable=import-outside-toplevel
+
+    try:
+        check_label(value)
+    except WireError as exc:
+        raise ValueError(str(exc)) from exc
+    return value
+
+
+#: Readable name of a USC or USD, signed with it [NCP-03 6.8].
+Label = Annotated[str, AfterValidator(_label)]
+
+
+def _generated_ulid(value: str) -> str:
+    try:
+        return _ulid_or_empty(value)
+    except ValueError as exc:
+        raise ValueError(f"{exc}. Leave it empty to have one generated, and put a "
+                         f"readable name such as '{value}' in 'label'") from exc
+
+
+#: USCN, USDN: a ULID the authority generates when left empty [ARCH-03 9.1].
+GeneratedUlid = Annotated[str, AfterValidator(_generated_ulid)]
 #: An IPv4 address, or empty for "not set". The series is IPv4-only [ARCH 3.5].
 IPv4 = Annotated[str, AfterValidator(_ipv4_or_empty)]
 Port = Annotated[int, AfterValidator(_port)]

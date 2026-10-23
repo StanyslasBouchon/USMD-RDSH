@@ -91,6 +91,7 @@ register({
     "ncp.table.entries": "Entries",
     "ncp.address": "Address",
     "ncp.object.name": "Identifier",
+    "ncp.object.label": "Label",
     "ncp.object.version": "Version",
     # SP-01 7.3 - 7.6
     "sp": "Service Protocol",
@@ -443,15 +444,17 @@ def _object(cursor: _Cursor) -> bytes:
 def _req_usc(cursor: _Cursor, item: Item) -> str:
     usc = UscProperties.decode(_object(cursor))
     item.add("ncp.object.name", value=usc.uscn)
+    item.add("ncp.object.label", value=usc.label)
     item.add("ncp.object.version", value=usc.version)
     for usdn in usc.usd:
         item.add("ncp.node_id", "USD", value=usdn)
-    return f"USC {usc.uscn} v{usc.version}"
+    return f"USC {usc.label or usc.uscn} v{usc.version}"
 
 
 def _req_usd(cursor: _Cursor, item: Item) -> str:
     usd = UsdProperties.decode(_object(cursor))
     item.add("ncp.object.name", value=usd.usdn)
+    item.add("ncp.object.label", value=usd.label)
     item.add("ncp.object.version", value=usd.version)
     for area in usd.areas:
         item.text(f"Area {area.area_id} {area.name}: {area.prefix}/{area.length}")
@@ -461,7 +464,7 @@ def _req_usd(cursor: _Cursor, item: Item) -> str:
                        f"VIP {entry.vip})", alias=entry.name)
     for code, value in sorted(usd.parameters.items()):
         item.text(f"Parameter 0x{code:04X} = {value}")
-    return f"USD {usd.usdn} v{usd.version}"
+    return f"USD {usd.label or usd.usdn} v{usd.version}"
 
 
 def _req_mutations(cursor: _Cursor, item: Item) -> str:

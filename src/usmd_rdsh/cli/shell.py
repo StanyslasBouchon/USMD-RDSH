@@ -33,6 +33,7 @@ from nan_runtime.log import LogLevel, emit, log
 from usmd_rdsh.cli import views as _views  # noqa: F401  # pylint: disable=unused-import
 from usmd_rdsh.cli.confirm import UsmdConfirmPrompt
 from usmd_rdsh.cli.permissions import VOCABULARY, console_actor
+from usmd_rdsh.cli.bridge import after_commit
 from usmd_rdsh.cli.runtime import RUNTIME
 
 _ACTIONS_DIR = Path(__file__).parent / "actions"
@@ -251,7 +252,7 @@ class ShellFactory:
         return ViewSession(
             views,
             RUNTIME.document,
-            on_commit=RUNTIME.config_store.save,
+            on_commit=after_commit,
             actor_factory=lambda: actor,
             reveal_permissions=None,
         )

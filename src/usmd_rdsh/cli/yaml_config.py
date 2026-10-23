@@ -36,6 +36,7 @@ import yaml
 from nan_actions.views import ConfigDocument, views
 
 from usmd_rdsh.node.services import load_yaml_stream
+from usmd_rdsh.node.wire import is_ulid
 
 #: The daemon's role names and the spec's [NCP-02 7.3].
 LEGACY_ROLES = {"ucd_operator": "usc-operator", "usd_operator": "usd-operator",
@@ -148,6 +149,11 @@ def parse(text: str) -> YamlConfig:
             value = usd.pop(name)
             if value in (None, ""):
                 continue  # absent: the default applies
+            if field_name == "name" and not is_ulid(str(value).upper()):
+                # usmd.example.yaml's "human-readable USDN": the label; the
+                # identifier is generated when the USD is founded [NCP-03 6.8, 6.9].
+                _set(doc, path, "label", str(value))
+                continue
             _set(doc, path, field_name, to_tree(value))
     usd.pop("reference_hold_seconds", None)  # the daemon's own; ARCH 6.4 uses hysteresis
     for field_name, value in usd.items():  # the tree's own usd fields

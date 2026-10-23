@@ -66,12 +66,15 @@ def _usdn(messages: list[str]) -> str:
         return name.upper()
     new = ulid.new().str
     if name:
-        messages.append(f"usd.name '{name}' is not a ULID (NCP-02 6.1): the USD is named {new}")
+        # A readable name is the USD's label; its identifier is a ULID [NCP-03 6.9].
+        messages.append(f"USD '{name}' is identified by {new} [NCP-03 6.9]")
+        _set(("usd",), "label", name, only_if_unset=True)
     _set(("usd",), "name", new)
     usc = str(RUNTIME.document.fields(("usc",)).get("name") or "")
     if usc and not is_ulid(usc.upper()):
         uscn = ulid.new().str
-        messages.append(f"usd.cluster_name '{usc}' is not a ULID: the USC is named {uscn}")
+        messages.append(f"USC '{usc}' is identified by {uscn} [NCP-03 6.8]")
+        _set(("usc",), "label", usc, only_if_unset=True)
         _set(("usc",), "name", uscn)
         _set(("usc",), "usd", [new])
     return new

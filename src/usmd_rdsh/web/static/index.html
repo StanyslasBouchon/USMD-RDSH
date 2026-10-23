@@ -1120,7 +1120,7 @@ function renderOverview(s) {
       ${p.last_rejection ? `<dt>Dernier rejet</dt><dd class="mono muted">${esc(p.last_rejection)}</dd>` : ""}</dl>`;
 
   kv($("ov-identity"), [
-    ["Identifiant", idv(n.node_id, 10)], ["USD", idv(n.usd, 10)], ["USC", n.usc ? idv(n.usc, 10) : ""],
+    ["Identifiant", idv(n.node_id, 10)], ["USD", n.usd_label ? `${esc(n.usd_label)} ${idv(n.usd, 10)}` : idv(n.usd, 10)], ["USC", n.usc ? (n.usc_label ? `${esc(n.usc_label)} ${idv(n.usc, 10)}` : idv(n.usc, 10)) : ""],
     ["Clé Ed25519", idv(n.ed25519_public_key, 10)], ["Clé X25519", idv(n.x25519_public_key, 10)],
     ["Jeton", esc(n.token)], ["Adresses SP", ids((n.sp_addresses || []).join(" "))],
     ["Services hébergés", (n.hosted || []).map(h => pill(h, "accent")).join(" ")],

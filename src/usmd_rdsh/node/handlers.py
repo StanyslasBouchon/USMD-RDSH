@@ -380,6 +380,9 @@ class NcpHandlers:  # pylint: disable=too-many-public-methods
             applied = self.signed.offer_usc(obj, self._authority())
         except CryptoError:
             return _error(ErrorCode.OBSOLETE_OR_UNSIGNED, "authority signature")
+        except WireError as exc:
+            self.event(f"USC properties refused: {exc}", logging.WARNING)
+            return _error(ErrorCode.MALFORMED, str(exc))
         if applied:
             self.save_signed()
             self._relay_properties(message.sender)

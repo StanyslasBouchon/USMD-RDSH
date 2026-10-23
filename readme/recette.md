@@ -1,6 +1,6 @@
 # Cahier de recette USMD-RDSH
 
-Référentiel : les drafts courants de `readme/drafts` — `draft-usmd-rdsh-architecture-03`, `draft-usmd-ncp-02`, `draft-usmd-nndp-01`, `draft-usmd-sp-01`.
+Référentiel : les drafts courants de `readme/drafts` — `draft-usmd-rdsh-architecture-03`, `draft-usmd-ncp-03`, `draft-usmd-nndp-01`, `draft-usmd-sp-01`.
 
 Chaque ligne est une exigence (DOIT, DEVRAIT, PEUT) ou une définition normative (DEF) d'un draft. Son état dit où en est le code (`src/usmd_rdsh/node/**`, `src/usmd_rdsh/cli/**`, `src/usmd_rdsh/web/**`) :
 
@@ -16,13 +16,13 @@ Une exigence est cochée quand son état est **done**. Les tests se lancent avec
 
 | Partie | Draft | done | partial | missing | config-only | open | n/a |
 |---|---|---|---|---|---|---|---|
-| [1 — Architecture](#partie-1--architecture) | draft-usmd-rdsh-architecture-03 | 328 | 3 | 0 | 0 | 12 | 11 |
-| [2 — NCP](#partie-2--ncp) | draft-usmd-ncp-02 | 281 | 0 | 0 | 0 | 0 | 12 |
+| [1 — Architecture](#partie-1--architecture) | draft-usmd-rdsh-architecture-03 | 330 | 3 | 0 | 0 | 12 | 11 |
+| [2 — NCP](#partie-2--ncp) | draft-usmd-ncp-03 | 285 | 0 | 0 | 0 | 0 | 12 |
 | [3 — NNDP](#partie-3--nndp) | draft-usmd-nndp-01 | 125 | 0 | 0 | 0 | 1 | 4 |
 | [4 — SP](#partie-4--sp) | draft-usmd-sp-01 | 187 | 3 | 0 | 0 | 0 | 1 |
-| **Total** | | **921** | **6** | **0** | **0** | **13** | **28** |
+| **Total** | | **927** | **6** | **0** | **0** | **13** | **28** |
 
-Exigences applicables (hors open et n/a) : 927, dont 921 cochées (99.4 %).
+Exigences applicables (hors open et n/a) : 933, dont 927 cochées (99.4 %).
 
 ---
 
@@ -451,8 +451,10 @@ Constats transverses (à lire avant les tableaux) :
 
 | ID | Niveau | Exigence | État | Remarque |
 |---|---|---|---|---|
-| ARCH-9.1-1 | DEF | Propriétés USC : USCN, version, clé publique Ed25519 de l'USC, liste des USD | done | `codec.UscProperties` |
+| ARCH-9.1-1 | DEF | Propriétés USC : USCN, libellé, version, clé publique Ed25519 de l'USC, liste des USD | done | `codec.UscProperties` |
 | ARCH-9.1-2 | DEF | Format défini par Send_usc_properties [NCP 6.8] | done | `UscProperties.encode/decode`, `handlers._on_send_usc_properties` |
+| ARCH-9.1-3 | DEF | L'USCN et l'USDN sont des ULID qui ne se choisissent pas ; le libellé, choisi par l'autorité, est signé et propagé mais n'identifie rien (ARCH-03) | done | `UscConfig.label`/`UsdConfig.label` → `AuthorityBridge.build` ; `show node` affiche « libellé (ULID) » ; YAML : un `usd.name` ou `cluster_name` non ULID devient le libellé (`yaml_config.parse`) ; tests `test_cli.py::test_usc_label_and_generated_identifier`, `test_yaml_config.py::test_readable_names_become_labels` |
+| ARCH-9.1-4 | DEF | L'autorité génère l'USCN ou l'USDN qu'on ne lui fournit pas (ARCH-03) | done | `AuthorityBridge._generate` (nœud détenteur de la clé de l'USC seulement ; ailleurs refus), écrit dans l'arbre par `bridge.after_commit` ; même test |
 
 #### 9.2 Propriétés de l'USD et paramètres
 
@@ -714,9 +716,9 @@ Constats transverses (à lire avant les tableaux) :
 
 # Partie 2 — NCP
 
-## Cahier de recette NCP — draft-usmd-ncp-02
+## Cahier de recette NCP — draft-usmd-ncp-03
 
-Source : `draft-usmd-ncp-02.txt` (22 octobre 2026). Code examiné : `src/usmd_rdsh/node/**` (nouvelle implémentation : `ncp/codec.py`, `ncp/transport.py`, `handlers.py`, `node.py`, `raft.py`, `tables.py`, `signed.py`, `authority.py`, `identity.py`, `wire.py`, `crypto.py`, `states.py`, `addresses.py`), `src/usmd_rdsh/cli/**` et `src/usmd_rdsh/web/**` (branche `feature/cli-web-interface`, fichiers non suivis inclus). L'ancien prototype (`proto/`, `self/`, `sys/`, `security/`) est remplacé et n'est plus utilisé par l'application ; il n'est plus audité.
+Source : `draft-usmd-ncp-03.docx` (23 octobre 2026) ; le libellé de l'USC et de l'USD (6.8, 6.9) est nouveau dans cette révision, le reste est inchangé depuis -02. Code examiné : `src/usmd_rdsh/node/**` (nouvelle implémentation : `ncp/codec.py`, `ncp/transport.py`, `handlers.py`, `node.py`, `raft.py`, `tables.py`, `signed.py`, `authority.py`, `identity.py`, `wire.py`, `crypto.py`, `states.py`, `addresses.py`), `src/usmd_rdsh/cli/**` et `src/usmd_rdsh/web/**` (branche `feature/cli-web-interface`, fichiers non suivis inclus). L'ancien prototype (`proto/`, `self/`, `sys/`, `security/`) est remplacé et n'est plus utilisé par l'application ; il n'est plus audité.
 
 Légende des niveaux : **DOIT** (DOIT, NE DOIT PAS, OBLIGATOIRE), **DEVRAIT** (DEVRAIT, NE DEVRAIT PAS, RECOMMANDÉ), **PEUT** (PEUT, FACULTATIF), **DEF** (définition normative qui implique un comportement ou un format, sans mot-clé BCP 14).
 
@@ -933,16 +935,19 @@ Restent sans test : les exclusions (7.4, 7.5, 7.6), la vérification d'endosseme
 | ID | Niveau | Exigence | État | Remarque |
 |---|---|---|---|---|
 | NCP-6.8-1 | DEF | Envoi périodique des propriétés de l'USC : **60 s ± 25 %** de gigue aléatoire (45..75 s). | done | `Node._properties_loop` avec `_jitter` (0,75..1,25) ; intervalle `config protocol ncp properties-interval`. |
-| NCP-6.8-2 | DEF | Corps : USCN (Identifiant 26 o) ‖ version (Date) ‖ clé Ed25519 de l'USC (32 o) ‖ liste des USD (Liste d'Identifiants USDN) ‖ signature de l'autorité (64 o) sur les champs précédents. | done | `codec.UscProperties` (signature sans chaîne de contexte, ambiguïté F7-5). Test intégration. |
+| NCP-6.8-2 | DEF | Corps : USCN (Identifiant 26 o) ‖ libellé (Chaîne) ‖ version (Date) ‖ clé Ed25519 de l'USC (32 o) ‖ liste des USD (Liste d'Identifiants USDN) ‖ signature de l'autorité (64 o) sur les champs précédents. | done | `codec.UscProperties` (signature sans chaîne de contexte, ambiguïté F7-5). Test intégration. |
 | NCP-6.8-3 | DEF | Réponse : booléen (appliquées) + version détenue par le répondant (Date). | done | `ack_body(applied, held)`. |
 | NCP-6.8-4 | DEF | Le destinataire n'applique que si la signature est valide pour la clé d'autorité qu'il connaît **et** si la version est **strictement postérieure** à la sienne. | done | `SignedConfig.offer_usc` ; clé d'autorité = ancre USC ou clé USC détenue (`Node.usc_key`). Signature invalide ⇒ erreur 0x0006, version non postérieure ⇒ booléen faux (ambiguïté F7-6 tranchée). |
 | NCP-6.8-5 | DEF | Réservée aux nœuds de référence, sauf exception endosseur (6.1-3/6.1-5). | done | `REFERENCE_ONLY` + `ENDORSER_EXCEPTION`. |
+| NCP-6.8-6 | DEF | Libellé : Chaîne de 0 à 64 octets UTF-8, sans caractère de contrôle (U+0000–U+001F, U+007F–U+009F), vide = aucun ; couvert par la signature (ncp-03) | done | `codec.check_label`, `UscProperties._unsigned` ; test `test_authority_services.py::test_usc_and_usd_labels_are_signed_and_checked` |
+| NCP-6.8-7 | DEF | Le libellé n'identifie rien : deux USC ou USD peuvent porter le même (ncp-03) | done | Aucun contrôle d'unicité ; seuls l'USCN/USDN sont comparés (`SignedConfig`, jeton de création) |
+| NCP-6.8-8 | DEF | Rejet 0x0003 d'un libellé trop long, non UTF-8 ou contenant un caractère de contrôle (ncp-03) | done | `UscProperties.validate` / `UsdProperties.validate` appelés par `offer_usc` / `offer_usd` ⇒ `WireError` ⇒ 0x0003 (`handlers._on_send_usc_properties`, `_on_send_usd_properties`) ; UTF-8 invalide ⇒ `Reader.string` ; même test |
 
 #### 6.9 Send_usd_properties (0x0007)
 
 | ID | Niveau | Exigence | État | Remarque |
 |---|---|---|---|---|
-| NCP-6.9-1 | DEF | Corps : USDN (26 o) ‖ version (Date) ‖ clé Ed25519 de l'USD (32) ‖ aires (Liste d'aires) ‖ catalogue (Liste de services) ‖ paramètres (Liste de (code 16, valeur 32)) ‖ signature d'autorité (64) sur les champs précédents. | done | `codec.UsdProperties` ; construit depuis la configuration par `AuthorityBridge.build`. Test intégration. |
+| NCP-6.9-1 | DEF | Corps : USDN (26 o) ‖ libellé (Chaîne, comme 6.8) ‖ version (Date) ‖ clé Ed25519 de l'USD (32) ‖ aires (Liste d'aires) ‖ catalogue (Liste de services) ‖ paramètres (Liste de (code 16, valeur 32)) ‖ signature d'autorité (64) sur les champs précédents. | done | `codec.UsdProperties` ; construit depuis la configuration par `AuthorityBridge.build`. Test intégration. |
 | NCP-6.9-2 | DEF | Aire : identifiant (8 bits), nom (Chaîne), préfixe (32 bits), longueur de masque (8 bits, **8..32**). | done | `UsdProperties._unsigned/decode` (masque hors 8..32 ⇒ 0x0003). |
 | NCP-6.9-3 | DEF | Service : identifiant (16 bits, 4 bits de poids fort à 0), nom (Chaîne), identifiant d'aire (8), VIP (32), adresse de groupe (32, 0 si aucune). | done | `CatalogEntry` ; `validate` impose 0x001..0xFFE. |
 | NCP-6.9-4 | DEF | Rejet (erreur **0x0003**) si deux aires ont des préfixes qui se recouvrent. | done | `UsdProperties.validate` (appelé par `offer_usd`) ⇒ `WireError` ⇒ 0x0003. |
@@ -952,6 +957,7 @@ Restent sans test : les exclusions (7.4, 7.5, 7.6), la vérification d'endosseme
 | NCP-6.9-8 | DEF | Rejet 0x0003 si une adresse de groupe non nulle n'appartient pas à 239.0.0.0/8. | done | `validate`. |
 | NCP-6.9-9 | DEF | Rejet 0x0003 si un service référence une aire inconnue (implicite). | done | `validate` (`entry.area_id not in by_id`). |
 | NCP-6.9-10 | DEF | Réponse et règle d'application identiques à Send_usc_properties (signature valide + version strictement postérieure). | done | `SignedConfig.offer_usd` (+ `check_ranges`). Test intégration (refus d'un objet signé par la mauvaise clé). |
+| NCP-6.9-11 | DEF | Libellé de l'USD : mêmes règles que 6.8 (ncp-03) | done | `UsdProperties.validate` (`check_label`) ; même test |
 
 #### 6.10 Send_mutation_properties (0x0008)
 

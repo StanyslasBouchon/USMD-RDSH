@@ -371,6 +371,17 @@ class EndorsementPacket:  # pylint: disable=too-many-instance-attributes
 # ---------------------------------------------------------------------------
 
 
+LABEL_MAX = 64
+
+
+def check_label(label: str) -> None:
+    """[NCP-03 6.8]: 0 to 64 bytes of UTF-8, no control character."""
+    if len(label.encode("utf-8")) > LABEL_MAX:
+        raise WireError(f"a label is at most {LABEL_MAX} bytes of UTF-8")
+    if any(ord(c) < 0x20 or 0x7F <= ord(c) <= 0x9F for c in label):
+        raise WireError("a label holds no control character")
+
+
 @dataclass(slots=True)
 class UscProperties:
     uscn: str
@@ -378,12 +389,19 @@ class UscProperties:
     public_key: bytes
     usd: list[str]
     signature: bytes = b""
+    #: Readable name chosen by the authority; signed, identifies nothing [NCP-03 6.8].
+    label: str = ""
 
     def _unsigned(self) -> bytes:
-        out = Writer().ident(self.uscn).u64(self.version).raw(self.public_key).u16(len(self.usd))
+        out = Writer().ident(self.uscn).string(self.label).u64(self.version)
+        out.raw(self.public_key).u16(len(self.usd))
         for usdn in self.usd:
             out.ident(usdn)
         return out.bytes()
+
+    def validate(self) -> None:
+        """Error 0x0003 when the label is too long or holds a control character."""
+        check_label(self.label)
 
     def sign(self, key: SigningKey) -> "UscProperties":
         self.signature = key.sign(self._unsigned())
@@ -398,9 +416,9 @@ class UscProperties:
     @classmethod
     def decode(cls, data: bytes) -> "UscProperties":
         reader = Reader(data)
-        uscn, version, key = reader.ident(), reader.u64(), reader.raw(32)
+        uscn, label, version, key = reader.ident(), reader.string(), reader.u64(), reader.raw(32)
         usd = [reader.ident() for _ in range(reader.u16())]
-        obj = cls(uscn, version, key, usd, reader.raw(64))
+        obj = cls(uscn, version, key, usd, reader.raw(64), label)
         reader.end()
         return obj
 
@@ -431,9 +449,11 @@ class UsdProperties:  # pylint: disable=too-many-instance-attributes
     catalog: list[CatalogEntry]
     parameters: dict[int, int]
     signature: bytes = b""
+    #: Readable name chosen by the authority; signed, identifies nothing [NCP-03 6.9].
+    label: str = ""
 
     def _unsigned(self) -> bytes:
-        out = Writer().ident(self.usdn).u64(self.version).raw(self.public_key)
+        out = Writer().ident(self.usdn).string(self.label).u64(self.version).raw(self.public_key)
         out.u16(len(self.areas))
         for area in self.areas:
             out.u8(area.area_id).string(area.name)
@@ -461,7 +481,7 @@ class UsdProperties:  # pylint: disable=too-many-instance-attributes
     @classmethod
     def decode(cls, data: bytes) -> "UsdProperties":
         reader = Reader(data)
-        usdn, version, key = reader.ident(), reader.u64(), reader.raw(32)
+        usdn, label, version, key = reader.ident(), reader.string(), reader.u64(), reader.raw(32)
         areas = []
         for _ in range(reader.u16()):
             area_id, name = reader.u8(), reader.string()
@@ -479,7 +499,7 @@ class UsdProperties:  # pylint: disable=too-many-instance-attributes
         for _ in range(reader.u16()):
             code = reader.u16()
             parameters[code] = reader.u32()
-        obj = cls(usdn, version, key, areas, catalog, parameters, reader.raw(64))
+        obj = cls(usdn, version, key, areas, catalog, parameters, reader.raw(64), label)
         reader.end()
         return obj
 
@@ -489,6 +509,7 @@ class UsdProperties:  # pylint: disable=too-many-instance-attributes
         A USD contains one or more service areas, each with a mask length of
         8..32 [ARCH 11.2] - the same range the decoder enforces.
         """
+        check_label(self.label)
         if not self.areas:
             raise WireError("a USD contains at least one service area [ARCH 11.2]")
         ids, names, nets = set(), set(), []

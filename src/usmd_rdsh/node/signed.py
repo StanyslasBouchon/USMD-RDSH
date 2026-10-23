@@ -75,6 +75,7 @@ class SignedConfig:
         obj.verify(authority)
         if self.usc is not None and obj.version <= self.usc.version:
             return False
+        obj.validate()
         self.usc = obj
         return True
 

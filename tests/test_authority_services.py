@@ -225,3 +225,31 @@ def test_inconsistent_anchors_refused_once_a_token_is_set(tmp_path):
             asyncio.run(bridge.apply_local("system trust-anchor", TrustAnchorConfig()))
     finally:
         RUNTIME.node = None
+
+
+def test_usc_and_usd_labels_are_signed_and_checked():
+    """[NCP-03 6.8, 6.9]: the label is encoded after the identifier, covered by
+    the signature, at most 64 bytes of UTF-8 without control characters."""
+    from usmd_rdsh.node.crypto import SigningKey  # pylint: disable=import-outside-toplevel
+    from usmd_rdsh.node.ncp.codec import (  # pylint: disable=import-outside-toplevel
+        Area, UscProperties, UsdProperties, check_label)
+    from usmd_rdsh.node.wire import WireError  # pylint: disable=import-outside-toplevel
+
+    key = SigningKey.generate()
+    usc = UscProperties("01JAB7R3KX0Y2P8M4T6VQ9C1DZ", 5, key.public, [], label="dho").sign(key)
+    again = UscProperties.decode(usc.encode())
+    assert again.label == "dho" and again.encode() == usc.encode()
+    again.verify(key.public)
+    again.label = "other"
+    with pytest.raises(Exception):
+        again.verify(key.public)  # the signature covers the label
+    usd = UsdProperties("01JAB7R9F2W5H1N3S8D0Q4K6ME", 5, key.public,
+                        [Area(1, "front", "10.0.0.0", 16)], [], {}, label="prod").sign(key)
+    assert UsdProperties.decode(usd.encode()).label == "prod"
+    check_label("é" * 32)  # 64 bytes
+    for bad in ("é" * 33, "a\nb", "a\x85b"):
+        with pytest.raises(WireError):
+            check_label(bad)
+    with pytest.raises(WireError):
+        UsdProperties("01JAB7R9F2W5H1N3S8D0Q4K6ME", 5, key.public,
+                      [Area(1, "front", "10.0.0.0", 16)], [], {}, label="x" * 65).validate()

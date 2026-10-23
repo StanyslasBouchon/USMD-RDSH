@@ -52,3 +52,15 @@ def test_round_trip_keeps_example_layout_and_tree_sections():
 
 def test_dev_addresses():
     assert [dev_address(i) for i in (1, 2, 3)] == ["127.0.0.2", "127.0.0.3", "127.0.0.4"]
+
+
+def test_readable_names_become_labels():
+    """usmd.example.yaml's "human-readable USDN": the label; a ULID stays the name."""
+    loaded = yaml_config.parse("usd:\n  name: my-domain\n  cluster_name: dho\n")
+    assert loaded.document.fields(("usd",)) == {"label": "my-domain"}
+    assert loaded.document.fields(("usc",)) == {"label": "dho"}
+    ulid = "01JAB7R9F2W5H1N3S8D0Q4K6ME"
+    loaded = yaml_config.parse(f"usd:\n  name: {ulid}\n  label: prod\n")
+    assert loaded.document.fields(("usd",)) == {"name": ulid, "label": "prod"}
+    again = yaml_config.parse(yaml_config.dump(loaded.document))
+    assert again.document.fields(("usd",))["label"] == "prod"
