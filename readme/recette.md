@@ -16,13 +16,13 @@ Une exigence est cochée quand son état est **done**. Les tests se lancent avec
 
 | Partie | Draft | done | partial | missing | config-only | open | n/a |
 |---|---|---|---|---|---|---|---|
-| [1 — Architecture](#partie-1--architecture) | draft-usmd-rdsh-architecture-03 | 338 | 3 | 0 | 0 | 12 | 11 |
+| [1 — Architecture](#partie-1--architecture) | draft-usmd-rdsh-architecture-03 | 350 | 3 | 0 | 0 | 13 | 11 |
 | [2 — NCP](#partie-2--ncp) | draft-usmd-ncp-03 | 285 | 0 | 0 | 0 | 0 | 12 |
 | [3 — NNDP](#partie-3--nndp) | draft-usmd-nndp-01 | 125 | 0 | 0 | 0 | 1 | 4 |
 | [4 — SP](#partie-4--sp) | draft-usmd-sp-01 | 187 | 3 | 0 | 0 | 0 | 1 |
-| **Total** | | **935** | **6** | **0** | **0** | **13** | **28** |
+| **Total** | | **947** | **6** | **0** | **0** | **14** | **28** |
 
-Exigences applicables (hors open et n/a) : 941, dont 935 cochées (99.4 %).
+Exigences applicables (hors open et n/a) : 953, dont 947 cochées (99.4 %).
 
 ---
 
@@ -656,6 +656,26 @@ Rôles : executor | operator | usd_operator | ucd_operator (= Node_executor, Nod
 | ARCH-12.4-6 | DEF | La table des operators fait partie de l'état répliqué : journal, instantané (page 0, après les électeurs : Liste<(rôle 8, identifiant)>), fichier persistant | done | `Raft.snapshot_pages/handle_snapshot`, `_save/_load` (`snapshot_operators`) ; `test_operators_are_replicated_snapshotted_and_persisted` |
 | ARCH-12.4-7 | DEF | Les nœuds hors configuration apprennent les operators par Send_operators (0x0015) du maître, à chaque changement et toutes les 30 s | done | `Node.announce_operators`, `handlers._on_send_operators` (expéditeur électeur, terme ≥ dernier connu) ; dissection `dissect._req_operators`. Non testé de bout en bout. |
 | ARCH-12.4-8 | DEF | La fiche de nœud déclare les rôles élus : bits 0x40 usc, 0x20 usd, 0x10 node operator ; 0x0F réservés | done | `NodeRecord.flags/operators`, republiée par `Node.set_operators` ; colonne Roles de `show node-table` ; `show usd operators` ; `test_record_carries_the_elected_roles` |
+
+#### 12.5 Gestion des nœuds par les operators élus (demande de l'auteur, 2026-10-23 — à reporter dans ARCH-04 / NCP-03)
+
+Un usd-operator élu gère tous les nœuds de son USD, un usc-operator élu tous ceux de l'USC, un par un ou ensemble, en CLI comme en WebGUI. Choix validés : seul l'operator **élu** agit ; ce qui transite est la ligne de console ; un USD est joint par un nœud de contact configuré localement ; `api:manage` reste local.
+
+| ID | Niveau | Exigence | État | Remarque |
+|---|---|---|---|---|
+| ARCH-12.5-1 | DEF | Un usd-operator élu gère chaque nœud de son USD ; un usc-operator élu, chaque nœud de chaque USD de l'USC | done | `Node.operator_scope` (« usc » / « usd » / rien), `operate.Fleet.resolve` ; `test_operate.py::test_operators_manage_their_usd_and_the_other_usds` |
+| ARCH-12.5-2 | DEF | Seul un operator **élu** est servi : la cible le vérifie dans sa propre table des operators, un nœud seulement autorisé par son jeton est refusé (0x0001) | done | `handlers._on_operate` (`operator_ids(USC, USD)`), `Node.operate` refuse localement ; même test |
+| ARCH-12.5-3 | DEF | Commande Operate 0x0016 : indicateurs (8 : 0x80 preuve, 0x40 cible ; 0x3F réservés) ‖ session (64) ‖ [cible (Identifiant)] ‖ longueur (32) ‖ JSON ‖ [longueur (32) ‖ propriétés de l'USD ‖ jeton de création ‖ X25519 (32)] ; réponse : JSON | done | `codec.OperateRequest`, `Command.OPERATE` ; dissection `dissect._req_operate` ; `test_operate_request_round_trip_and_reserved_flags` |
+| ARCH-12.5-4 | DEF | L'échange est celui de la console locale (`line`, `confirm`, `complete`), plus `nodes` (table des nœuds), `schema` / `form` (formulaires Web) et `close` | done | `control.run_line` partagé avec le socket local, `operate.OperateServer` |
+| ARCH-12.5-5 | DEF | La console prêtée détient `usmd:read` et `usmd:write`, jamais `api:manage` (clés d'autorité, jetons de création et d'API restent locaux) ; elle n'ouvre pas de console sur un autre nœud | done | `operate.OPERATOR_PERMISSIONS`, `operate.enter` (source « ncp ») ; `test_lent_console_writes_but_never_manages` |
+| ARCH-12.5-6 | DEF | Une console par (clé de l'operator, session), fermée après 15 min d'inactivité ou par `close` ; au plus 64 | done | `OperateServer._shell` (`SESSION_IDLE_S`, `MAX_SESSIONS`) |
+| ARCH-12.5-7 | DEF | La cible journalise chaque ligne et chaque formulaire avec l'operator d'origine (et le relais) | done | `[OPERATE] Operator line/form from …` (WARNING), `via` ajouté par le relais |
+| ARCH-12.5-8 | DEF | CLI : `node <id\|adresse>` (console d'un nœud, `exit` / `disconnect`), `on <cibles> [<ligne>]` (une ligne ou un contexte de groupe) ; cibles combinées `all`, `node`, `usd`, `mutation`, `area`, `state`, `role` ; une seule confirmation pour le groupe ; sortie par nœud et bilan ; Tab et `?` répondus par le nœud distant | done | `operate.parse_targets`, `Remote.run`, `UsmdShell.execute_line/prompt/completions_async`, `_OperatorCompleter` ; `test_targets_parse_and_match`, `test_group_line_asks_once_and_reports_each_node` |
+| ARCH-12.5-9 | DEF | WebGUI : sélecteur de cible (ce nœud, un nœud, un USD, tout) ; la console y entre, les formulaires de configuration s'y lisent et s'y appliquent (sur chaque nœud pour un groupe) | done | `GET /web/fleet`, `GET /web/config?target=`, `POST /web/config` avec `target` (`operate.overview/schema_of/run_form`), `#target` dans `index.html`. Vérifié sur un cluster `--dev` de 2 nœuds par l'API Web ; l'interface n'est pas couverte par un test automatisé |
+| ARCH-12.5-10 | DEF | Operator d'un autre USD : la cible vérifie USC → propriétés de son USD (signées par l'USC, USD membre de l'USC) → jeton (signé par la clé de cet USD, clé de l'expéditeur, rôle usc-operator) ; sans preuve valide, pas de réponse | done | `handlers._check_foreign_operator` ; Operate est le seul message admis d'une adresse hors NIT, 20/s par source (`transport.FOREIGN_OPERATE_PER_S`) ; même test (jeton d'exécutant : aucune réponse) |
+| ARCH-12.5-11 | DEF | Dans l'autre USD, seul l'usc-operator élu sert et relaie vers le nœud visé ; tout autre nœud renvoie vers les usc-operators élus ; un nœud de contact par USD est configuré (`config trust usc-peer`) | done | `Node.operate_foreign` (redirection mémorisée), `Node.operators_to_redirect`, `handlers._relay_operate`, `bridge._apply_usc_peers` ; même test (contact D → C → D) |
+| ARCH-12.5-12 | DEF | Une commande distante peut être longue : Operate est transmis jusqu'à 6 fois (≈ 2 min) et n'est jamais exécuté deux fois | done | `Node.OPERATE_ATTEMPTS`, `NcpTransport.request(attempts=)` (cache des réponses, `_executing`) |
+| ARCH-12.5-13 | DEF | La destitution ou la révocation d'un usc-operator dans son USD n'est pas visible des autres USD : son jeton y reste accepté tant qu'il est signé | open | À trancher : publier les usc-operators élus de chaque USD (objet signé par l'USC ?) ou limiter la durée de la preuve |
 
 ### 13. Considérations opérationnelles
 

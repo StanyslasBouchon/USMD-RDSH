@@ -125,19 +125,24 @@ class ControlServer:
     @staticmethod
     async def _answer(shell, request: dict) -> dict[str, Any]:
         if "complete" in request:
-            return {"candidates": shell.completions(str(request["complete"]))}
-        line = str(request.get("line", ""))
-        lines: list[str] = []
-        sink = set_log_sink(lambda text: lines.append(_ANSI.sub("", strip_level_prefix(text))))
-        answer, confirmation = web_confirmation(request.get("confirm") is True)
-        try:
-            leave = bool(await shell.execute_line(line))
-        finally:
-            reset_web_confirmation(confirmation)
-            reset_log_sink(sink)
-        needs_confirm = answer.asked and not request.get("confirm")
-        return {"output": lines, "prompt": shell.prompt(), "exit": leave,
-                "needs_confirm": needs_confirm}
+            return {"candidates": await shell.completions_async(str(request["complete"]))}
+        return await run_line(shell, str(request.get("line", "")), request.get("confirm") is True)
+
+
+async def run_line(shell, line: str, confirm: bool) -> dict[str, Any]:
+    """One line with its output captured; a confirmation is answered by *confirm*.
+
+    Shared by this socket and Operate [ARCH 12.5]: the same exchange either way."""
+    lines: list[str] = []
+    sink = set_log_sink(lambda text: lines.append(_ANSI.sub("", strip_level_prefix(text))))
+    answer, confirmation = web_confirmation(confirm)
+    try:
+        leave = bool(await shell.execute_line(line))
+    finally:
+        reset_web_confirmation(confirmation)
+        reset_log_sink(sink)
+    return {"output": lines, "prompt": shell.prompt(), "exit": leave,
+            "needs_confirm": answer.asked and not confirm}
 
 
 def _answers(path: Path) -> bool:

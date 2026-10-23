@@ -40,7 +40,7 @@ from usmd_rdsh.node.services import (
     parse_service_file,
 )
 from usmd_rdsh.node.signed import USD_PARAMETERS
-from usmd_rdsh.node.wire import WireError, now_ms
+from usmd_rdsh.node.wire import WireError, is_ulid, now_ms
 
 log = logging.getLogger("usmd_rdsh.cli")
 
@@ -117,6 +117,8 @@ async def apply_local(path: str, config: Any) -> None:
         node.apply_anchors()
     elif path == "trust nal":
         _apply_nal(node, config)
+    elif path == "trust usc-peer":
+        _apply_usc_peers(node, config)
 
 
 def roles_of(names) -> list[Role]:
@@ -148,6 +150,24 @@ def _check_anchors(node, roles: list[Role], token: str, usc_anchor: str,
                                    if not ok)
             raise ValueError(f"a {role.name.lower().replace('_', '-')} needs the {missing} "
                              "trust anchor(s) ('config system trust-anchor') [ARCH 4.4]")
+
+
+def _apply_usc_peers(node, config: dict) -> None:
+    """One contact node per other USD of the USC [ARCH 12.5]."""
+    peers = {}
+    for usdn, entry in config.items():
+        if not is_ulid(str(usdn).upper()):
+            raise ValueError(f"'{usdn}' is not a USDN (a ULID) [NCP-03 6.9]")
+        try:
+            ipaddress.IPv4Address(entry.address)
+            keys = unb64u(entry.public_key), unb64u(entry.x25519_key)
+        except ValueError as exc:
+            raise ValueError(f"usc-peer {usdn}: address, public-key and x25519-key are "
+                             "required (IPv4, base64url)") from exc
+        if any(len(k) != 32 for k in keys):
+            raise ValueError(f"usc-peer {usdn}: Ed25519 and X25519 keys are 32 bytes")
+        peers[str(usdn).upper()] = (entry.address, *keys)
+    node.usc_peers = peers
 
 
 #: Keys granted by ``config trust nal`` at the previous apply, to revoke the

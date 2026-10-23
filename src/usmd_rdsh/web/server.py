@@ -6,6 +6,9 @@
     POST /web/cli                one console line, run as the token's holder
                                  (a line ending in ``?`` lists what may follow)
     POST /web/complete           Tab: candidates for the text before the cursor
+    GET  /web/fleet              the nodes an elected operator reaches [ARCH 12.5]
+    GET  /web/config?target=     the forms of another node (``node <id>``, ``all``...);
+                                 POST with "target": the form applied on each one
     GET  /web/summary            everything the dashboard draws, in one call
     GET  /web/config/text        ``which`` = running | startup | full: the
                                  configuration as the console shows it
@@ -55,6 +58,7 @@ from nan_runtime.log import set_log_sink, reset_log_sink, strip_level_prefix
 
 from nan_actions.views.errors import ViewError
 
+from usmd_rdsh.cli import operate
 from usmd_rdsh.cli.confirm import reset_web_confirmation, web_confirmation
 from usmd_rdsh.web import config_forms, service_files, shows
 from usmd_rdsh.cli.permissions import READ, WRITE
@@ -159,8 +163,13 @@ class WebRouter:
             if route == "/web/cli" and method == "POST":
                 return await self._cli(actor, body)
             if route == "/web/complete" and method == "POST":
-                return self._complete(actor, body)
+                return await self._complete(actor, body)
+            if route == "/web/fleet" and method == "GET":
+                return ApiResponse(200, await operate.overview())
             if route == "/web/config" and method == "GET":
+                target = parse_qs(urlsplit(path).query).get("target", [""])[-1]
+                if target:
+                    return await self._remote_schema(actor, target)
                 return ApiResponse(200, {**config_forms.schema(actor),
                                          "can_write": action_is_available([WRITE], actor)})
             if route == "/web/config" and method == "POST":
@@ -376,16 +385,34 @@ class WebRouter:
                 raise ValueError
         except ValueError:
             return ApiResponse.error(400, "bad_request", "Send a JSON object.")
+        target = str(request.pop("target", "") or "")
         try:
-            result = await config_forms.apply(actor, request)
+            if target:
+                # The same form on another node, or on each of several [ARCH 12.5].
+                result = await operate.run_form(target, request)
+            else:
+                result = await config_forms.apply(actor, request)
+        except operate.OperateError as exc:
+            return ApiResponse.error(422, "refused", str(exc))
         except ViewError as exc:
             return ApiResponse.error(422, "invalid_input", exc.message)
-        log.info("[WEB] %s changed '%s'%s: %s", actor.username, request.get("path"),
+        log.info("[WEB] %s changed '%s'%s%s: %s", actor.username, request.get("path"),
                  f" [{request.get('key')}]" if request.get("key") else "",
+                 f" on {target}" if target else "",
                  "committed" if result["ok"] else "refused")
         return ApiResponse(200 if result["ok"] else 422, result)
 
-    def _complete(self, actor: ActionActor, body: bytes) -> ApiResponse:
+    @staticmethod
+    async def _remote_schema(actor: ActionActor, target: str) -> ApiResponse:
+        """The forms of the first node *target* designates, filled with its values."""
+        try:
+            schema = await operate.schema_of(target)
+        except operate.OperateError as exc:
+            return ApiResponse.error(422, "refused", str(exc))
+        return ApiResponse(200, {**schema, "target": target,
+                                 "can_write": action_is_available([WRITE], actor)})
+
+    async def _complete(self, actor: ActionActor, body: bytes) -> ApiResponse:
         """Tab in the web console: what may follow the text before the cursor."""
         try:
             text = str(json.loads(body or b"{}").get("text", ""))
@@ -393,7 +420,8 @@ class WebRouter:
             return ApiResponse.error(400, "bad_request", 'Send {"text": "<line>"}.')
         if "\n" in text or len(text) > 4096:
             return ApiResponse.error(400, "bad_request", "One line, at most 4096 characters.")
-        return ApiResponse(200, {"candidates": self._shells.shell_for(actor).completions(text)})
+        shell = self._shells.shell_for(actor)
+        return ApiResponse(200, {"candidates": await shell.completions_async(text)})
 
     async def _cli(self, actor: ActionActor, body: bytes) -> ApiResponse:
         try:
@@ -404,7 +432,8 @@ class WebRouter:
             return ApiResponse.error(400, "bad_request", 'Send {"line": "<command>"}.')
         if "\n" in line or len(line) > 4096:
             return ApiResponse.error(400, "bad_request", "One line, at most 4096 characters.")
-        if line.strip().split()[:1] in (["exit"], ["quit"]):
+        if line.strip().split()[:1] in (["exit"], ["quit"]) and \
+                self._shells.shell_for(actor).remote is None:
             return ApiResponse(200, {"output": [], "prompt": self._shells.prompt(actor)})
 
         lines: list[str] = []

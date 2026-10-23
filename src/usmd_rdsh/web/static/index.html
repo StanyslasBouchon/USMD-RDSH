@@ -244,6 +244,10 @@ kbd { display: inline-flex; align-items: center; height: 20px; padding: 0 6px; b
 .cmdk:hover { color: var(--muted); border-color: color-mix(in srgb, var(--line) 50%, var(--muted)); }
 .cmdk span { flex: 1; text-align: left; }
 .live { cursor: pointer; border: 0; }
+.target { height: 36px; max-width: 280px; padding: 0 10px; border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: var(--panel); color: var(--text); box-shadow: var(--shadow-sm); font: inherit; font-size: 13px; }
+.target.remote { border-color: var(--warn); box-shadow: 0 0 0 2px var(--warn-soft); }
+@media (max-width: 720px) { .target { max-width: 140px; } }
 .menu-btn { display: none; }
 .content { width: 100%; max-width: 1360px; margin: 0 auto; padding: 24px 28px 56px; }
 .backdrop { display: none; }
@@ -495,18 +499,97 @@ td .yes { color: var(--ok); display: inline-flex; }
 .back-mobile { display: none; }
 
 /* ---- Show commands (every 'show' of the console) ---------------------- */
-.show-form { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; margin-top: 16px; }
+.show-form { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; margin-top: 18px; padding: 14px;
+  border-radius: 12px; background: var(--panel-2); border: 1px solid var(--line-2); }
 .show-form > div { flex: 1; min-width: 160px; max-width: 320px; }
 .show-form .lbl small { font-weight: 400; color: var(--faint); margin-left: 4px; }
-.show-block { border-top: 1px solid var(--line-2); }
-.show-block:first-child { border-top: 0; }
-.show-block > .kv { padding: 16px 24px; }
-.show-block .kv dd { font-family: var(--mono); font-size: 12.5px; white-space: pre-wrap; overflow-wrap: anywhere; }
-.show-text { margin: 0; padding: 14px 24px; font: 12.5px/1.55 var(--mono); color: var(--text-2); white-space: pre-wrap; overflow-wrap: anywhere; }
-.show-block .table-wrap { max-height: 70vh; overflow: auto; }
-.show-block td { font-family: var(--mono); font-size: 12.5px; }
-.show-meta { font-size: 12px; color: var(--muted); }
-.show-sec { margin: 0; padding: 14px 24px 0; font: 650 14px var(--mono); color: var(--accent); }
+.sh-head { padding: 20px 24px 18px; border-bottom: 1px solid var(--line-2); }
+.sh-head .crumbs { display: flex; align-items: center; gap: 4px; font-size: 12.5px; color: var(--muted); margin-bottom: 12px; }
+.sh-head .crumbs a { color: var(--muted); } .sh-head .crumbs a:hover { color: var(--accent); }
+.sh-head .crumbs .i { width: 13px; height: 13px; color: var(--faint); }
+.sh-title { display: flex; gap: 14px; align-items: flex-start; flex-wrap: wrap; }
+.sh-ic { width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center; flex: none;
+  background: var(--accent-soft); color: var(--accent); }
+.sh-title .t { flex: 1; min-width: 220px; }
+.sh-title h2 { font-size: 19px; font-weight: 650; letter-spacing: -.015em; line-height: 1.3; }
+.sh-sub { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 7px; }
+.sh-cmd { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 9px; border-radius: 7px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--panel-2); color: var(--muted); font: 12px var(--mono); }
+.sh-cmd:hover { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, var(--line)); }
+.sh-cmd code { font: inherit; } .sh-cmd .i { width: 13px; height: 13px; }
+.sh-meta { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--faint); }
+.sh-meta .i { width: 13px; height: 13px; }
+.sh-actions { display: flex; gap: 8px; }
+.sh-toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 10px 24px; border-bottom: 1px solid var(--line-2);
+  background: var(--panel-2); }
+.sh-toolbar .spacer { flex: 1; }
+.sh-toolbar .search { width: 240px; max-width: 100%; }
+.sh-toolbar .seg { background: var(--bg-sub); }
+.sh-toolbar .seg .i { width: 14px; height: 14px; }
+.sh-body { padding: 20px 24px 24px; display: grid; gap: 16px; }
+.sh-card { border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--panel); min-width: 0; }
+.sh-card-head { display: flex; align-items: center; gap: 8px; padding: 10px 16px; border-bottom: 1px solid var(--line-2);
+  font-size: 12.5px; color: var(--muted); background: var(--panel-2); }
+.sh-card-head b { color: var(--text); font-weight: 600; }
+.sh-card-head .i { width: 15px; height: 15px; color: var(--faint); }
+.sh-card-head .count { margin-left: auto; font-size: 12px; font-weight: 600; background: var(--accent-soft); color: var(--accent); padding: 1px 8px; border-radius: 99px; }
+.sh-card-foot { display: flex; gap: 8px; align-items: flex-start; padding: 10px 16px; border-top: 1px solid var(--line-2);
+  font-size: 12.5px; color: var(--muted); }
+.sh-card-foot .i { flex: none; margin-top: 2px; color: var(--info); width: 14px; height: 14px; }
+.sh-card .table-wrap { max-height: 70vh; overflow: auto; }
+.sh-table th { text-transform: none; letter-spacing: 0; font-size: 12.5px; padding: 10px 16px; background: var(--panel); }
+.sh-table td { padding: 10px 16px; }
+.sh-table th:first-child, .sh-table td:first-child { padding-left: 16px; }
+.sh-table th.num, .sh-table td.num { text-align: right; }
+.sh-table td .pill { height: 20px; font-size: 11.5px; }
+.sh-props { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; margin: 0; }
+.sh-prop { padding: 12px 14px; border-radius: 11px; border: 1px solid var(--line-2); background: var(--panel); min-width: 0; }
+.sh-prop.wide { grid-column: 1 / -1; }
+.sh-prop dt { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+.sh-prop dd { margin: 0; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 14px; font-weight: 550;
+  min-width: 0; overflow-wrap: anywhere; }
+.sh-stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+.sh-stat { padding: 14px 16px; border-radius: 12px; border: 1px solid var(--line-2); background: var(--panel); }
+.sh-stat span { display: block; font-size: 12px; color: var(--muted); }
+.sh-stat b { display: block; margin-top: 4px; font-size: 22px; font-weight: 700; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.sh-stat small { font-size: 12.5px; font-weight: 500; color: var(--muted); margin-left: 4px; }
+.sh-stat.zero b { color: var(--faint); }
+.sh-code { font: 12.5px var(--mono); font-weight: 400; color: var(--text-2); background: var(--bg-sub); padding: 1px 6px; border-radius: 5px;
+  overflow-wrap: anywhere; }
+.sh-num { font-variant-numeric: tabular-nums; font-weight: 600; }
+.sh-yes { display: inline-flex; align-items: center; gap: 4px; color: var(--ok); font-weight: 600; }
+.sh-tags { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.tag { display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: 6px; background: var(--bg-sub);
+  color: var(--text-2); font-size: 12px; font-weight: 550; white-space: nowrap; }
+.sh-gauge { display: inline-flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.sh-gauge .track { width: 110px; height: 6px; }
+.sh-gauge b.warn { color: var(--warn); } .sh-gauge b.bad { color: var(--bad); }
+.sh-gauge .faint { font-size: 12px; font-weight: 400; }
+.sh-lines { margin: 0; padding-left: 18px; display: grid; gap: 4px; font-weight: 400; font-size: 13px; }
+.sh-sec { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-top: 10px; padding-top: 18px;
+  border-top: 1px solid var(--line-2); font-size: 16px; font-weight: 650; letter-spacing: -.01em; }
+.sh-sec:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
+.sh-sec a { color: var(--text); } .sh-sec a:hover { color: var(--accent); }
+.sh-sec code { font: 12px var(--mono); color: var(--faint); font-weight: 400; }
+.sh-callout { display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; border-radius: 11px; font-size: 13px;
+  background: var(--info-soft); color: var(--info); }
+.sh-callout .i { flex: none; margin-top: 2px; }
+.sh-callout p { color: var(--text-2); overflow-wrap: anywhere; }
+.sh-callout.bad { background: var(--bad-soft); color: var(--bad); }
+.sh-note { padding: 14px 16px; border-radius: 12px; border: 1px solid var(--line-2); background: var(--panel-2);
+  font-size: 13.5px; line-height: 1.6; color: var(--text-2); overflow-wrap: anywhere; }
+.sh-empty { display: grid; justify-items: center; gap: 6px; padding: 28px 20px; text-align: center; color: var(--muted); font-size: 13px; }
+.sh-empty .ic { width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; background: var(--bg-sub); color: var(--faint); }
+.sh-empty b { color: var(--text-2); font-weight: 600; } .sh-empty p { max-width: 460px; }
+.sh-logs { max-height: 60vh; min-height: 0; }
+.cfgtext.sh-codeblock { margin: 0; max-height: 72vh; }
+.sh-link .n { font-family: var(--sans); font-size: 13.5px; }
+.sh-tile code { display: block; margin-top: 8px; font: 11.5px var(--mono); color: var(--faint); }
+@media (max-width: 640px) {
+  .sh-head, .sh-body { padding-left: 16px; padding-right: 16px; } .sh-toolbar { padding: 10px 16px; }
+  .sh-actions .btn span { display: none; } .sh-toolbar .search { width: 100%; }
+  .sh-props, .sh-stats { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
+}
 
 /* ---- Logs ------------------------------------------------------------- */
 .toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 14px 20px; border-bottom: 1px solid var(--line-2); }
@@ -694,6 +777,7 @@ body.readonly .write-only { display: none !important; }
     <header class="topbar">
       <button class="btn ghost icon menu-btn" id="menu-btn" title="Menu" data-icon="menu"></button>
       <div class="title"><h1 id="page-title">Vue d'ensemble</h1><div class="crumbs" id="page-sub"></div></div>
+      <select class="target hidden" id="target" title="Nœud(s) géré(s) par la console et les formulaires de configuration [ARCH 12.5]"></select>
       <button class="cmdk" id="cmdk-btn" title="Rechercher (Ctrl+K)"><svg class="i sm"><use href="#i-search"/></svg><span>Rechercher…</span><kbd>Ctrl K</kbd></button>
       <button class="pill live ok" id="live" title="Cliquer pour suspendre l'actualisation"><i class="dot"></i><span class="live-text" id="live-text">En direct</span></button>
       <button class="btn ghost icon" id="theme-btn" title="Changer de thème" data-icon="moon"></button>
@@ -1270,6 +1354,8 @@ function render(s) {
 async function refresh() {
   try { render(await call("GET", "/web/summary")); }
   catch (e) { if (e.message !== "401") { console.warn(e); setOffline(true); } }
+  // Nodes come and go: the target list follows, unless it is being chosen from.
+  if (++fleetTicks % 6 === 0 && document.activeElement !== $("target")) loadFleet();
   // The open 'show' follows the node live too, except the long tech-support.
   if (currentPage === "shows" && showResult && showCli !== "show tech-support") runShow(true);
 }
@@ -1332,7 +1418,7 @@ function termWrite(text, cls) {
 function termWelcome() {
   termWrite("Console web USMD-RDSH — mêmes commandes que la console locale ('help', 'help <commande>').", "sys");
 }
-function setPrompt(p) { $("prompt").textContent = p; $("term-title").textContent = p.replace(/[#>]\s*$/, "").trim() || "console"; }
+function setPrompt(p) { $("prompt").textContent = p; consoleRemote = p.includes(">"); $("term-title").textContent = p.replace(/[#>]\s*$/, "").trim() || "console"; }
 
 async function run(line, confirm = false) {
   if (!confirm) termWrite($("prompt").textContent + line, "cmd");
@@ -1362,8 +1448,42 @@ const leafOf = n => n.path.includes(" ") ? n.path.split(" ").slice(1).join(" ") 
 const dirtyCount = () => controls.filter(c => c.dirty()).length;
 
 async function loadSchema() {
-  configSchema = await call("GET", "/web/config");
+  configSchema = await call("GET", "/web/config" + (target ? "?target=" + encodeURIComponent(target) : ""));
   return configSchema;
+}
+
+// ---- Target: the node(s) an elected operator manages [ARCH 12.5] --------
+// "" is this node; otherwise a console selector: "node <id>", "usd <USDN>",
+// "all". The console enters it ('node' / 'on'), the forms read and apply there.
+let target = "", fleet = null, consoleRemote = false, fleetTicks = 0;
+async function loadFleet() {
+  try { fleet = await call("GET", "/web/fleet"); } catch (e) { return; }
+  const sel = $("target");
+  sel.classList.toggle("hidden", !fleet.scope);
+  if (!fleet.scope) return;
+  const opt = (value, label) => `<option value="${esc(value)}"${value === target ? " selected" : ""}>${esc(label)}</option>`;
+  const byUsd = {};
+  for (const n of fleet.nodes) (byUsd[n.usdn] = byUsd[n.usdn] || []).push(n);
+  let html = opt("", "Ce nœud") + opt("all", fleet.scope === "usc" ? "Toute l'USC" : "Tout l'USD");
+  for (const usdn of fleet.usds) {
+    html += `<optgroup label="USD ${esc(usdn)}${usdn === fleet.usdn ? " (le mien)" : ""}">`;
+    if (fleet.scope === "usc") html += opt("usd " + usdn, "Tous les nœuds de cet USD");
+    for (const n of byUsd[usdn] || []) if (n.id !== fleet.self)
+      html += opt("node " + n.id, `${n.id.slice(-8)} · ${n.address} · ${n.state}${n.mutation ? " · " + n.mutation : ""}`);
+    html += "</optgroup>";
+  }
+  sel.innerHTML = html;
+  sel.value = target;
+}
+async function setTarget(value) {
+  target = value;
+  $("target").classList.toggle("remote", !!target);
+  // The console follows: leave the previous node(s), enter the new one(s).
+  const line = target && (target.startsWith("node ") ? target : "on " + target);
+  queue = queue.then(() => consoleRemote && run("disconnect")).then(() => line && run(line));
+  configSchema = null; controls = [];
+  if (currentPage === "config") openConfig(configPath === SHOW_PATH ? null : configPath, configKey);
+  toast(target ? "Cible : " + $("target").selectedOptions[0].textContent : "Retour à ce nœud");
 }
 function sortedNodes() {
   // Top-level nodes (usc, usd, service-area, mutation, service) are the
@@ -2240,7 +2360,7 @@ async function submitConfig(request, banner, nextKey, success) {
   try {
     const res = await fetch("/web/config", { method: "POST",
       headers: { "Authorization": "Bearer " + token, "Content-Type": "application/json" },
-      body: JSON.stringify(request) });
+      body: JSON.stringify(target ? { ...request, target } : request) });
     const data = await res.json().catch(() => ({}));
     if (res.status === 401) { logout("Jeton refusé ou révoqué."); return false; }
     if (!res.ok || data.ok === false) {
@@ -2251,8 +2371,8 @@ async function submitConfig(request, banner, nextKey, success) {
     controls = [];
     if (nextKey !== undefined) configKey = nextKey;
     await loadSchema();
-    const target = href("config", request.path, configKey && configKey !== NEW_KEY ? configKey : null);
-    history.replaceState(null, "", target); currentHash = location.hash;
+    const page = href("config", request.path, configKey && configKey !== NEW_KEY ? configKey : null);
+    history.replaceState(null, "", page); currentHash = location.hash;
     renderConfigNav(); renderNode();
     toast(success || "Appliqué", "ok", (data.output || []).join("\n"));
     refresh();
@@ -2264,7 +2384,7 @@ async function submitConfig(request, banner, nextKey, success) {
 // Every 'show' of the console, listed by the node (GET /web/shows): one added
 // to the console is here without touching this page. Its tables and
 // "Label : value" blocks come back as data; the rest is the console's text.
-let showList = null, showCli = null, showResult = null, showError = "", showBusy = false;
+let showList = null, showCli = null, showResult = null, showError = "", showBusy = null;
 let showView = pref("show-view") || "data";
 const showArgs = {}, showSort = {};
 
@@ -2375,8 +2495,9 @@ function renderShowHead() {
 }
 
 async function runShow(quiet = false) {
-  const cli = showCli; if (!cli || showBusy) return;
-  showBusy = true;
+  // One request per command at a time; another command's (left behind) does not block it.
+  const cli = showCli; if (!cli || showBusy === cli) return;
+  showBusy = cli;
   if (!quiet) $("show-meta").innerHTML = '<span class="spinner"></span>';
   try {
     const r = await call("POST", "/web/shows", { cli, args: showArgs[cli] || {} });
@@ -2388,52 +2509,182 @@ async function runShow(quiet = false) {
     if (e.message === "401" || cli !== showCli) return;
     showError = e.message; showResult = null; drawShowResult();
   } finally {
-    showBusy = false;
+    if (showBusy === cli) showBusy = null;
     if (cli === showCli && $("show-meta")) $("show-meta").innerHTML = showResult
       ? `${icon("clock", "sm")}mis à jour à ${esc(showResult.at.toLocaleTimeString())}` : "";
   }
 }
 
-// A ULID or a public key: copyable; ULIDs inside text: shortened with a title.
-function showCell(v) {
-  const m = /^([0-9A-HJKMNP-TV-Z]{26}|[0-9a-f]{40,})( \(self\))?$/.exec(v);
-  return m ? idv(v, m[1].length > 26 ? 10 : 6) : shortIds(esc(v));
+// How one value of a 'show' reads: states as coloured pills, identifiers
+// copyable, loads as gauges, lists as tags, codes and addresses in mono.
+const SV_OK = /^(running|listening|enabled|up|active|ok|leader|admitted|normal|anchor|reachable|valid|in force)$/i;
+const SV_BAD = /^(down|stopped|failed|disabled|emergency|error|rejected|excluded|revoked|expired|unreachable|malformed)$/i;
+const SV_WARN = /^(weakened|synchronising|candidate|pending|inactive|approval_required|not a voter|degraded)$/i;
+const SV_INFO = /^(follower|memory)$/i;
+const SV_NONE = /^(-|—|\(none\)|\(not configured\)|\(none elected\)|none|n\/a)$/i;
+const svClass = (w) => SV_OK.test(w) ? "ok" : SV_BAD.test(w) ? "bad" : SV_WARN.test(w) ? "warn" : SV_INFO.test(w) ? "info" : null;
+const human = (k) => { const s = String(k).replace(/_/g, " "); return s ? s[0].toUpperCase() + s.slice(1) : s; };
+
+function showValue(raw) {
+  const t = String(raw ?? "").replace(/^\n+/, "").trimEnd().trim();
+  if (!t || SV_NONE.test(t)) return dash;
+  if (t.includes("\n")) return `<ul class="sh-lines">${t.split("\n").map(l => `<li>${showValue(l)}</li>`).join("")}</ul>`;
+  if (/^never$/i.test(t)) return '<span class="faint">jamais</span>';
+  if (/^(yes|true)$/i.test(t)) return `<span class="sh-yes">${icon("check", "sm")}oui</span>`;
+  if (/^(no|false)$/i.test(t)) return '<span class="faint">non</span>';
+  if (t === "<- current") return pill("actuel", "accent", true);
+  let m = /^([A-Z][A-Z_]+) \((0x[0-9a-f]{4})\)$/i.exec(t);
+  if (m) return `${pill(m[1], stateClass(m[2]), true)}<span class="sh-code">${m[2]}</span>`;
+  const cls = svClass(t);
+  if (cls) return pill(t, cls, true);
+  if (/^[A-Z][A-Z_]{3,}$/.test(t)) return pill(t, "", true);
+  if (/^[a-z ]+(, [a-z ]+)+$/i.test(t) && t.split(", ").every(svClass))
+    return t.split(", ").map(w => pill(w, svClass(w), true)).join("");
+  m = /^(\d+) permille(.*)$/.exec(t);
+  if (m) {
+    const n = Number(m[1]), c = n >= 950 ? "bad" : n >= 800 ? "warn" : "";
+    return `<span class="sh-gauge"><span class="track"><i class="${c}" style="width:${Math.min(100, n / 10)}%"></i></span><b class="${c}">${n} ‰</b>${
+      m[2].trim() ? `<span class="faint">${esc(m[2].trim())}</span>` : ""}</span>`;
+  }
+  m = /^([0-9A-HJKMNP-TV-Z]{26}|[A-Za-z0-9_-]{43}|[0-9a-f]{40,})( \(self\))?$/.exec(t);
+  if (m) return idv(t, m[1].length > 26 ? 10 : 6);
+  if (/^https?:\/\/\S+$/.test(t)) return `<a href="${esc(t)}" target="_blank" rel="noopener">${esc(t)}</a>`;
+  if (/^[\w.-]+(, [\w.-]+)+$/.test(t)) return `<span class="sh-tags">${t.split(", ").map(x => `<span class="tag">${esc(x)}</span>`).join("")}</span>`;
+  if (/^-?\d+(\.\d+)?$/.test(t)) return `<span class="sh-num">${esc(t)}</span>`;
+  if (/^(0x[0-9a-f]+|[\d.]+\/\d+|[\d.]+( [\d.]+)*|[0-9a-f]{3}\.[0-9a-f]{4}|\S{4,}\.\.\.\S{4,}|[A-Za-z]:\\\S*|\/\S*)$/i.test(t))
+    return `<span class="sh-code" title="${esc(t)}">${esc(t)}</span>`;
+  return shortIds(esc(t));
+}
+
+// A block of "Label : value" lines: tiles when every value is a figure
+// (statistics), a grid of properties otherwise.
+const isFigure = (v) => /^-?\d+(\.\d+)?( ?(s|ms|%|‰|mb|kb|b))?$|^\d+( \/ \d+)+( \w+)?$/i.test(String(v).trim());
+function showFields(pairs) {
+  if (pairs.length > 1 && pairs.every(([, v]) => isFigure(v))) {
+    return `<div class="sh-stats">${pairs.map(([k, v]) => {
+      const [, n, unit = ""] = /^(.*?\d)\s*([a-z%‰]*)$/i.exec(String(v).trim()) || [, v];
+      return `<div class="sh-stat ${/^0$/.test(n) ? "zero" : ""}"><span>${esc(human(k))}</span><b>${esc(n)}${unit ? `<small>${esc(unit)}</small>` : ""}</b></div>`;
+    }).join("")}</div>`;
+  }
+  return `<dl class="sh-props">${pairs.map(([k, v]) => {
+    const s = String(v ?? "").trim();
+    return `<div class="sh-prop ${s.length > 44 || s.includes("\n") ? "wide" : ""}"><dt>${esc(human(k))}</dt><dd>${showValue(s)}</dd></div>`;
+  }).join("")}</dl>`;
+}
+
+const LOG_RE = /^\*?(?:\w{3} +\d+ )?([\d:.]+): %([A-Z0-9_]+)-(\d)-([A-Z0-9_]+): (.*)$/;
+const EVENT_RE = /^(\d{2}:\d{2}:\d{2}) (.+)$/;
+const DIVIDER_RE = /^\s*-{6,} (show [^\n]+?) -{6,}\s*$/m;
+const NOTE_RE = /^(% .*|Total [^:]+: \d+|[A-Z][\w ]{2,30}: the .*)$/;
+
+function logRow(line) {
+  const [, time, fac, sev, mnem, msg] = LOG_RE.exec(line), cls = sevCls(Number(sev));
+  return `<div class="log-row ${cls === "bad" ? "sev-bad" : ""}"><time>${esc(time)}</time><span class="pill ${cls}">${SEV[sev] || sev}</span>
+    <span class="fac">${esc(fac)}</span><span class="msg"><b>${esc(mnem)}</b>${shortIds(esc(msg))}</span></div>`;
+}
+const callout = (text) => `<div class="sh-callout">${icon("info", "sm")}<p>${shortIds(esc(text))}</p></div>`;
+
+// Free text, recognised: configuration, log buffer, event list, SQL; else
+// "Key: value" lines as properties, "% ..." as notes, the rest as prose.
+function showText(chunk, keep) {
+  const lines = chunk.split("\n").filter(l => l.trim()), t = chunk.trim();
+  if (!t) return "";
+  if (/^Building configuration/.test(t) || /^(--|CREATE )/.test(t))
+    return `<div class="cfgtext sh-codeblock">${(/^Building/.test(t) ? hlConfig(t) : t.split("\n").map(esc))
+      .filter((_, i) => keep(t.split("\n")[i])).map(l => `<span class="ln">${l || " "}</span>`).join("")}</div>`;
+  if (lines.some(l => LOG_RE.test(l))) {
+    const head = lines.filter(l => !LOG_RE.test(l) && !/^Log Buffer/.test(l));
+    const logs = lines.filter(l => LOG_RE.test(l) && keep(l)).reverse();
+    return (head.length ? showText(head.join("\n"), keep) : "") + `<div class="sh-card"><div class="sh-card-head">${icon("list", "sm")}<b>${
+      plural(logs.length, "message", "messages")}</b><span>les plus récents en premier</span></div><div class="log-list sh-logs">${
+      logs.map(logRow).join("") || `<div class="sh-empty">Aucun message ne correspond.</div>`}</div></div>`;
+  }
+  if (lines.every(l => EVENT_RE.test(l))) {
+    return `<div class="sh-card"><div class="card-body"><div class="timeline">${lines.filter(keep).reverse().map(l => {
+      const [, time, text] = EVENT_RE.exec(l);
+      return `<div class="tl"><time>${esc(time)}</time><span class="rail"></span><p>${shortIds(esc(text))}</p></div>`;
+    }).join("")}</div></div></div>`;
+  }
+  let html = "", props = [], prose = [];
+  const flush = () => {
+    if (props.length) html += showFields(props); if (prose.length) html += `<div class="sh-note">${prose.map(p => `<p>${shortIds(esc(p))}</p>`).join("")}</div>`;
+    props = []; prose = [];
+  };
+  for (const raw of lines) {
+    const l = raw.trim(); if (!keep(l)) continue;
+    if (/^Total [^:]+: \d+$/.test(l)) continue;
+    if (/^% /.test(l)) { flush(); html += callout(l.slice(2)); continue; }
+    const m = /^([A-Z][\w ()/.-]{1,38}?)\s*:\s+(.+)$/.exec(l);
+    if (m) { if (prose.length) flush(); props.push([m[1], m[2]]); }
+    else { if (props.length) flush(); prose.push(l); }
+  }
+  flush();
+  return html;
+}
+
+function showTable(s, i, notes, keep) {
+  const st = showSort[showCli + "#" + i] ||= { col: null, dir: 1 };
+  const numeric = s.columns.map((_, j) => s.rows.some(r => r[j] !== "") && s.rows.every(r => r[j] === "" || /^-?[\d.]+s?$/.test(r[j])));
+  let rows = s.rows.filter(r => keep(r.join(" ")));
+  if (st.col !== null) rows = rows.slice().sort((a, b) => cmp(a[st.col], b[st.col]) * st.dir);
+  const shown = rows.length !== s.rows.length ? `<span class="count">${rows.length} affichées</span>` : "";
+  const head = `<div class="sh-card-head">${icon("table", "sm")}<b>${plural(s.rows.length, "entrée", "entrées")}</b>${shown}</div>`;
+  const foot = notes.length ? `<div class="sh-card-foot">${icon("info", "sm")}<span>${notes.map(n => shortIds(esc(n.replace(/^% /, "")))).join("<br>")}</span></div>` : "";
+  if (!s.rows.length) {
+    return `<div class="sh-card">${head}<div class="sh-empty"><span class="ic">${icon("table")}</span><b>Aucune entrée</b>${
+      notes.length ? `<p>${notes.map(n => shortIds(esc(n.replace(/^% /, "")))).join("<br>")}</p>` : ""}</div></div>`;
+  }
+  const body = rows.length ? `<div class="table-wrap"><table class="sh-table" data-seg="${i}"><thead><tr>${s.columns.map((c, j) =>
+      `<th data-col="${j}" class="${numeric[j] ? "num" : ""} ${st.col === j ? (st.dir > 0 ? "asc" : "desc") : ""}">${esc(c.replace(/\s*\(?permille\)?/i, " ‰"))}<span class="arrow"></span></th>`).join("")}</tr></thead><tbody>${
+      rows.map(r => "<tr>" + r.map((c, j) => `<td class="${numeric[j] ? "num" : ""}">${showValue(c)}</td>`).join("") + "</tr>").join("")}</tbody></table></div>`
+    : `<div class="sh-empty"><span class="ic">${icon("search")}</span><b>Aucune entrée ne correspond à ce filtre.</b></div>`;
+  return `<div class="sh-card">${head}${body}${foot}</div>`;
 }
 
 function drawShowResult() {
   const box = $("show-body"); if (!box) return;
-  if (showError) { box.innerHTML = `<div class="banner bad" style="margin-bottom:24px">${icon("alert-circle", "sm")}<pre>${esc(showError)}</pre></div>`; return; }
+  if (showError) { box.innerHTML = `<div class="sh-callout bad">${icon("alert-circle", "sm")}<p>${esc(showError)}</p></div>`; return; }
   if (!showResult) {
     box.innerHTML = showNeedsInput(showDef(showCli)) ? emptyState("Renseignez les paramètres puis exécutez la commande.", "enter")
       : emptyState('<span class="spinner"></span>', "table"); return;
   }
   const needle = ($("show-filter") || {}).value?.trim().toLowerCase() || "";
-  const segs = showResult.segments;
-  if (showView === "text" || !segs.some(s => s.kind !== "text")) {
-    const lines = showResult.text.split("\n").filter(l => !needle || l.toLowerCase().includes(needle));
-    box.innerHTML = showResult.text.trim() ? `<div class="cfgtext">${lines.map(l => `<span class="ln">${esc(l) || " "}</span>`).join("")}</div>`
+  const keep = (text) => !needle || String(text).toLowerCase().includes(needle);
+  const segs = showResult.segments, data = showResult.data;
+  if (showView === "text") {
+    const lines = showResult.text.split("\n").filter(keep);
+    box.innerHTML = showResult.text.trim() ? `<div class="cfgtext sh-codeblock">${lines.map(l => `<span class="ln">${esc(l) || " "}</span>`).join("")}</div>`
       : emptyState("La commande n'a rien affiché.", "info");
     return;
   }
-  box.innerHTML = segs.map((s, i) => {
-    // tech-support's "------ show x ------" dividers become section titles.
-    if (s.kind === "text") return `<div class="show-block"><pre class="show-text">${shortIds(esc(s.text)).replace(
-      /^\s*-{6,} (show [^\n]+?) -{6,}\s*$/gm, '</pre><h3 class="show-sec">$1</h3><pre class="show-text">')}</pre></div>`.replace(/<pre class="show-text">\s*<\/pre>/g, "");
-    if (s.kind === "fields") {
-      const pairs = s.pairs.filter(([k, v]) => !needle || (k + " " + v).toLowerCase().includes(needle));
-      return `<div class="show-block"><dl class="kv">${pairs.map(([k, v]) =>
-        `<dt>${esc(k)}</dt><dd>${v.trim() ? showCell(v.replace(/^\n/, "")) : dash}</dd>`).join("")}</dl></div>`;
+  // Free text only, but the action answered a flat record (show version):
+  // that record reads better than its sentence.
+  const flat = data && typeof data === "object" && !Array.isArray(data) && !("text" in data)
+    && Object.values(data).every(v => v === null || (typeof v !== "object" && String(v).length < 300));
+  if (!segs.some(s => s.kind !== "text") && flat) {
+    const pairs = Object.entries(data).filter(([k, v]) => keep(k + " " + v)).map(([k, v]) => [k, v == null ? "" : String(v)]);
+    box.innerHTML = pairs.length ? showFields(pairs) : emptyState("Aucune valeur ne correspond à ce filtre.", "search");
+    return;
+  }
+  let html = "";
+  segs.forEach((s, i) => {
+    if (s.kind === "table") {
+      // A short note right after a table ("Total ...", "% No route") is its footer.
+      const next = segs[i + 1], lines = next && next.kind === "text" ? next.text.split("\n").filter(l => l.trim()) : [];
+      const notes = lines.length && lines.length <= 2 && lines.every(l => NOTE_RE.test(l.trim())) ? lines.map(l => l.trim()) : [];
+      if (notes.length) next.attached = true;
+      html += showTable(s, i, notes.filter(n => !/^Total /.test(n)), keep);
+    } else if (s.kind === "fields") {
+      const pairs = s.pairs.filter(([k, v]) => keep(k + " " + v));
+      if (pairs.length) html += showFields(pairs);
+    } else if (!s.attached) {
+      // tech-support: "------ show x ------" dividers become section titles.
+      s.text.split(DIVIDER_RE).forEach((part, j) => {
+        html += j % 2 ? `<h3 class="sh-sec"><a href="${href("shows", part)}">${esc(showLabel(part))}</a><code>${esc(part)}</code></h3>` : showText(part, keep);
+      });
     }
-    const st = showSort[showCli + "#" + i] ||= { col: null, dir: 1 };
-    let rows = s.rows.filter(r => !needle || r.some(c => c.toLowerCase().includes(needle)));
-    if (st.col !== null) rows = rows.slice().sort((a, b) => cmp(a[st.col], b[st.col]) * st.dir);
-    const head = `<div class="card-head"><div class="t"><h3>${plural(s.rows.length, "ligne", "lignes")}${
-      needle ? ` <span class="count">${rows.length} / ${s.rows.length}</span>` : ""}</h3></div></div>`;
-    if (!rows.length) return `<div class="show-block">${head}${emptyState(s.rows.length ? "Aucune ligne ne correspond à ce filtre." : "Table vide.", s.rows.length ? "search" : "info")}</div>`;
-    return `<div class="show-block">${head}<div class="table-wrap"><table data-seg="${i}"><thead><tr>${s.columns.map((c, j) =>
-      `<th data-col="${j}" class="${st.col === j ? (st.dir > 0 ? "asc" : "desc") : ""}">${esc(c)}<span class="arrow"></span></th>`).join("")}</tr></thead><tbody>${
-      rows.map(r => "<tr>" + r.map(c => `<td>${c === "" ? dash : showCell(c)}</td>`).join("") + "</tr>").join("")}</tbody></table></div></div>`;
-  }).join("") || emptyState("La commande n'a rien affiché.", "info");
+  });
+  box.innerHTML = html || emptyState(needle ? "Rien ne correspond à ce filtre." : "La commande n'a rien affiché.", needle ? "search" : "info");
   $$("table[data-seg] th[data-col]", box).forEach(th => th.onclick = () => {
     const st = showSort[showCli + "#" + th.closest("table").dataset.seg], col = Number(th.dataset.col);
     st.dir = st.col === col ? -st.dir : 1; st.col = col; drawShowResult();
@@ -2500,6 +2751,7 @@ function start() {
   if (!$("term").childElementCount) termWelcome();
   queue = queue.then(() => call("POST", "/web/cli", { line: "" })
     .then(r => setPrompt(r.prompt)).catch(() => {}));
+  loadFleet();
   route();
 }
 
@@ -2507,6 +2759,8 @@ function logout(message) {
   clearInterval(timer); token = null; keepToken(null); capture.deactivate();
   controls = []; configSchema = null; summary = null; lastUpdate = 0;
   showList = null; showResult = null; showCli = null;
+  target = ""; fleet = null; consoleRemote = false;
+  $("target").classList.add("hidden"); $("target").classList.remove("remote");
   $("term").innerHTML = "";
   $("app").classList.add("hidden"); $("login").classList.remove("hidden");
   if (message) { $("login-error").innerHTML = icon("alert-circle", "sm") + "<span>" + esc(message) + "</span>"; $("login-error").classList.remove("hidden"); }
@@ -2574,6 +2828,7 @@ $("menu-btn").onclick = () => $("app").classList.toggle("nav-open");
 $("backdrop").onclick = () => $("app").classList.remove("nav-open");
 $("theme-btn").onclick = toggleTheme;
 $("live").onclick = togglePause;
+$("target").onchange = e => setTarget(e.target.value);
 $("cmdk-btn").onclick = openPalette;
 $("config-search").oninput = renderConfigNav;
 $("show-search").oninput = renderShowNav;
