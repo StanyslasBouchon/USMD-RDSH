@@ -178,10 +178,17 @@ class SpEngine:  # pylint: disable=too-many-instance-attributes
         destination = self._by_ip(packet.destination)
         if source is None or destination is None or source.area != destination.area:
             self.stats["dropped"] += 1
+            log.debug("[SP] Dropped %s -> %s from the interface: %s", packet.source,
+                      packet.destination,
+                      "source is not the VIP of a service hosted here" if source is None else
+                      "destination is no VIP or group address" if destination is None else
+                      "services in different areas")
             return
         management = self.context.management_id(source.service_id)
         if management is None:
             self.stats["dropped"] += 1  # no management id yet [4.2]
+            log.debug("[SP] Dropped %s -> %s: no management id for service %03x yet",
+                      packet.source, packet.destination, source.service_id)
             return
         sp_source = addresses.pack(source.service_id, management)
 
@@ -206,11 +213,15 @@ class SpEngine:  # pylint: disable=too-many-instance-attributes
         if target is None:
             target = self.select(destination.service_id, now)
         if target is None:
+            log.debug("[SP] No eligible instance of %03x for %s -> %s (known: %s)",
+                      destination.service_id, packet.source, packet.destination,
+                      self._why_ineligible(destination.service_id, now) or "none")
             self._icmp(packet, 1, destination)
             return
         self.flows.record_outbound(packet, target, now)
         owner = self.context.owner(target)
         if owner is None:
+            log.debug("[SP] Instance %s is attributed to no node", addresses.to_text(target))
             self._icmp(packet, 1, destination)
             return
         for piece in fragments:
@@ -225,6 +236,23 @@ class SpEngine:  # pylint: disable=too-many-instance-attributes
     # ------------------------------------------------------------------
     # Destination choice [6]
     # ------------------------------------------------------------------
+
+    def _why_ineligible(self, service_id: int, now: float) -> str:
+        """Each instance the table knows for the service, and why it is not taken."""
+        reasons = []
+        for address, distance in self.context.nearest(service_id):
+            owner = self.context.owner(address)
+            peer = self.context.peer(owner) if owner is not None else None
+            why = ("unreachable (D 65535)" if distance >= 65535 else
+                   "attributed to no node" if owner is None else
+                   "peer unknown, excluded or without NIT address" if peer is None else
+                   "peer not Active" if not peer.active else
+                   "not in the peer's last HIA" if peer.hia_hosted is not None
+                   and address not in peer.hia_hosted else
+                   "handshake failed recently" if (self._ineligible.get(owner) or 0) > now else
+                   "eligible")
+            reasons.append(f"{addresses.to_text(address)}: {why}")
+        return ", ".join(reasons)
 
     def _eligible(self, address: int, now: float) -> bool:
         owner = self.context.owner(address)
@@ -294,6 +322,8 @@ class SpEngine:  # pylint: disable=too-many-instance-attributes
     def _initiate(self, peer_key: bytes, now: float) -> _Pending | None:
         peer = self.context.peer(peer_key)
         if peer is None:
+            log.debug("[SP] No handshake with %s: unknown, excluded or without NIT address",
+                      peer_key.hex()[:12])
             return None
         data, state = hs.build_initiation(self._signing, peer.ed25519, peer.x25519,
                                           self._wall_ms(), index=self._free_index())
