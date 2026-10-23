@@ -287,8 +287,10 @@ def test_web_runs_every_show(factory):
         assert answer.status == 200, (cli, answer.body)
         assert answer.body["segments"] or not answer.body["text"].strip(), cli
 
-    version = post({"cli": "show version"}).body["segments"]
-    assert version[0]["kind"] == "text" and "USMD-RDSH Software" in version[0]["text"]
+    version = post({"cli": "show version"}).body
+    assert version["segments"][0]["kind"] == "text"
+    assert "USMD-RDSH Software" in version["segments"][0]["text"]
+    assert version["data"]["hostname"]  # the record behind the free text
     master = post({"cli": "show usd master"}).body["segments"]
     assert master[0]["kind"] == "fields" and master[0]["pairs"][0][0] == "Master"
     nit = post({"cli": "show nit"}).body["segments"]
